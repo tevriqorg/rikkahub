@@ -181,11 +181,7 @@ internal class P14RemoteAttachmentTransformer(
         }
 
         val completedParts = AtomicInteger(0)
-        val partSemaphore = Semaphore(REMOTE_PART_CONCURRENCY)
-        coroutineScope {
-            (1..partCount).map { partNumber ->
-                async {
-                    partSemaphore.withPermit {
+        for (partNumber in 1..partCount) {
                         val offset = (partNumber - 1L) * partSize
                         val length = minOf(partSize, encrypted.size - offset)
                         var uploadUrl = urls[partNumber] ?: error("P14 did not issue upload URL for part $partNumber")
@@ -203,10 +199,7 @@ internal class P14RemoteAttachmentTransformer(
                             response = putPart(uploadUrl, encrypted.ciphertext, offset, length)
                         }
                         check(response) { "CMCloud upload failed for part $partNumber" }
-                        onPartProgress(completedParts.incrementAndGet(), partCount)
-                    }
-                }
-            }.awaitAll()
+            onPartProgress(completedParts.incrementAndGet(), partCount)
         }
 
         val completed = control(provider, "POST", "/remote-attachments/$transitId/complete", buildJsonObject {})
@@ -305,6 +298,5 @@ internal class P14RemoteAttachmentTransformer(
     private companion object {
         const val P14_ATTACHMENT_ID = "p14_attachment_id"
         const val REMOTE_ATTACHMENT_CONCURRENCY = 3
-        const val REMOTE_PART_CONCURRENCY = 3
     }
 }
