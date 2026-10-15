@@ -3,6 +3,11 @@ package me.rerere.rikkahub.data.remote.p14
 import androidx.core.net.toFile
 import androidx.core.net.toUri
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
@@ -33,6 +38,7 @@ import java.io.File
 import java.io.RandomAccessFile
 import java.net.URLConnection
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicInteger
 import kotlin.uuid.Uuid
 
 internal class P14RemoteAttachmentTransformer(
@@ -60,28 +66,43 @@ internal class P14RemoteAttachmentTransformer(
 
         return withContext(Dispatchers.IO) {
             val recipientKey = getRecipientKey(provider)
-            val transformedParts = user.parts.mapIndexed { index, part ->
-                if (!part.isRemoteAttachment()) return@mapIndexed part
-                if (part.p14AttachmentId() != null) return@mapIndexed part
-                ctx.processingStatus.value = "Remote: preparing attachment ${index + 1}/${user.parts.size}"
-                val source = resolveSource(ctx, part)
-                val encryptedDir = File(ctx.context.cacheDir, "p14-remote").apply { mkdirs() }
-                val cipher = File(encryptedDir, "${Uuid.random()}.p20e2ee")
-                try {
-                    ctx.processingStatus.value = "Remote: encrypting ${source.displayName}"
-                    val encrypted = P20E2EE.encrypt(
-                        source = source.file,
-                        destination = cipher,
-                        recipientPublicKey = recipientKey,
-                        displayName = source.displayName,
-                        mimeType = source.mimeType,
-                    )
-                    ctx.processingStatus.value = "Remote: uploading ${source.displayName}"
-                    val attachmentId = uploadAndImport(provider, encrypted)
-                    part.withP14AttachmentId(attachmentId)
-                } finally {
-                    cipher.delete()
-                }
+            val completed = AtomicInteger(0)
+            val attachmentSemaphore = Semaphore(REMOTE_ATTACHMENT_CONCURRENCY)
+            val transformedParts = coroutineScope {
+                user.parts.mapIndexed { index, part ->
+                    async {
+                        if (!part.isRemoteAttachment() || part.p14AttachmentId() != null) {
+                            return@async index to part
+                        }
+                        attachmentSemaphore.withPermit {
+                            val source = resolveSource(ctx, part)
+                            val encryptedDir = File(ctx.context.cacheDir, "p14-remote").apply { mkdirs() }
+                            val cipher = File(encryptedDir, "${Uuid.random()}.p20e2ee")
+                            try {
+                                ctx.processingStatus.value =
+                                    "Remote: encrypting ${source.displayName} · ${completed.get()}/$attachmentCount complete"
+                                val encrypted = P20E2EE.encrypt(
+                                    source = source.file,
+                                    destination = cipher,
+                                    recipientPublicKey = recipientKey,
+                                    displayName = source.displayName,
+                                    mimeType = source.mimeType,
+                                )
+                                ctx.processingStatus.value =
+                                    "Remote: uploading ${source.displayName} · ${completed.get()}/$attachmentCount complete"
+                                val attachmentId = uploadAndImport(provider, encrypted) { doneParts, totalParts ->
+                                    ctx.processingStatus.value =
+                                        "Remote: uploading ${source.displayName} · part $doneParts/$totalParts"
+                                }
+                                val done = completed.incrementAndGet()
+                                ctx.processingStatus.value = "Remote: attachments $done/$attachmentCount ready"
+                                index to part.withP14AttachmentId(attachmentId)
+                            } finally {
+                                cipher.delete()
+                            }
+                        }
+                    }
+                }.awaitAll().sortedBy { it.first }.map { it.second }
             }
             listOf(user.copy(parts = transformedParts))
         }
@@ -127,7 +148,11 @@ internal class P14RemoteAttachmentTransformer(
         return key
     }
 
-    private fun uploadAndImport(provider: ProviderSetting.OpenAI, encrypted: P20E2EE.EncryptResult): String {
+    private suspend fun uploadAndImport(
+        provider: ProviderSetting.OpenAI,
+        encrypted: P20E2EE.EncryptResult,
+        onPartProgress: (Int, Int) -> Unit,
+    ): String {
         val created = control(
             provider,
             "POST",
@@ -155,24 +180,33 @@ internal class P14RemoteAttachmentTransformer(
             urls.putAll(parsePartUrls(issued))
         }
 
-        for (partNumber in 1..partCount) {
-            val offset = (partNumber - 1L) * partSize
-            val length = minOf(partSize, encrypted.size - offset)
-            var uploadUrl = urls[partNumber] ?: error("P14 did not issue upload URL for part $partNumber")
-            var response = putPart(uploadUrl, encrypted.ciphertext, offset, length)
-            if (!response) {
-                val refreshed = control(
-                    provider,
-                    "POST",
-                    "/remote-attachments/$transitId/parts",
-                    buildJsonObject {
-                        put("part_numbers", kotlinx.serialization.json.buildJsonArray { add(JsonPrimitive(partNumber)) })
-                    },
-                )
-                uploadUrl = parsePartUrls(refreshed)[partNumber] ?: error("P14 failed to refresh upload URL")
-                response = putPart(uploadUrl, encrypted.ciphertext, offset, length)
-            }
-            check(response) { "CMCloud upload failed for part $partNumber" }
+        val completedParts = AtomicInteger(0)
+        val partSemaphore = Semaphore(REMOTE_PART_CONCURRENCY)
+        coroutineScope {
+            (1..partCount).map { partNumber ->
+                async {
+                    partSemaphore.withPermit {
+                        val offset = (partNumber - 1L) * partSize
+                        val length = minOf(partSize, encrypted.size - offset)
+                        var uploadUrl = urls[partNumber] ?: error("P14 did not issue upload URL for part $partNumber")
+                        var response = putPart(uploadUrl, encrypted.ciphertext, offset, length)
+                        if (!response) {
+                            val refreshed = control(
+                                provider,
+                                "POST",
+                                "/remote-attachments/$transitId/parts",
+                                buildJsonObject {
+                                    put("part_numbers", kotlinx.serialization.json.buildJsonArray { add(JsonPrimitive(partNumber)) })
+                                },
+                            )
+                            uploadUrl = parsePartUrls(refreshed)[partNumber] ?: error("P14 failed to refresh upload URL")
+                            response = putPart(uploadUrl, encrypted.ciphertext, offset, length)
+                        }
+                        check(response) { "CMCloud upload failed for part $partNumber" }
+                        onPartProgress(completedParts.incrementAndGet(), partCount)
+                    }
+                }
+            }.awaitAll()
         }
 
         val completed = control(provider, "POST", "/remote-attachments/$transitId/complete", buildJsonObject {})
@@ -270,5 +304,7 @@ internal class P14RemoteAttachmentTransformer(
 
     private companion object {
         const val P14_ATTACHMENT_ID = "p14_attachment_id"
+        const val REMOTE_ATTACHMENT_CONCURRENCY = 3
+        const val REMOTE_PART_CONCURRENCY = 3
     }
 }
