@@ -25,6 +25,12 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Restore stable P14 debug keystore
+        uses: actions/cache@v4
+        with:
+          path: ~/.android/debug.keystore
+          key: rikkahub-p14-debug-keystore-v1
+
       - name: Set up pnpm
         uses: pnpm/action-setup@v4
         with:
