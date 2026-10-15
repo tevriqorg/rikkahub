@@ -232,7 +232,14 @@ class ChatVM(
         analytics.logEvent("ai_edit_message", null)
 
         viewModelScope.launch {
-            chatService.editMessage(_conversationId, messageId, parts)
+            runCatching { chatService.editMessage(_conversationId, messageId, parts) }
+                .onFailure {
+                    chatService.addError(
+                        it,
+                        conversationId = _conversationId,
+                        title = context.getString(R.string.error_title_operation),
+                    )
+                }
         }
     }
 
@@ -256,7 +263,14 @@ class ChatVM(
 
     fun deleteMessage(message: UIMessage) {
         viewModelScope.launch {
-            chatService.deleteMessage(_conversationId, message)
+            runCatching { chatService.deleteMessage(_conversationId, message) }
+                .onFailure {
+                    chatService.addError(
+                        it,
+                        conversationId = _conversationId,
+                        title = context.getString(R.string.error_title_operation),
+                    )
+                }
         }
     }
 

@@ -31,6 +31,7 @@ import me.rerere.ai.provider.BuiltInTools
 import me.rerere.ai.provider.Model
 import me.rerere.ai.provider.ModelAbility
 import me.rerere.ai.provider.ProviderManager
+import me.rerere.ai.provider.ProviderSetting
 import me.rerere.ai.provider.TextGenerationParams
 import me.rerere.ai.ui.ToolApprovalState
 import me.rerere.ai.ui.UIMessage
@@ -60,8 +61,10 @@ import me.rerere.rikkahub.data.ai.transformers.ThinkTagTransformer
 import me.rerere.rikkahub.data.ai.transformers.TimeReminderTransformer
 import me.rerere.rikkahub.data.ai.transformers.WorkspaceReminderTransformer
 import me.rerere.rikkahub.data.remote.p14.P14RemoteAttachmentTransformer
+import me.rerere.rikkahub.data.remote.p14.P14RemoteControlClient
 import me.rerere.rikkahub.data.event.AppEvent
 import me.rerere.rikkahub.data.event.AppEventBus
+import me.rerere.rikkahub.data.datastore.Settings
 import me.rerere.rikkahub.data.datastore.SettingsStore
 import me.rerere.rikkahub.data.datastore.findModelById
 import me.rerere.rikkahub.data.datastore.findProvider
@@ -207,6 +210,7 @@ class ChatService(
     // workspace 系统提示注入 (依赖 workspaceRepository, 故在类内构造)
     private val workspaceReminderTransformer = WorkspaceReminderTransformer(workspaceRepository)
     private val p14RemoteAttachmentTransformer = P14RemoteAttachmentTransformer(filesManager, okHttpClient)
+    private val p14RemoteControlClient = P14RemoteControlClient(okHttpClient)
 
     private val sessionManager = ConversationSessionManager(
         scope = appScope,
@@ -1345,42 +1349,71 @@ class ChatService(
         if (parts.isEmptyInputMessage()) return
 
         val currentConversation = getConversationFlow(conversationId).value
+        val original = currentConversation.messageNodes
+            .flatMap { it.messages }
+            .firstOrNull { it.id == messageId }
+            ?: return
         val settings = settingsStore.awaitLoaded()
         val assistant = settings.getAssistantById(currentConversation.assistantId)
             ?: settings.getCurrentAssistant()
         val processedParts = preprocessUserInputParts(parts, assistant)
-        var edited = false
+        val remote = resolveP14RemoteMutationContext(conversationId, currentConversation, settings)
 
-        val updatedNodes = currentConversation.messageNodes.map { node ->
-            if (!node.messages.any { it.id == messageId }) {
-                return@map node
+        if (remote != null) {
+            check(original.role == MessageRole.USER) { "P14 Remote can edit only your own messages" }
+            check(!original.isContextCheckpoint) { "P14 Remote cannot edit a local context checkpoint" }
+            check(
+                original.parts.filterNot { it is UIMessagePart.Text } ==
+                    processedParts.filterNot { it is UIMessagePart.Text }
+            ) { "P14 Remote message edit currently supports text changes only" }
+            val text = processedParts.filterIsInstance<UIMessagePart.Text>()
+                .joinToString("\n") { it.text }.trim()
+            check(text.isNotBlank()) { "P14 Remote message edit requires text" }
+
+            val state = p14RemoteControlClient.getMessageState(
+                remote.provider, remote.conversationId, messageId
+            )
+            check(!state.deleted) { "P14 Remote message is already deleted" }
+            if (state.bodyText != text) {
+                p14RemoteControlClient.editMessage(
+                    remote.provider, remote.conversationId, messageId, state.revision, text
+                )
             }
-            edited = true
 
-            val original = node.messages.first { it.id == messageId }
-            if (original.isContextCheckpoint) {
-                // 摘要原地改写：新建分支会丢掉检查点标记，删除摘要时还会露出旧版本。
+            val updated = currentConversation.copy(
+                messageNodes = currentConversation.messageNodes.map { node ->
+                    node.copy(messages = node.messages.map { message ->
+                        if (message.id == messageId) message.copy(parts = processedParts) else message
+                    })
+                }
+            )
+            saveConversation(conversationId, updated)
+            return
+        }
+
+        var edited = false
+        val updatedNodes = currentConversation.messageNodes.map { node ->
+            if (!node.messages.any { it.id == messageId }) return@map node
+            edited = true
+            val localOriginal = node.messages.first { it.id == messageId }
+            if (localOriginal.isContextCheckpoint) {
                 return@map node.copy(
                     messages = node.messages.map { message ->
                         if (message.id == messageId) message.copy(parts = processedParts) else message
                     }
                 )
             }
-
             node.copy(
                 messages = node.messages + UIMessage(
                     role = node.role,
                     parts = processedParts,
-                    // 编辑的是原消息的内容，来源仍是生成它的模型
-                    modelId = original.modelId,
-                    modelSnapshot = original.modelSnapshot,
+                    modelId = localOriginal.modelId,
+                    modelSnapshot = localOriginal.modelSnapshot,
                 ),
                 selectIndex = node.messages.size
             )
         }
-
         if (!edited) return
-
         saveConversation(conversationId, currentConversation.copy(messageNodes = updatedNodes))
     }
 
@@ -1456,15 +1489,30 @@ class ChatService(
         failIfMissing: Boolean = true,
     ) {
         val currentConversation = getConversationFlow(conversationId).value
-        val updatedConversation = buildConversationAfterMessageDelete(currentConversation, messageId)
-
-        if (updatedConversation == null) {
-            if (failIfMissing) {
-                throw NotFoundException("Message not found")
-            }
+        val target = currentConversation.messageNodes
+            .flatMap { it.messages }
+            .firstOrNull { it.id == messageId }
+        if (target == null) {
+            if (failIfMissing) throw NotFoundException("Message not found")
             return
         }
 
+        val settings = settingsStore.awaitLoaded()
+        val remote = resolveP14RemoteMutationContext(conversationId, currentConversation, settings)
+        if (remote != null) {
+            check(target.role == MessageRole.USER) { "P14 Remote can delete only your own messages" }
+            val state = p14RemoteControlClient.getMessageState(
+                remote.provider, remote.conversationId, messageId
+            )
+            if (!state.deleted) {
+                p14RemoteControlClient.deleteMessage(
+                    remote.provider, remote.conversationId, messageId, state.revision
+                )
+            }
+        }
+
+        val updatedConversation = buildConversationAfterMessageDelete(currentConversation, messageId)
+            ?: return
         saveConversation(conversationId, updatedConversation)
     }
 
@@ -1504,6 +1552,26 @@ class ChatService(
         }
 
         return conversation.copy(messageNodes = updatedNodes)
+    }
+
+    private data class P14RemoteMutationContext(
+        val provider: ProviderSetting.OpenAI,
+        val conversationId: String,
+    )
+
+    private suspend fun resolveP14RemoteMutationContext(
+        conversationId: Uuid,
+        conversation: Conversation,
+        settings: Settings,
+    ): P14RemoteMutationContext? {
+        val assistant = settings.getAssistantOf(conversation)
+        if (assistant.runtimeMode != AssistantRuntimeMode.REMOTE) return null
+        val model = settings.getChatModelOf(conversation) ?: return null
+        if (model.modelId != "p14-hermes") return null
+        val provider = model.findProvider(settings.providers) as? ProviderSetting.OpenAI
+            ?: error("P14 Remote requires an OpenAI-compatible provider")
+        val binding = p14RemoteControlClient.resolveSession(provider, conversationId.toString())
+        return P14RemoteMutationContext(provider, binding.conversationId)
     }
 
     private fun UIMessagePart.copyWithForkedFileUrl(): UIMessagePart {
