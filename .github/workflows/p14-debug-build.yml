@@ -6,6 +6,9 @@ on:
     branches:
       - feat/p14-remote-runtime-v1
 
+permissions:
+  contents: write
+
 jobs:
   build-debug:
     runs-on: ubuntu-latest
@@ -69,3 +72,18 @@ jobs:
           name: rikkahub-p14-debug-${{ github.sha }}
           path: app/build/outputs/apk/debug/*.apk
           if-no-files-found: error
+
+      - name: Publish P14 debug prerelease
+        if: success()
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: p14-debug-${{ github.run_number }}
+          name: P14 Remote Runtime Debug #${{ github.run_number }}
+          prerelease: true
+          make_latest: false
+          body: |
+            Automated P14 Remote Runtime test build.
+
+            Commit: `${{ github.sha }}`
+            Branch: `${{ github.ref_name }}`
+          files: app/build/outputs/apk/debug/*.apk
