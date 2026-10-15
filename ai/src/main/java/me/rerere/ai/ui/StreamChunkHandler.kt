@@ -11,6 +11,7 @@ import me.rerere.ai.provider.Model
 import me.rerere.ai.provider.TextGenerationResult
 import me.rerere.ai.util.json
 import kotlin.time.Clock
+import kotlin.uuid.Uuid
 
 /**
  * 将 Provider 产生的通用流事件合并为一条 [UIMessage]。
@@ -291,6 +292,7 @@ class StreamChunkHandler(private val model: Model? = null) {
             is StreamChunk.Annotations -> copy(annotations = (annotations + chunk.annotations).distinct())
             is StreamChunk.Usage -> copy(usage = usage.merge(chunk.usage))
             is StreamChunk.Finish -> copy(
+                id = p14ResponseMessageId(model, chunk.responseId) ?: id,
                 finishedAt = Clock.System.now().toLocalDateTime(TimeZone.currentSystemDefault())
             ).finishReasoning().also {
                 // Finish 同时结束尚未显式结束的 reasoning，并释放本次响应流的索引状态。
@@ -310,6 +312,11 @@ class StreamChunkHandler(private val model: Model? = null) {
     })
 }
 
+private fun p14ResponseMessageId(model: Model?, responseId: String?): Uuid? {
+    if (model?.modelId != "p14-hermes" || responseId.isNullOrBlank()) return null
+    return runCatching { Uuid.parse(responseId) }.getOrNull()
+}
+
 private fun parseServerToolJson(value: String) = runCatching {
     json.parseToJsonElement(value)
 }.getOrElse { JsonPrimitive(value) }
@@ -326,6 +333,7 @@ fun List<UIMessage>.handleTextGenerationResult(
 ): List<UIMessage> {
     require(isNotEmpty()) { "messages must not be empty" }
     val incoming = result.message.copy(
+        id = p14ResponseMessageId(model, result.id) ?: result.message.id,
         modelId = model?.id,
         usage = result.usage,
         finishedAt = Clock.System.now().toLocalDateTime(TimeZone.currentSystemDefault()),

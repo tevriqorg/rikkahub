@@ -232,6 +232,11 @@ class ChatCompletionsAPI(
         val isOpenRouter = host == "openrouter.ai"
         return buildJsonObject {
             put("model", params.model.modelId)
+            if (params.model.modelId == "p14-hermes") {
+                messages.lastOrNull { it.role == MessageRole.USER }?.let {
+                    put("p14_message_id", it.id.toString())
+                }
+            }
             put(
                 "messages",
                 buildMessages(
