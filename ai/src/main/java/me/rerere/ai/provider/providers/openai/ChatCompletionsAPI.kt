@@ -633,6 +633,17 @@ class ChatCompletionsAPI(
             } else {
                 putJsonArray("content") {
                     message.parts.forEach { part ->
+                        val p14AttachmentId = part.metadata
+                            ?.get("p14_attachment_id")
+                            ?.jsonPrimitiveOrNull
+                            ?.contentOrNull
+                        if (p14AttachmentId != null) {
+                            add(buildJsonObject {
+                                put("type", "p14_attachment")
+                                put("attachment_id", p14AttachmentId)
+                            })
+                            return@forEach
+                        }
                         when (part) {
                             is UIMessagePart.Text -> {
                                 add(buildJsonObject {

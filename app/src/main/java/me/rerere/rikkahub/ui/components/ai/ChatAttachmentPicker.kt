@@ -49,6 +49,7 @@ internal data class ChatAttachmentPickerActions(
 internal fun rememberChatAttachmentPickerActions(
     inputState: ChatInputState,
     setting: Settings,
+    allowAnyDocument: Boolean = false,
     onAttachmentAdded: () -> Unit,
 ): ChatAttachmentPickerActions {
     val context = LocalContext.current
@@ -166,8 +167,9 @@ internal fun rememberChatAttachmentPickerActions(
             if (uris.isNotEmpty()) {
                 val documents = uris.mapNotNull { uri ->
                     val fileName = filesManager.getFileNameFromUri(uri) ?: "file"
-                    val mime = filesManager.getFileMimeType(uri) ?: "text/plain"
-                    if (isAllowedFileType(fileName, mime)) {
+                    val mime = filesManager.getFileMimeType(uri)
+                        ?: if (allowAnyDocument) "application/octet-stream" else "text/plain"
+                    if (allowAnyDocument || isAllowedFileType(fileName, mime)) {
                         val localUri = filesManager.createChatFilesByContents(listOf(uri)).firstOrNull()
                             ?: run {
                                 toaster.show(

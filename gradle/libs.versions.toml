@@ -1,6 +1,7 @@
 [versions]
 agp = "9.4.0"
 barcodeScanning = "17.3.0"
+bcprov = "1.82"
 cameraCore = "1.6.2"
 jlatexmath = "1.5"
 kotlin = "2.4.20"
@@ -66,6 +67,7 @@ diffutils = "4.17"
 snakeyaml = "2.7"
 
 [libraries]
+bouncycastle-bcprov = { module = "org.bouncycastle:bcprov-jdk18on", version.ref = "bcprov" }
 android-gradle-plugin = { module = "com.android.tools.build:gradle", version.ref = "agp" }
 kotlin-compose-gradle-plugin = { module = "org.jetbrains.kotlin:compose-compiler-gradle-plugin", version.ref = "kotlin" }
 kotlin-gradle-plugin = { module = "org.jetbrains.kotlin:kotlin-gradle-plugin", version.ref = "kotlin" }

@@ -59,6 +59,7 @@ import me.rerere.rikkahub.data.ai.transformers.TemplateTransformer
 import me.rerere.rikkahub.data.ai.transformers.ThinkTagTransformer
 import me.rerere.rikkahub.data.ai.transformers.TimeReminderTransformer
 import me.rerere.rikkahub.data.ai.transformers.WorkspaceReminderTransformer
+import me.rerere.rikkahub.data.remote.p14.P14RemoteAttachmentTransformer
 import me.rerere.rikkahub.data.event.AppEvent
 import me.rerere.rikkahub.data.event.AppEventBus
 import me.rerere.rikkahub.data.datastore.SettingsStore
@@ -87,6 +88,7 @@ import me.rerere.rikkahub.data.repository.ConversationRepository
 import me.rerere.rikkahub.data.repository.FolderRepository
 import me.rerere.rikkahub.data.repository.MemoryRepository
 import me.rerere.rikkahub.data.repository.WorkspaceRepository
+import okhttp3.OkHttpClient
 import me.rerere.rikkahub.data.repository.memoryId
 import me.rerere.rikkahub.web.BadRequestException
 import me.rerere.rikkahub.web.NotFoundException
@@ -200,9 +202,11 @@ class ChatService(
     private val filesManager: FilesManager,
     private val workspaceRepository: WorkspaceRepository,
     private val folderRepository: FolderRepository,
+    private val okHttpClient: OkHttpClient,
 ) {
     // workspace 系统提示注入 (依赖 workspaceRepository, 故在类内构造)
     private val workspaceReminderTransformer = WorkspaceReminderTransformer(workspaceRepository)
+    private val p14RemoteAttachmentTransformer = P14RemoteAttachmentTransformer(filesManager, okHttpClient)
 
     private val sessionManager = ConversationSessionManager(
         scope = appScope,
@@ -717,7 +721,7 @@ class ChatService(
                 conversationSystemPrompt = if (remoteRuntime) null else conversation.customSystemPrompt,
                 workspaceCwd = if (remoteRuntime) null else conversation.workspaceCwd,
                 memories = if (remoteRuntime) emptyList() else memoryRepository.getFiles(assistant.memoryId),
-                inputTransformers = if (remoteRuntime) emptyList() else buildList {
+                inputTransformers = if (remoteRuntime) listOf(p14RemoteAttachmentTransformer) else buildList {
                     addAll(inputTransformers)
                     add(templateTransformer)
                     add(workspaceReminderTransformer)
