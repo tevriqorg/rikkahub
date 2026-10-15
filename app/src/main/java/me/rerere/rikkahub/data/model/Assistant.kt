@@ -13,6 +13,12 @@ import java.util.concurrent.TimeUnit
 import kotlin.uuid.Uuid
 
 @Serializable
+enum class AssistantRuntimeMode {
+    NATIVE,
+    REMOTE,
+}
+
+@Serializable
 data class Assistant(
     val id: Uuid = Uuid.random(),
     val chatModelId: Uuid? = null, // 如果为null, 使用全局默认模型
@@ -26,6 +32,7 @@ data class Assistant(
     // 上下文消息条数上限, 超出后阶梯式截断; 0 表示不限制
     val contextMessageLimit: Int = 0,
     val streamOutput: Boolean = true,
+    val runtimeMode: AssistantRuntimeMode = AssistantRuntimeMode.NATIVE,
     val enableMemory: Boolean = false,
     val useGlobalMemory: Boolean = false, // 使用全局共享记忆而非助手隔离记忆
     val enableRecentChatsReference: Boolean = false,
@@ -51,6 +58,29 @@ data class Assistant(
     val timeReminderIntervalMinutes: Int = 60,          // 时间提醒间隔（分钟，至少 1 分钟）
     val allowConversationSystemPrompt: Boolean = false, // 允许对话单独重写 system prompt
 )
+
+
+fun Assistant.forGenerationRuntime(): Assistant = if (runtimeMode == AssistantRuntimeMode.NATIVE) {
+    this
+} else {
+    copy(
+        systemPrompt = "",
+        enableMemory = false,
+        useGlobalMemory = false,
+        enableRecentChatsReference = false,
+        messageTemplate = "{{ message }}",
+        regexes = emptyList(),
+        mcpServers = emptySet(),
+        localTools = emptyList(),
+        enableWebSearch = false,
+        workspaceId = null,
+        modeInjectionIds = emptySet(),
+        lorebookIds = emptySet(),
+        enabledSkills = emptySet(),
+        enableTimeReminder = false,
+        allowConversationSystemPrompt = false,
+    )
+}
 
 @Serializable
 data class QuickMessage(

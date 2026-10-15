@@ -1601,4 +1601,6 @@
   <string name="setting_display_page_enable_quote_highlight_desc">Color text inside quotation marks with the theme color to make character dialogue stand out</string>
   <string name="workspace_detail_copy_path">Copy path</string>
   <string name="workspace_detail_path_copied">Path copied</string>
+  <string name="assistant_page_remote_runtime">Remote Runtime</string>
+  <string name="assistant_page_remote_runtime_desc">Delegate the Agent loop to the remote backend. Local MCP, tools, memory, workspace, search, skills, prompts, automatic titles and suggestions are bypassed while enabled.</string>
 </resources>

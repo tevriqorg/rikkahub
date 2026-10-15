@@ -70,9 +70,11 @@ import me.rerere.rikkahub.data.files.FilesManager
 import me.rerere.rikkahub.data.model.Conversation
 import me.rerere.rikkahub.data.model.Assistant
 import me.rerere.rikkahub.data.model.AssistantAffectScope
+import me.rerere.rikkahub.data.model.AssistantRuntimeMode
 import me.rerere.rikkahub.data.model.MessageNode
 import me.rerere.rikkahub.data.model.bindConfig
 import me.rerere.rikkahub.data.model.fillModelSnapshots
+import me.rerere.rikkahub.data.model.forGenerationRuntime
 import me.rerere.rikkahub.data.model.getAssistantOf
 import me.rerere.rikkahub.data.model.getChatModelOf
 import me.rerere.rikkahub.data.model.getStoredAssistantOf
@@ -644,6 +646,8 @@ class ChatService(
         val initialConversation = getConversationFlow(conversationId).value
         // 模型、思考级别、搜索、工具等以会话上固定的配置为准
         val assistant = settings.getAssistantOf(initialConversation)
+        val remoteRuntime = assistant.runtimeMode == AssistantRuntimeMode.REMOTE
+        val generationAssistant = assistant.forGenerationRuntime()
         val model = settings.getChatModelOf(initialConversation)
             ?: throw IllegalStateException("No chat model selected")
 
@@ -652,7 +656,7 @@ class ChatService(
         } else {
             model.displayName
         }
-        val useExternalWebSearch = shouldUseExternalWebSearch(assistant, model)
+        val useExternalWebSearch = shouldUseExternalWebSearch(generationAssistant, model)
 
         runCatching {
 
@@ -661,7 +665,7 @@ class ChatService(
 
             // memory tool
             if (!model.abilities.contains(ModelAbility.TOOL)) {
-                if (useExternalWebSearch || mcpManager.getAllAvailableTools(assistant).isNotEmpty()) {
+                if (useExternalWebSearch || mcpManager.getAllAvailableTools(generationAssistant).isNotEmpty()) {
                     addError(
                         IllegalStateException(context.getString(R.string.tools_warning)),
                         conversationId,
@@ -677,9 +681,9 @@ class ChatService(
             val tools = try {
                 chatToolFactory.createTools(
                     settings = settings,
-                    assistant = assistant,
+                    assistant = generationAssistant,
                     model = model,
-                    workspaceCwd = conversation.workspaceCwd,
+                    workspaceCwd = if (remoteRuntime) null else conversation.workspaceCwd,
                 )
             } catch (error: InvalidMcpServerNamesException) {
                 sessionManager.get(conversationId)?.messageQueue?.pause()
@@ -708,17 +712,17 @@ class ChatService(
                         it
                     }
                 },
-                assistant = assistant,
+                assistant = generationAssistant,
                 conversationId = conversationId,
-                conversationSystemPrompt = conversation.customSystemPrompt,
-                workspaceCwd = conversation.workspaceCwd,
-                memories = memoryRepository.getFiles(assistant.memoryId),
-                inputTransformers = buildList {
+                conversationSystemPrompt = if (remoteRuntime) null else conversation.customSystemPrompt,
+                workspaceCwd = if (remoteRuntime) null else conversation.workspaceCwd,
+                memories = if (remoteRuntime) emptyList() else memoryRepository.getFiles(assistant.memoryId),
+                inputTransformers = if (remoteRuntime) emptyList() else buildList {
                     addAll(inputTransformers)
                     add(templateTransformer)
                     add(workspaceReminderTransformer)
                 },
-                outputTransformers = outputTransformers,
+                outputTransformers = if (remoteRuntime) emptyList() else outputTransformers,
                 tools = tools,
             ).onCompletion {
                 // 可能被取消了，或者意外结束，兜底更新
@@ -765,13 +769,15 @@ class ChatService(
         }.onSuccess {
             val finalConversation = getConversationFlow(conversationId).value
 
-            sessionManager.launchWithSession(conversationId) {
-                generateTitle(conversationId, finalConversation)
+            if (!remoteRuntime) {
+                sessionManager.launchWithSession(conversationId) {
+                    generateTitle(conversationId, finalConversation)
+                }
+                sessionManager.launchWithSession(conversationId) {
+                    generateSuggestion(conversationId, finalConversation)
+                }
+                if (assistant.enableMemory) memoryConsolidationScheduler.onTurnFinished(finalConversation)
             }
-            sessionManager.launchWithSession(conversationId) {
-                generateSuggestion(conversationId, finalConversation)
-            }
-            if (assistant.enableMemory) memoryConsolidationScheduler.onTurnFinished(finalConversation)
         }
     }
 

@@ -20,6 +20,7 @@ import kotlin.uuid.Uuid
 @Serializable
 data class ConversationConfig(
     val chatModelId: Uuid? = null,
+    val runtimeMode: AssistantRuntimeMode = AssistantRuntimeMode.NATIVE,
     val reasoningLevel: ReasoningLevel = ReasoningLevel.AUTO,
     val enableWebSearch: Boolean = false,
     val builtInSearch: Boolean = false, // 模型内置搜索，覆盖模型自身的开关
@@ -31,6 +32,7 @@ data class ConversationConfig(
 // 内置搜索是模型的开关，不在助手上，由调用方另行填入
 private fun Assistant.toConversationConfig() = ConversationConfig(
     chatModelId = chatModelId,
+    runtimeMode = runtimeMode,
     reasoningLevel = reasoningLevel,
     enableWebSearch = enableWebSearch,
     mcpServers = mcpServers,
@@ -40,6 +42,7 @@ private fun Assistant.toConversationConfig() = ConversationConfig(
 
 private fun Assistant.withConversationConfig(config: ConversationConfig) = copy(
     chatModelId = config.chatModelId,
+    runtimeMode = config.runtimeMode,
     reasoningLevel = config.reasoningLevel,
     enableWebSearch = config.enableWebSearch,
     mcpServers = config.mcpServers,
