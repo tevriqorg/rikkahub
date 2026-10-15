@@ -369,7 +369,10 @@ private fun ChatPageContent(
                                 messageId = inputState.editingMessage!!,
                             )
                         } else {
-                            vm.handleMessageSend(inputState.getContents())
+                            vm.handleMessageSend(
+                                content = inputState.getContents(),
+                                replyToMessageId = inputState.replyingToMessageId,
+                            )
                             scope.launch {
                                 delay(100.milliseconds)
                                 chatListState.requestScrollToItem(conversation.currentMessages.size + 5)
@@ -384,7 +387,11 @@ private fun ChatPageContent(
                                 messageId = inputState.editingMessage!!,
                             )
                         } else {
-                            vm.handleMessageSend(content = inputState.getContents(), answer = false)
+                            vm.handleMessageSend(
+                                content = inputState.getContents(),
+                                answer = false,
+                                replyToMessageId = inputState.replyingToMessageId,
+                            )
                             scope.launch {
                                 chatListState.requestScrollToItem(conversation.currentMessages.size + 5)
                             }
@@ -417,6 +424,9 @@ private fun ChatPageContent(
                 onClearAllErrors = onClearAllErrors,
                 onRegenerate = {
                     vm.regenerateAtMessage(it)
+                },
+                onReply = {
+                    inputState.startReply(it)
                 },
                 onEdit = {
                     inputState.editingMessage = it.id

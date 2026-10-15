@@ -25,6 +25,9 @@ import kotlinx.coroutines.flow.onCompletion
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
 import me.rerere.ai.core.MessageRole
 import me.rerere.ai.core.ReasoningLevel
 import me.rerere.ai.provider.BuiltInTools
@@ -100,6 +103,8 @@ import java.util.Locale
 import kotlin.uuid.Uuid
 
 private const val TAG = "ChatService"
+private const val P14_REPLY_METADATA_KEY = "p14_reply"
+private const val P14_REPLY_QUOTE_LIMIT = 20_000
 
 internal fun backgroundTextGenerationParams(
     model: Model,
@@ -393,12 +398,17 @@ class ChatService(
         dispatchNextQueuedMessage(conversationId)
     }
 
-    fun sendMessage(conversationId: Uuid, content: List<UIMessagePart>, answer: Boolean = true) {
+    fun sendMessage(
+        conversationId: Uuid,
+        content: List<UIMessagePart>,
+        answer: Boolean = true,
+        replyToMessageId: Uuid? = null,
+    ) {
         if (content.isEmptyInputMessage()) return
         val session = sessionManager.getOrCreate(conversationId)
         synchronized(session) {
             if (session.messageQueue.state.value.messages.isEmpty()) session.messageQueue.resume()
-            session.messageQueue.enqueue(content, answer)
+            session.messageQueue.enqueue(content, answer, replyToMessageId = replyToMessageId)
             dispatchNextQueuedMessage(conversationId)
         }
     }
@@ -450,7 +460,21 @@ class ChatService(
                 val settings = settingsStore.awaitLoaded()
                 val assistant = settings.getAssistantById(currentConversation.assistantId)
                     ?: settings.getCurrentAssistant()
-                val processedContent = preprocessUserInputParts(content, assistant)
+                var processedContent = preprocessUserInputParts(content, assistant)
+                queued.replyToMessageId?.let { targetMessageId ->
+                    val remote = resolveP14RemoteMutationContext(
+                        conversationId, currentConversation, settings
+                    ) ?: error("Reply is currently supported only by P14 Remote")
+                    val target = p14RemoteControlClient.getMessageState(
+                        remote.provider, remote.conversationId, targetMessageId
+                    )
+                    check(!target.deleted) { "Cannot reply to a deleted P14 message" }
+                    processedContent = processedContent.withP14ReplyContext(
+                        targetMessageId = targetMessageId,
+                        sourceRevision = target.revision,
+                        sourceText = target.bodyText,
+                    )
+                }
 
                 // 添加消息到列表
                 val newConversation = currentConversation.copy(
@@ -1552,6 +1576,41 @@ class ChatService(
         }
 
         return conversation.copy(messageNodes = updatedNodes)
+    }
+
+    private fun List<UIMessagePart>.withP14ReplyContext(
+        targetMessageId: Uuid,
+        sourceRevision: Int,
+        sourceText: String,
+    ): List<UIMessagePart> {
+        val index = indexOfFirst {
+            it is UIMessagePart.Text || it is UIMessagePart.Image || it is UIMessagePart.Video ||
+                it is UIMessagePart.Audio || it is UIMessagePart.Document
+        }
+        check(index >= 0) { "P14 reply requires a user-visible message part" }
+        val quoteText = sourceText.take(P14_REPLY_QUOTE_LIMIT)
+        val part = this[index]
+        val merged = buildJsonObject {
+            part.metadata?.forEach { (key, value) -> put(key, value) }
+            put(P14_REPLY_METADATA_KEY, buildJsonObject {
+                put("message_id", targetMessageId.toString())
+                put("quote", buildJsonObject {
+                    put("text", quoteText)
+                    put("source_revision", sourceRevision)
+                    put("start_char", 0)
+                    put("end_char", quoteText.length)
+                })
+            })
+        }
+        val updated = when (part) {
+            is UIMessagePart.Text -> part.copy(metadata = merged)
+            is UIMessagePart.Image -> part.copy(metadata = merged)
+            is UIMessagePart.Video -> part.copy(metadata = merged)
+            is UIMessagePart.Audio -> part.copy(metadata = merged)
+            is UIMessagePart.Document -> part.copy(metadata = merged)
+            else -> error("Unsupported P14 reply carrier")
+        }
+        return toMutableList().also { it[index] = updated }
     }
 
     private data class P14RemoteMutationContext(

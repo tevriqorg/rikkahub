@@ -6,6 +6,7 @@ import androidx.compose.foundation.text.input.setTextAndPlaceCursorAtEnd
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import me.rerere.ai.ui.UIMessage
 import me.rerere.ai.ui.UIMessagePart
 import kotlin.uuid.Uuid
 
@@ -13,6 +14,8 @@ class ChatInputState {
     val textContent = TextFieldState()
     var messageContent by mutableStateOf(listOf<UIMessagePart>())
     var editingMessage by mutableStateOf<Uuid?>(null)
+    var replyingToMessageId by mutableStateOf<Uuid?>(null)
+    var replyingToPreview by mutableStateOf<String?>(null)
     private var editingParts: List<UIMessagePart>? = null
     private var editingAttachmentUrls: Set<String> = emptySet()
 
@@ -20,11 +23,31 @@ class ChatInputState {
         textContent.setTextAndPlaceCursorAtEnd("")
         messageContent = emptyList()
         editingMessage = null
+        replyingToMessageId = null
+        replyingToPreview = null
         editingParts = null
         editingAttachmentUrls = emptySet()
     }
 
     fun isEditing() = editingMessage != null
+
+    fun startReply(message: UIMessage) {
+        replyingToMessageId = message.id
+        replyingToPreview = message.parts
+            .filterIsInstance<UIMessagePart.Text>()
+            .joinToString("\n") { it.text }
+            .trim()
+            .take(180)
+            .ifBlank { "Attachment" }
+        editingMessage = null
+        editingParts = null
+        editingAttachmentUrls = emptySet()
+    }
+
+    fun cancelReply() {
+        replyingToMessageId = null
+        replyingToPreview = null
+    }
 
     fun setMessageText(text: String) {
         textContent.setTextAndPlaceCursorAtEnd(text)
@@ -35,6 +58,7 @@ class ChatInputState {
     }
 
     fun setContents(contents: List<UIMessagePart>) {
+        cancelReply()
         val lastTextIndex = contents.indexOfLast { it is UIMessagePart.Text }
         val text = if (lastTextIndex >= 0) {
             (contents[lastTextIndex] as UIMessagePart.Text).text

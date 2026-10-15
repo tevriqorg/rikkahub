@@ -233,8 +233,17 @@ class ChatCompletionsAPI(
         return buildJsonObject {
             put("model", params.model.modelId)
             if (params.model.modelId == "p14-hermes") {
-                messages.lastOrNull { it.role == MessageRole.USER }?.let {
-                    put("p14_message_id", it.id.toString())
+                messages.lastOrNull { it.role == MessageRole.USER }?.let { userMessage ->
+                    put("p14_message_id", userMessage.id.toString())
+                    val reply = userMessage.parts.asSequence()
+                        .mapNotNull { it.metadata?.get("p14_reply") as? JsonObject }
+                        .firstOrNull()
+                    reply?.get("message_id")?.jsonPrimitive?.contentOrNull?.let {
+                        put("p14_reply_to_message_id", it)
+                    }
+                    (reply?.get("quote") as? JsonObject)?.let {
+                        put("p14_quote", it)
+                    }
                 }
             }
             put(

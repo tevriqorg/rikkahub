@@ -1,7 +1,10 @@
 package me.rerere.ai.provider.providers.openai
 
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.put
 import me.rerere.ai.provider.Model
 import me.rerere.ai.provider.ProviderSetting
 import me.rerere.ai.provider.TextGenerationParams
@@ -27,7 +30,26 @@ class P14RemoteRequestIdentityTest {
 
         val expected = Uuid.parse("11111111-1111-4111-8111-111111111111")
         val older = UIMessage.user("older")
-        val latest = UIMessage.user("latest").copy(id = expected)
+        val target = Uuid.parse("22222222-2222-4222-8222-222222222222")
+        val latest = UIMessage.user("latest").copy(
+            id = expected,
+            parts = listOf(
+                me.rerere.ai.ui.UIMessagePart.Text(
+                    "latest",
+                    metadata = buildJsonObject {
+                        put("p14_reply", buildJsonObject {
+                            put("message_id", target.toString())
+                            put("quote", buildJsonObject {
+                                put("text", "quoted")
+                                put("source_revision", 2)
+                                put("start_char", 0)
+                                put("end_char", 6)
+                            })
+                        })
+                    }
+                )
+            ),
+        )
         val model = Model(modelId = "p14-hermes")
         val body = method.invoke(
             api,
@@ -38,5 +60,8 @@ class P14RemoteRequestIdentityTest {
         ) as JsonObject
 
         assertEquals(expected.toString(), body["p14_message_id"]?.jsonPrimitive?.content)
+        assertEquals(target.toString(), body["p14_reply_to_message_id"]?.jsonPrimitive?.content)
+        assertEquals("quoted", body["p14_quote"]?.jsonObject?.get("text")?.jsonPrimitive?.content)
+        assertEquals("2", body["p14_quote"]?.jsonObject?.get("source_revision")?.jsonPrimitive?.content)
     }
 }

@@ -13,6 +13,7 @@ data class QueuedMessage(
     val id: Uuid = Uuid.random(),
     val parts: List<UIMessagePart>,
     val answer: Boolean = true,
+    val replyToMessageId: Uuid? = null,
     val isEditing: Boolean = false,
     // Optional in-memory observer; null result means the queued message was withdrawn.
     val reply: CompletableDeferred<String?>? = null,
@@ -42,7 +43,12 @@ class MessageQueue {
     val state = mutableState.asStateFlow()
 
     @Synchronized
-    fun enqueue(parts: List<UIMessagePart>, answer: Boolean = true, reply: CompletableDeferred<String?>? = null) {
+    fun enqueue(
+        parts: List<UIMessagePart>,
+        answer: Boolean = true,
+        replyToMessageId: Uuid? = null,
+        reply: CompletableDeferred<String?>? = null,
+    ) {
         if (parts.isEmptyInputMessage()) {
             reply?.complete(null)
             return
@@ -51,6 +57,7 @@ class MessageQueue {
             messages = state.value.messages + QueuedMessage(
                 parts = parts.toList(),
                 answer = answer,
+                replyToMessageId = replyToMessageId,
                 reply = reply,
             ),
         )

@@ -1605,4 +1605,6 @@ mDNS 地址：使用 .local 主机名，同一网络中的其他设备可通过�
   <string name="workspace_detail_path_copied">路径已复制</string>
   <string name="assistant_page_remote_runtime">远程运行模式</string>
   <string name="assistant_page_remote_runtime_desc">将 Agent Loop 交给远端后端执行。启用时跳过本地 MCP、工具、记忆、工作区、搜索、Skills、提示词注入以及自动标题和建议。</string>
+    <string name="reply">回复</string>
+    <string name="replying_to">正在回复</string>
 </resources>
