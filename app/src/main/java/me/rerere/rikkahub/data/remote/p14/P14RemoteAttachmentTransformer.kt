@@ -44,7 +44,7 @@ import kotlin.uuid.Uuid
 
 internal class P14RemoteAttachmentTransformer(
     private val filesManager: FilesManager,
-    httpClient: OkHttpClient,
+    private val httpClient: OkHttpClient,
 ) : InputMessageTransformer {
     private val client = httpClient.newBuilder()
         .readTimeout(10, TimeUnit.MINUTES)
@@ -76,6 +76,20 @@ internal class P14RemoteAttachmentTransformer(
                             return@async index to part
                         }
                         attachmentSemaphore.withPermit {
+                            val durable = P14ProductDatabase.get(ctx.context).dao()
+                                .attachmentsForMessage(user.id.toString())
+                                .firstOrNull { it.localAttachmentId == "${user.id}:$index" }
+                            if (durable != null) {
+                                val connection = P14RuntimeConnection(
+                                    provider.baseUrl.trimEnd('/'), provider.apiKey, provider.id.toString()
+                                )
+                                ctx.processingStatus.value = "Remote: restoring durable attachment ${durable.fileName}"
+                                val attachmentId = P14DurableAttachmentUploader(ctx.context, httpClient)
+                                    .ensureUploaded(connection, durable)
+                                val done = completed.incrementAndGet()
+                                ctx.processingStatus.value = "Remote: attachments $done/$attachmentCount ready"
+                                return@withPermit index to part.withP14AttachmentId(attachmentId)
+                            }
                             val source = resolveSource(ctx, part)
                             val encryptedDir = File(ctx.context.cacheDir, "p14-remote").apply { mkdirs() }
                             val cipher = File(encryptedDir, "${Uuid.random()}.p20e2ee")

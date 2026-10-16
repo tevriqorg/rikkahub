@@ -36,6 +36,10 @@ import me.rerere.rikkahub.di.viewModelModule
 import me.rerere.rikkahub.data.files.FilesManager
 import me.rerere.rikkahub.data.datastore.SettingsStore
 import me.rerere.rikkahub.data.sync.BackupManager
+import me.rerere.rikkahub.data.remote.p14.P14ProductSyncRuntime
+import me.rerere.rikkahub.data.remote.p14.P14RemoteWork
+import okhttp3.OkHttpClient
+import org.koin.core.context.GlobalContext
 import me.rerere.rikkahub.data.sync.RestoreFailedException
 import me.rerere.rikkahub.utils.JsonInstant
 import me.rerere.rikkahub.service.MediaCreationService
@@ -79,6 +83,11 @@ class RikkaHubApp : Application() {
             workManagerFactory()
             modules(appModule, viewModelModule, dataSourceModule, repositoryModule)
         }
+        // P14 recovery is local-first: retry durable accepted work and then attach live sync.
+        val p14Http = GlobalContext.get().get<OkHttpClient>()
+        P14RemoteWork.enqueue(this)
+        P14ProductSyncRuntime.start(this, p14Http)
+
         this.createNotificationChannel()
 
         // set cursor window size to 32MB
