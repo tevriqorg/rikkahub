@@ -1,6 +1,9 @@
 name: P14 Recovery Signed Test APK
 
 on:
+  push:
+    branches:
+      - fix/p14r3-recovery
   workflow_dispatch:
 
 permissions:
