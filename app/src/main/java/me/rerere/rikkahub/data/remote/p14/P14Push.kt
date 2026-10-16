@@ -2,7 +2,6 @@ package me.rerere.rikkahub.data.remote.p14
 
 import android.app.Activity
 import android.content.Context
-import android.util.Base64
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.launch
@@ -42,11 +41,11 @@ internal object P14Push {
             }
         }
     }
-    suspend fun registerEndpoint(context:Context,endpoint:String,p256dh:ByteArray,auth:ByteArray) {
+    suspend fun registerEndpoint(context:Context,endpoint:String,p256dh:String,auth:String) {
         val store=P14RuntimeCredentialStore(context); val c=store.activeConnection()?:return
         val http=GlobalContext.get().get<OkHttpClient>(); val device=store.deviceId()
         val existing=runCatching { json.decodeFromString<PushSubscription>(execute(http,Request.Builder().url("${c.baseUrl}/push/devices/$device").header("Authorization","Bearer ${c.bearerToken}").get().build())) }.getOrNull()
-        val cmd=PushCommand(endpoint,Base64.encodeToString(p256dh,Base64.NO_WRAP),Base64.encodeToString(auth,Base64.NO_WRAP),existing?.revision)
+        val cmd=PushCommand(endpoint,p256dh,auth,existing?.revision)
         val req=Request.Builder().url("${c.baseUrl}/push/devices/$device").header("Authorization","Bearer ${c.bearerToken}").put(json.encodeToString(cmd).toRequestBody(media)).build()
         execute(http,req)
     }
