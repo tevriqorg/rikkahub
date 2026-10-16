@@ -24,6 +24,7 @@ class ConversationConfigTest {
 
     private val assistant = Assistant(
         chatModelId = modelA.id,
+        runtimeMode = AssistantRuntimeMode.REMOTE,
         reasoningLevel = ReasoningLevel.HIGH,
         enableWebSearch = true,
         mcpServers = setOf(mcpServer),
@@ -49,6 +50,30 @@ class ConversationConfigTest {
     )
 
     @Test
+    fun `remote runtime disables local agent features without mutating stored assistant`() {
+        val native = assistant.copy(
+            systemPrompt = "local prompt",
+            enableMemory = true,
+            enableRecentChatsReference = true,
+            enableWebSearch = true,
+        )
+        val remote = native.copy(runtimeMode = AssistantRuntimeMode.REMOTE)
+        val effective = remote.forGenerationRuntime()
+
+        assertEquals(AssistantRuntimeMode.REMOTE, effective.runtimeMode)
+        assertEquals("", effective.systemPrompt)
+        assertFalse(effective.enableMemory)
+        assertFalse(effective.enableRecentChatsReference)
+        assertFalse(effective.enableWebSearch)
+        assertTrue(effective.mcpServers.isEmpty())
+        assertTrue(effective.localTools.isEmpty())
+        assertNull(effective.workspaceId)
+        assertTrue(effective.enabledSkills.isEmpty())
+        assertEquals("local prompt", remote.systemPrompt)
+        assertTrue(remote.enableMemory)
+    }
+
+    @Test
     fun `unstarted conversation follows the assistant`() {
         val conversation = conversation()
 
@@ -63,6 +88,7 @@ class ConversationConfigTest {
         assertEquals(
             ConversationConfig(
                 chatModelId = modelA.id,
+                runtimeMode = AssistantRuntimeMode.REMOTE,
                 reasoningLevel = ReasoningLevel.HIGH,
                 enableWebSearch = true,
                 builtInSearch = true,

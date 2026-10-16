@@ -45,6 +45,7 @@ import me.rerere.hugeicons.HugeIcons
 import me.rerere.hugeicons.stroke.Copy01
 import me.rerere.hugeicons.stroke.Delete01
 import me.rerere.hugeicons.stroke.Edit01
+import me.rerere.hugeicons.stroke.ArrowTurnBackward
 import me.rerere.hugeicons.stroke.FavouriteCircle
 import me.rerere.hugeicons.stroke.GitFork
 import me.rerere.hugeicons.stroke.MoreVertical
@@ -259,6 +260,7 @@ fun ChatMessageActionsSheet(
     message: UIMessage,
     model: Model?,
     onDelete: () -> Unit,
+    onReply: (() -> Unit)?,
     onEdit: () -> Unit,
     onShare: () -> Unit,
     onFork: () -> Unit,
@@ -279,6 +281,9 @@ fun ChatMessageActionsSheet(
             add(MessageSheetAction(HugeIcons.TextSelection, stringResource(R.string.select_and_copy), onClick = onSelectAndCopy))
             if (hasTextContent) {
                 add(MessageSheetAction(HugeIcons.WebDesign01, stringResource(R.string.render_with_webview), onClick = onWebViewPreview))
+            }
+            if (onReply != null) {
+                add(MessageSheetAction(HugeIcons.ArrowTurnBackward, stringResource(R.string.reply), onClick = onReply))
             }
             add(MessageSheetAction(HugeIcons.Edit01, stringResource(R.string.edit), onClick = onEdit))
             add(MessageSheetAction(HugeIcons.Share04, stringResource(R.string.share), onClick = onShare))

@@ -1,5 +1,7 @@
 package me.rerere.rikkahub.ui.pages.chat
 
+import android.content.Intent
+
 import android.net.Uri
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Column
@@ -38,9 +40,11 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -65,9 +69,13 @@ import me.rerere.rikkahub.data.datastore.findProvider
 import me.rerere.rikkahub.data.datastore.getSelectedASRProvider
 import me.rerere.rikkahub.data.files.FilesManager
 import me.rerere.rikkahub.data.model.Assistant
+import me.rerere.rikkahub.data.model.AssistantRuntimeMode
 import me.rerere.rikkahub.data.model.Conversation
 import me.rerere.rikkahub.data.repository.WorkspaceRepository
+import me.rerere.rikkahub.data.remote.p14.P14_DEFAULT_SERVER
+import me.rerere.rikkahub.data.remote.p14.p14ConfiguredServerUrl
 import me.rerere.rikkahub.service.ChatError
+import me.rerere.rikkahub.ui.activity.P14InboxActivity
 import me.rerere.rikkahub.ui.components.ai.ChatAttachmentPickerActions
 import me.rerere.rikkahub.ui.components.ai.ChatInput
 import me.rerere.rikkahub.ui.components.ai.FilesPicker
@@ -103,6 +111,7 @@ fun ChatPage(id: Uuid, text: String?, files: List<Uri>, nodeId: Uuid? = null) {
     val conversation by vm.conversation.collectAsStateWithLifecycle()
     val loadingJob by vm.conversationJob.collectAsStateWithLifecycle()
     val processingStatus by vm.processingStatus.collectAsStateWithLifecycle()
+    val remoteActivityStatusLines by vm.remoteActivityStatusLines.collectAsStateWithLifecycle()
     val currentChatModel by vm.currentChatModel.collectAsStateWithLifecycle()
     val assistant by vm.assistant.collectAsStateWithLifecycle()
     val errors by vm.errors.collectAsStateWithLifecycle()
@@ -202,6 +211,7 @@ fun ChatPage(id: Uuid, text: String?, files: List<Uri>, nodeId: Uuid? = null) {
                     inputState = inputState,
                     loadingJob = loadingJob,
                     processingStatus = processingStatus,
+                    remoteActivityStatusLines = remoteActivityStatusLines,
                     setting = setting,
                     conversation = conversation,
                     drawerState = drawerState,
@@ -235,6 +245,7 @@ fun ChatPage(id: Uuid, text: String?, files: List<Uri>, nodeId: Uuid? = null) {
                     inputState = inputState,
                     loadingJob = loadingJob,
                     processingStatus = processingStatus,
+                    remoteActivityStatusLines = remoteActivityStatusLines,
                     setting = setting,
                     conversation = conversation,
                     drawerState = drawerState,
@@ -262,6 +273,7 @@ private fun ChatPageContent(
     inputState: ChatInputState,
     loadingJob: Job?,
     processingStatus: String? = null,
+    remoteActivityStatusLines: List<String> = emptyList(),
     setting: Settings,
     bigScreen: Boolean,
     conversation: Conversation,
@@ -280,15 +292,33 @@ private fun ChatPageContent(
     val workspaceRepository: WorkspaceRepository = koinInject()
 
     var previewMode by rememberSaveable { mutableStateOf(false) }
+    var showP14Connection by rememberSaveable { mutableStateOf(false) }
+
+    if (showP14Connection) {
+        P14ServerConnectionDialog(
+            initialUrl = setting.p14ConfiguredServerUrl() ?: P14_DEFAULT_SERVER,
+            configured = assistant.runtimeMode == AssistantRuntimeMode.REMOTE && currentChatModel?.modelId == "p14-hermes",
+            onDismiss = { showP14Connection = false },
+            onSave = { url, token, onError ->
+                vm.configureP14Remote(url, token) { result ->
+                    result.onSuccess {
+                        showP14Connection = false
+                        toaster.show("P14 Server 已连接，可以直接聊天", type = ToastType.Success)
+                    }.onFailure { error ->
+                        onError(error.message ?: "连接 P14 Server 失败")
+                    }
+                }
+            },
+        )
+    }
     val hazeState = rememberHazeState()
     var showFilesSheet by remember { mutableStateOf(false) }
     val attachmentPickerActions = rememberChatAttachmentPickerActions(
         inputState = inputState,
         setting = setting,
+        allowAnyDocument = assistant.runtimeMode == AssistantRuntimeMode.REMOTE,
         onAttachmentAdded = { showFilesSheet = false },
     )
-    val allowAudioVideoAttachments =
-        currentChatModel?.findProvider(setting.providers) is ProviderSetting.Google
 
     val completionProviders = remember(assistant.workspaceId, conversation.workspaceCwd, workspaceRepository) {
         assistant.workspaceId?.let { workspaceId ->
@@ -325,6 +355,7 @@ private fun ChatPageContent(
                     onClickMenu = {
                         previewMode = !previewMode
                     },
+                    onP14Connection = { showP14Connection = true },
                     onUpdateTitle = {
                         vm.updateTitle(it)
                     }
@@ -369,7 +400,10 @@ private fun ChatPageContent(
                                 messageId = inputState.editingMessage!!,
                             )
                         } else {
-                            vm.handleMessageSend(inputState.getContents())
+                            vm.handleMessageSend(
+                                content = inputState.getContents(),
+                                replyToMessageId = inputState.replyingToMessageId,
+                            )
                             scope.launch {
                                 delay(100.milliseconds)
                                 chatListState.requestScrollToItem(conversation.currentMessages.size + 5)
@@ -384,7 +418,11 @@ private fun ChatPageContent(
                                 messageId = inputState.editingMessage!!,
                             )
                         } else {
-                            vm.handleMessageSend(content = inputState.getContents(), answer = false)
+                            vm.handleMessageSend(
+                                content = inputState.getContents(),
+                                answer = false,
+                                replyToMessageId = inputState.replyingToMessageId,
+                            )
                             scope.launch {
                                 chatListState.requestScrollToItem(conversation.currentMessages.size + 5)
                             }
@@ -409,6 +447,7 @@ private fun ChatPageContent(
                 state = chatListState,
                 loading = loadingJob != null,
                 processingStatus = processingStatus,
+                remoteActivityStatusLines = remoteActivityStatusLines,
                 previewMode = previewMode,
                 settings = setting,
                 hazeState = hazeState,
@@ -417,6 +456,9 @@ private fun ChatPageContent(
                 onClearAllErrors = onClearAllErrors,
                 onRegenerate = {
                     vm.regenerateAtMessage(it)
+                },
+                onReply = {
+                    inputState.startReply(it)
                 },
                 onEdit = {
                     inputState.editingMessage = it.id
@@ -515,6 +557,7 @@ private fun ChatFilesPickerSheet(
 
     fun dismissAll() {
         showCompressDialog = false
+        attachmentPickerActions.onCancelVoiceMessage()
         onDismiss()
     }
 
@@ -547,6 +590,8 @@ private fun ChatFilesPickerSheet(
             onPickImage = attachmentPickerActions.onPickImage,
             onPickVideo = attachmentPickerActions.onPickVideo,
             onPickAudio = attachmentPickerActions.onPickAudio,
+            onToggleVoiceMessage = attachmentPickerActions.onToggleVoiceMessage,
+            isRecordingVoiceMessage = attachmentPickerActions.isRecordingVoiceMessage,
             onPickFile = attachmentPickerActions.onPickFile,
             onSketch = attachmentPickerActions.onSketch,
             onStartVoiceMode = if (
@@ -565,6 +610,56 @@ private fun ChatFilesPickerSheet(
 }
 
 @Composable
+private fun P14ServerConnectionDialog(
+    initialUrl: String,
+    configured: Boolean,
+    onDismiss: () -> Unit,
+    onSave: (String, String, (String) -> Unit) -> Unit,
+) {
+    var url by rememberSaveable(initialUrl) { mutableStateOf(initialUrl) }
+    var token by rememberSaveable { mutableStateOf("") }
+    var error by rememberSaveable { mutableStateOf<String?>(null) }
+    var saving by rememberSaveable { mutableStateOf(false) }
+
+    AlertDialog(
+        onDismissRequest = { if (!saving) onDismiss() },
+        title = { Text("P14 Server") },
+        text = {
+            Column {
+                Text(if (configured) "已连接。重新保存会替换当前连接。" else "连接 P14 Server，保存后即可直接聊天。")
+                OutlinedTextField(
+                    value = url,
+                    onValueChange = { url = it; error = null },
+                    modifier = Modifier.fillMaxWidth(),
+                    label = { Text("Server URL") },
+                    singleLine = true,
+                )
+                OutlinedTextField(
+                    value = token,
+                    onValueChange = { token = it; error = null },
+                    modifier = Modifier.fillMaxWidth(),
+                    label = { Text("P14 Server token") },
+                    singleLine = true,
+                    visualTransformation = PasswordVisualTransformation(),
+                )
+                error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+            }
+        },
+        confirmButton = {
+            TextButton(
+                enabled = !saving && url.isNotBlank() && token.isNotBlank(),
+                onClick = {
+                    saving = true
+                    error = null
+                    onSave(url, token) { message -> saving = false; error = message }
+                },
+            ) { Text(if (saving) "连接中…" else "保存") }
+        },
+        dismissButton = { TextButton(enabled = !saving, onClick = onDismiss) { Text("取消") } },
+    )
+}
+
+@Composable
 private fun TopBar(
     settings: Settings,
     assistant: Assistant,
@@ -575,10 +670,12 @@ private fun TopBar(
     previewMode: Boolean,
     onClickMenu: () -> Unit,
     onNewChat: () -> Unit,
+    onP14Connection: () -> Unit,
     onUpdateTitle: (String) -> Unit
 ) {
     val scope = rememberCoroutineScope()
     val toaster = LocalToaster.current
+    val context = LocalContext.current
     val titleState = useEditState<String> {
         onUpdateTitle(it)
     }
@@ -618,7 +715,11 @@ private fun TopBar(
                     )
                     if (chatModel != null && provider != null) {
                         Text(
-                            text = "${assistant.name.ifBlank { stringResource(R.string.assistant_page_default_assistant) }} / ${chatModel.displayName} (${provider.name})",
+                            text = buildString {
+                                append(assistant.name.ifBlank { stringResource(R.string.assistant_page_default_assistant) })
+                                if (assistant.runtimeMode == AssistantRuntimeMode.REMOTE) append(" · REMOTE")
+                                append(" / ${chatModel.displayName} (${provider.name})")
+                            },
                             overflow = TextOverflow.Ellipsis,
                             maxLines = 1,
                             color = LocalContentColor.current.copy(0.65f),
@@ -631,6 +732,13 @@ private fun TopBar(
             }
         },
         actions = {
+            val p14Connected = assistant.runtimeMode == AssistantRuntimeMode.REMOTE && chatModel?.modelId == "p14-hermes"
+            TextButton(onClick = onP14Connection) { Text(if (p14Connected) "Server ✓" else "连接 Server") }
+            if (p14Connected) {
+                TextButton(onClick = {
+                    context.startActivity(Intent(context, P14InboxActivity::class.java))
+                }) { Text("Inbox") }
+            }
             IconButton(
                 onClick = {
                     onClickMenu()

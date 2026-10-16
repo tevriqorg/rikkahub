@@ -13,9 +13,13 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.google.firebase.analytics.FirebaseAnalytics
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.flatMapLatest
@@ -40,6 +44,8 @@ import me.rerere.rikkahub.data.model.getAssistantOf
 import me.rerere.rikkahub.data.model.getChatModelOf
 import me.rerere.rikkahub.data.repository.ConversationRepository
 import me.rerere.rikkahub.data.repository.FavoriteRepository
+import me.rerere.rikkahub.data.remote.p14.P14_ASSISTANT_ID
+import me.rerere.rikkahub.data.remote.p14.withP14QuickSetup
 import me.rerere.rikkahub.service.ChatError
 import me.rerere.rikkahub.service.ChatService
 import me.rerere.rikkahub.ui.hooks.writeStringPreference
@@ -83,6 +89,9 @@ class ChatVM(
         chatService
             .getProcessingStatusFlow(_conversationId)
 
+    private val _remoteActivityStatusLines = MutableStateFlow<List<String>>(emptyList())
+    val remoteActivityStatusLines: StateFlow<List<String>> = _remoteActivityStatusLines.asStateFlow()
+
     val conversationJobs = chatService
         .getConversationJobs()
         .stateIn(viewModelScope, SharingStarted.Eagerly, emptyMap())
@@ -91,9 +100,15 @@ class ChatVM(
         // 添加对话引用
         chatService.addConversationReference(_conversationId)
 
-        // 初始化对话
+        // 初始化对话；Remote Activity 只在当前 ChatVM 生命周期内做轻量刷新。
         viewModelScope.launch {
             chatService.initializeConversation(_conversationId)
+            while (isActive) {
+                _remoteActivityStatusLines.value = runCatching {
+                    chatService.getP14RemoteActivityStatusLines(_conversationId)
+                }.getOrDefault(emptyList())
+                delay(5_000)
+            }
         }
 
         // 记住对话ID, 方便下次启动恢复
@@ -220,11 +235,15 @@ class ChatVM(
      * @param content 消息内容
      * @param answer 是否触发消息生成，如果为false，则仅添加消息到消息列表中
      */
-    fun handleMessageSend(content: List<UIMessagePart>,answer: Boolean = true) {
+    fun handleMessageSend(
+        content: List<UIMessagePart>,
+        answer: Boolean = true,
+        replyToMessageId: Uuid? = null,
+    ) {
         if (content.isEmptyInputMessage()) return
         analytics.logEvent("ai_send_message", null)
 
-        chatService.sendMessage(_conversationId, content, answer)
+        chatService.sendMessage(_conversationId, content, answer, replyToMessageId)
     }
 
     fun handleMessageEdit(parts: List<UIMessagePart>, messageId: Uuid) {
@@ -232,7 +251,14 @@ class ChatVM(
         analytics.logEvent("ai_edit_message", null)
 
         viewModelScope.launch {
-            chatService.editMessage(_conversationId, messageId, parts)
+            runCatching { chatService.editMessage(_conversationId, messageId, parts) }
+                .onFailure {
+                    chatService.addError(
+                        it,
+                        conversationId = _conversationId,
+                        title = context.getString(R.string.error_title_operation),
+                    )
+                }
         }
     }
 
@@ -256,7 +282,14 @@ class ChatVM(
 
     fun deleteMessage(message: UIMessage) {
         viewModelScope.launch {
-            chatService.deleteMessage(_conversationId, message)
+            runCatching { chatService.deleteMessage(_conversationId, message) }
+                .onFailure {
+                    chatService.addError(
+                        it,
+                        conversationId = _conversationId,
+                        title = context.getString(R.string.error_title_operation),
+                    )
+                }
         }
     }
 
@@ -329,6 +362,37 @@ class ChatVM(
             if (conversation.id == _conversationId) {
                 settingsStore.selectAssistant(targetAssistantId)
             }
+        }
+    }
+
+    fun configureP14Remote(
+        serverUrl: String,
+        setupToken: String,
+        onResult: (Result<Unit>) -> Unit,
+    ) {
+        viewModelScope.launch {
+            val result = runCatching {
+                var configuredProvider: me.rerere.ai.provider.ProviderSetting.OpenAI? = null
+                settingsStore.update { settings ->
+                    settings.withP14QuickSetup(serverUrl, setupToken).also { configuredProvider = it.provider }.settings
+                }
+                val provider = checkNotNull(configuredProvider)
+                try {
+                    // Exchange the one-time setup credential immediately so saving the dialog means connected.
+                    chatService.prepareP14Remote(provider)
+                } catch (error: Throwable) {
+                    // Never leave a failed setup credential persisted in ordinary provider settings.
+                    settingsStore.update { settings ->
+                        settings.copy(providers = settings.providers.map { item ->
+                            if (item.id == provider.id && item is me.rerere.ai.provider.ProviderSetting.OpenAI) item.copy(apiKey = "") else item
+                        })
+                    }
+                    throw error
+                }
+                chatService.moveConversationToAssistant(_conversationId, P14_ASSISTANT_ID)
+                settingsStore.selectAssistant(P14_ASSISTANT_ID)
+            }
+            onResult(result)
         }
     }
 

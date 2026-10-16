@@ -58,11 +58,13 @@ import me.rerere.hugeicons.stroke.ComputerTerminal01
 import me.rerere.hugeicons.stroke.Files02
 import me.rerere.hugeicons.stroke.Folder01
 import me.rerere.hugeicons.stroke.Image02
+import me.rerere.hugeicons.stroke.Mic01
 import me.rerere.hugeicons.stroke.MusicNote03
 import me.rerere.hugeicons.stroke.Package
 import me.rerere.hugeicons.stroke.Package01
 import me.rerere.hugeicons.stroke.PaintBoard
 import me.rerere.hugeicons.stroke.Settings02
+import me.rerere.hugeicons.stroke.StopCircle
 import me.rerere.hugeicons.stroke.Video01
 import me.rerere.hugeicons.stroke.Voice
 import me.rerere.rikkahub.R
@@ -72,6 +74,7 @@ import me.rerere.rikkahub.data.datastore.Settings
 import me.rerere.rikkahub.data.datastore.findProvider
 import me.rerere.rikkahub.data.db.entity.WorkspaceEntity
 import me.rerere.rikkahub.data.model.Assistant
+import me.rerere.rikkahub.data.model.AssistantRuntimeMode
 import me.rerere.rikkahub.data.model.Conversation
 import me.rerere.rikkahub.data.repository.WorkspaceRepository
 import me.rerere.rikkahub.ui.components.ui.ExtensionSelector
@@ -105,6 +108,8 @@ internal fun FilesPicker(
     onPickImage: () -> Unit,
     onPickVideo: () -> Unit,
     onPickAudio: () -> Unit,
+    onToggleVoiceMessage: () -> Unit,
+    isRecordingVoiceMessage: Boolean,
     onPickFile: () -> Unit,
     onSketch: () -> Unit,
     onStartVoiceMode: (() -> Unit)? = null,
@@ -168,9 +173,18 @@ internal fun FilesPicker(
                         add(AttachmentAction(HugeIcons.Camera01, R.string.take_picture, onTakePic))
                         add(AttachmentAction(HugeIcons.Image02, R.string.photo, onPickImage))
                         add(AttachmentAction(HugeIcons.PaintBoard, R.string.sketch, onSketch))
-                        if (provider != null && provider is ProviderSetting.Google) {
+                        if (provider is ProviderSetting.Google || assistant.runtimeMode == AssistantRuntimeMode.REMOTE) {
                             add(AttachmentAction(HugeIcons.Video01, R.string.video, onPickVideo))
                             add(AttachmentAction(HugeIcons.MusicNote03, R.string.audio, onPickAudio))
+                        }
+                        if (assistant.runtimeMode == AssistantRuntimeMode.REMOTE) {
+                            add(
+                                AttachmentAction(
+                                    if (isRecordingVoiceMessage) HugeIcons.StopCircle else HugeIcons.Mic01,
+                                    if (isRecordingVoiceMessage) R.string.p14_stop_recording else R.string.p14_voice_message,
+                                    onToggleVoiceMessage,
+                                )
+                            )
                         }
                         add(AttachmentAction(HugeIcons.Files02, R.string.upload_file, onPickFile))
                         onStartVoiceMode?.let { start ->

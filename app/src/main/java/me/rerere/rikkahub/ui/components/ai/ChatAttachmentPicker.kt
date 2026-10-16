@@ -1,10 +1,14 @@
 package me.rerere.rikkahub.ui.components.ai
 
+import android.media.MediaRecorder
 import android.net.Uri
+import android.os.Build
+import android.os.SystemClock
 import android.util.Log
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -27,6 +31,7 @@ import me.rerere.ui.sketch.SketchDialog
 import me.rerere.ui.sketch.SketchResult
 import me.rerere.rikkahub.ui.components.ui.permission.PermissionCamera
 import me.rerere.rikkahub.ui.components.ui.permission.PermissionManager
+import me.rerere.rikkahub.ui.components.ui.permission.PermissionRecordAudio
 import me.rerere.rikkahub.ui.components.ui.permission.rememberPermissionState
 import me.rerere.rikkahub.ui.context.LocalToaster
 import me.rerere.rikkahub.ui.hooks.ChatInputState
@@ -41,6 +46,9 @@ internal data class ChatAttachmentPickerActions(
     val onPickImage: () -> Unit,
     val onPickVideo: () -> Unit,
     val onPickAudio: () -> Unit,
+    val onToggleVoiceMessage: () -> Unit,
+    val onCancelVoiceMessage: () -> Unit,
+    val isRecordingVoiceMessage: Boolean,
     val onPickFile: () -> Unit,
     val onSketch: () -> Unit,
 )
@@ -49,6 +57,7 @@ internal data class ChatAttachmentPickerActions(
 internal fun rememberChatAttachmentPickerActions(
     inputState: ChatInputState,
     setting: Settings,
+    allowAnyDocument: Boolean = false,
     onAttachmentAdded: () -> Unit,
 ): ChatAttachmentPickerActions {
     val context = LocalContext.current
@@ -56,7 +65,71 @@ internal fun rememberChatAttachmentPickerActions(
     val toaster = LocalToaster.current
     val filesManager: FilesManager = koinInject()
     val cameraPermission = rememberPermissionState(PermissionCamera)
+    val audioPermission = rememberPermissionState(PermissionRecordAudio)
     PermissionManager(permissionState = cameraPermission)
+    PermissionManager(permissionState = audioPermission)
+
+    var voiceRecorder by remember { mutableStateOf<MediaRecorder?>(null) }
+    var voiceOutputFile by remember { mutableStateOf<File?>(null) }
+    var voiceStartedAt by remember { mutableStateOf(0L) }
+    var isRecordingVoiceMessage by remember { mutableStateOf(false) }
+
+    fun stopVoiceMessage(commit: Boolean) {
+        val recorder = voiceRecorder
+        val file = voiceOutputFile
+        val durationMs = (SystemClock.elapsedRealtime() - voiceStartedAt).coerceAtLeast(0L)
+        voiceRecorder = null
+        voiceOutputFile = null
+        voiceStartedAt = 0L
+        isRecordingVoiceMessage = false
+        runCatching { recorder?.stop() }
+        runCatching { recorder?.release() }
+        if (commit && file?.isFile == true && file.length() > 0L && durationMs >= 300L) {
+            runCatching {
+                val managed = filesManager.createChatFileFromFile(
+                    source = file,
+                    displayName = "voice-message.m4a",
+                    mimeType = "audio/mp4",
+                )
+                inputState.addVoiceMessage(managed, durationMs)
+                onAttachmentAdded()
+            }.onFailure { toaster.show(it.message ?: "Voice recording failed", type = ToastType.Error) }
+        }
+        file?.delete()
+    }
+
+    val onToggleVoiceMessage: () -> Unit = {
+        if (isRecordingVoiceMessage) {
+            stopVoiceMessage(commit = true)
+        } else if (!audioPermission.allRequiredPermissionsGranted) {
+            audioPermission.requestPermissions()
+        } else {
+            runCatching {
+                val file = context.cacheDir.resolve("voice_note_${Uuid.random()}.m4a")
+                @Suppress("DEPRECATION")
+                val recorder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) MediaRecorder(context) else MediaRecorder()
+                recorder.setAudioSource(MediaRecorder.AudioSource.MIC)
+                recorder.setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
+                recorder.setAudioEncoder(MediaRecorder.AudioEncoder.AAC)
+                recorder.setAudioSamplingRate(44_100)
+                recorder.setAudioEncodingBitRate(128_000)
+                recorder.setOutputFile(file.absolutePath)
+                recorder.prepare()
+                recorder.start()
+                voiceRecorder = recorder
+                voiceOutputFile = file
+                voiceStartedAt = SystemClock.elapsedRealtime()
+                isRecordingVoiceMessage = true
+            }.onFailure {
+                stopVoiceMessage(commit = false)
+                toaster.show(it.message ?: "Voice recording failed", type = ToastType.Error)
+            }
+        }
+    }
+
+    DisposableEffect(Unit) {
+        onDispose { stopVoiceMessage(commit = false) }
+    }
 
     var cameraOutputUri by remember { mutableStateOf<Uri?>(null) }
     var cameraOutputFile by remember { mutableStateOf<File?>(null) }
@@ -166,8 +239,9 @@ internal fun rememberChatAttachmentPickerActions(
             if (uris.isNotEmpty()) {
                 val documents = uris.mapNotNull { uri ->
                     val fileName = filesManager.getFileNameFromUri(uri) ?: "file"
-                    val mime = filesManager.getFileMimeType(uri) ?: "text/plain"
-                    if (isAllowedFileType(fileName, mime)) {
+                    val mime = filesManager.getFileMimeType(uri)
+                        ?: if (allowAnyDocument) "application/octet-stream" else "text/plain"
+                    if (allowAnyDocument || isAllowedFileType(fileName, mime)) {
                         val localUri = filesManager.createChatFilesByContents(listOf(uri)).firstOrNull()
                             ?: run {
                                 toaster.show(
@@ -212,6 +286,9 @@ internal fun rememberChatAttachmentPickerActions(
         onPickImage = { imagePickerLauncher.launch("image/*") },
         onPickVideo = { videoPickerLauncher.launch("video/*") },
         onPickAudio = { audioPickerLauncher.launch("audio/*") },
+        onToggleVoiceMessage = onToggleVoiceMessage,
+        onCancelVoiceMessage = { if (isRecordingVoiceMessage) stopVoiceMessage(commit = false) },
+        isRecordingVoiceMessage = isRecordingVoiceMessage,
         onPickFile = { filePickerLauncher.launch(arrayOf("*/*")) },
         onSketch = { showSketch = true },
     )

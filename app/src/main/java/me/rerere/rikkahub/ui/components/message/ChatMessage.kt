@@ -70,6 +70,7 @@ import me.rerere.rikkahub.R
 import me.rerere.rikkahub.Screen
 import me.rerere.rikkahub.data.model.Assistant
 import me.rerere.rikkahub.data.model.AssistantAffectScope
+import me.rerere.rikkahub.data.model.AssistantRuntimeMode
 import me.rerere.rikkahub.data.model.MessageNode
 import me.rerere.rikkahub.data.model.replaceRegexes
 import me.rerere.rikkahub.ui.components.richtext.MarkdownBlock
@@ -102,6 +103,7 @@ fun ChatMessage(
     lastMessage: Boolean = false,
     onFork: () -> Unit,
     onRegenerate: () -> Unit,
+    onReply: () -> Unit,
     onEdit: () -> Unit,
     onShare: () -> Unit,
     onDelete: () -> Unit,
@@ -227,6 +229,7 @@ fun ChatMessage(
     if (showActionsSheet) {
         ChatMessageActionsSheet(
             message = message,
+            onReply = if (assistant?.runtimeMode == AssistantRuntimeMode.REMOTE) onReply else null,
             onEdit = onEdit,
             onDelete = onDelete,
             onShare = onShare,
