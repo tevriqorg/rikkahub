@@ -6,6 +6,8 @@ import androidx.compose.foundation.text.input.setTextAndPlaceCursorAtEnd
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
 import me.rerere.ai.ui.UIMessage
 import me.rerere.ai.ui.UIMessagePart
 import kotlin.uuid.Uuid
@@ -140,6 +142,17 @@ class ChatInputState {
             newMessage.add(UIMessagePart.Audio(uri.toString()))
         }
         messageContent = newMessage
+    }
+
+    fun addVoiceMessage(uri: Uri, durationMs: Long) {
+        val metadata = buildJsonObject {
+            put("p14_media_role", "voice_message")
+            put("p14_duration_ms", durationMs)
+        }
+        messageContent = messageContent + UIMessagePart.Audio(
+            url = uri.toString(),
+            metadata = metadata,
+        )
     }
 
     fun addFiles(uris: List<UIMessagePart.Document>) {

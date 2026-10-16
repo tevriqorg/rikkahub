@@ -530,6 +530,7 @@ private fun ChatFilesPickerSheet(
 
     fun dismissAll() {
         showCompressDialog = false
+        attachmentPickerActions.onCancelVoiceMessage()
         onDismiss()
     }
 
@@ -562,6 +563,8 @@ private fun ChatFilesPickerSheet(
             onPickImage = attachmentPickerActions.onPickImage,
             onPickVideo = attachmentPickerActions.onPickVideo,
             onPickAudio = attachmentPickerActions.onPickAudio,
+            onToggleVoiceMessage = attachmentPickerActions.onToggleVoiceMessage,
+            isRecordingVoiceMessage = attachmentPickerActions.isRecordingVoiceMessage,
             onPickFile = attachmentPickerActions.onPickFile,
             onSketch = attachmentPickerActions.onSketch,
             onStartVoiceMode = if (

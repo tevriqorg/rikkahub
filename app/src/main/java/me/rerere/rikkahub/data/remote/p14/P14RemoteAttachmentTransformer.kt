@@ -17,6 +17,7 @@ import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.longOrNull
 import kotlinx.serialization.json.put
 import me.rerere.ai.core.MessageRole
 import me.rerere.ai.provider.ProviderSetting
@@ -90,7 +91,14 @@ internal class P14RemoteAttachmentTransformer(
                                 )
                                 ctx.processingStatus.value =
                                     "Remote: uploading ${source.displayName} · ${completed.get()}/$attachmentCount complete"
-                                val attachmentId = uploadAndImport(provider, encrypted) { doneParts, totalParts ->
+                                val mediaRole = part.metadata?.get(P14_MEDIA_ROLE)?.jsonPrimitive?.contentOrNull
+                                val durationMs = part.metadata?.get(P14_DURATION_MS)?.jsonPrimitive?.longOrNull
+                                val attachmentId = uploadAndImport(
+                                    provider = provider,
+                                    encrypted = encrypted,
+                                    mediaRole = mediaRole,
+                                    durationMs = durationMs,
+                                ) { doneParts, totalParts ->
                                     ctx.processingStatus.value =
                                         "Remote: uploading ${source.displayName} · part $doneParts/$totalParts"
                                 }
@@ -151,6 +159,8 @@ internal class P14RemoteAttachmentTransformer(
     private suspend fun uploadAndImport(
         provider: ProviderSetting.OpenAI,
         encrypted: P20E2EE.EncryptResult,
+        mediaRole: String?,
+        durationMs: Long?,
         onPartProgress: (Int, Int) -> Unit,
     ): String {
         val created = control(
@@ -160,6 +170,8 @@ internal class P14RemoteAttachmentTransformer(
             buildJsonObject {
                 put("ciphertext_size", encrypted.size)
                 put("ciphertext_sha256", encrypted.sha256)
+                mediaRole?.let { put("media_role", it) }
+                durationMs?.let { put("duration_ms", it) }
             },
         )
         val transitId = created["transit_id"]?.jsonPrimitive?.contentOrNull ?: error("P14 transit id missing")
@@ -297,6 +309,8 @@ internal class P14RemoteAttachmentTransformer(
 
     private companion object {
         const val P14_ATTACHMENT_ID = "p14_attachment_id"
+        const val P14_MEDIA_ROLE = "p14_media_role"
+        const val P14_DURATION_MS = "p14_duration_ms"
         const val REMOTE_ATTACHMENT_CONCURRENCY = 3
     }
 }

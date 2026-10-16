@@ -1606,4 +1606,6 @@
     <string name="reply">Reply</string>
     <string name="replying_to">Replying to</string>
     <string name="p14_remote_activity">Activity</string>
+    <string name="p14_voice_message">Voice message</string>
+    <string name="p14_stop_recording">Stop recording</string>
 </resources>

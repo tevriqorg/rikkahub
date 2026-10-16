@@ -1608,4 +1608,6 @@ mDNS 地址：使用 .local 主机名，同一网络中的其他设备可通过�
     <string name="reply">回复</string>
     <string name="replying_to">正在回复</string>
     <string name="p14_remote_activity">任务活动</string>
+    <string name="p14_voice_message">语音消息</string>
+    <string name="p14_stop_recording">停止录音</string>
 </resources>
