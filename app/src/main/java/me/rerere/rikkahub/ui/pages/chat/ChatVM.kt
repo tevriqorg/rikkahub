@@ -36,6 +36,7 @@ import me.rerere.rikkahub.data.datastore.Settings
 import me.rerere.rikkahub.data.datastore.SettingsStore
 import me.rerere.rikkahub.data.files.FilesManager
 import me.rerere.rikkahub.data.model.Assistant
+import me.rerere.rikkahub.data.model.AssistantRuntimeMode
 import me.rerere.rikkahub.data.model.Avatar
 import me.rerere.rikkahub.data.model.Conversation
 import me.rerere.rikkahub.data.model.MessageNode
@@ -202,7 +203,12 @@ class ChatVM(
     // 设置聊天模型
     fun setChatModel(model: Model) {
         viewModelScope.launch {
-            chatService.updateChatAssistant(_conversationId) { it.copy(chatModelId = model.id) }
+            chatService.updateChatAssistant(_conversationId) { assistant ->
+                assistant.copy(
+                    chatModelId = model.id,
+                    runtimeMode = if (model.modelId == "p14-hermes") AssistantRuntimeMode.REMOTE else assistant.runtimeMode,
+                )
+            }
         }
     }
 

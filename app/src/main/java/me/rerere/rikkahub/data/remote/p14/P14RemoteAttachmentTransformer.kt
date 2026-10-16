@@ -44,7 +44,7 @@ import kotlin.uuid.Uuid
 
 internal class P14RemoteAttachmentTransformer(
     private val filesManager: FilesManager,
-    httpClient: OkHttpClient,
+    private val httpClient: OkHttpClient,
 ) : InputMessageTransformer {
     private val client = httpClient.newBuilder()
         .readTimeout(10, TimeUnit.MINUTES)
@@ -63,7 +63,10 @@ internal class P14RemoteAttachmentTransformer(
         val user = messages[userIndex]
         val attachmentCount = user.parts.count { it.isRemoteAttachment() }
         if (attachmentCount == 0) return listOf(user)
-        require(attachmentCount <= 20) { "P14 Remote supports at most 20 attachments per message" }
+        val connection=P14RuntimeConnection(provider.baseUrl.trimEnd('/'),provider.apiKey,provider.id.toString())
+        val manifest=P14ManifestPolicy.load(ctx.context,connection,httpClient)
+        P14ManifestPolicy.requireChat(manifest)
+        require(attachmentCount <= manifest.maxAttachmentsPerMessage) { "P14 Manifest attachment count limit exceeded" }
 
         return withContext(Dispatchers.IO) {
             val recipientKey = getRecipientKey(provider)
@@ -76,7 +79,26 @@ internal class P14RemoteAttachmentTransformer(
                             return@async index to part
                         }
                         attachmentSemaphore.withPermit {
+                            val durable = P14ProductDatabase.get(ctx.context).dao()
+                                .attachmentsForMessage(user.id.toString())
+                                .firstOrNull { it.localAttachmentId == "${user.id}:$index" }
+                            if (durable != null) {
+                                P14ManifestPolicy.requireAttachment(manifest,durable.kind,durable.byteSize)
+                                ctx.processingStatus.value = "Remote: restoring durable attachment ${durable.fileName}"
+                                val attachmentId = P14DurableAttachmentUploader(ctx.context, httpClient)
+                                    .ensureUploaded(connection, durable)
+                                val done = completed.incrementAndGet()
+                                ctx.processingStatus.value = "Remote: attachments $done/$attachmentCount ready"
+                                return@withPermit index to part.withP14AttachmentId(attachmentId)
+                            }
                             val source = resolveSource(ctx, part)
+                            val capabilityKind=when(part) {
+                                is UIMessagePart.Image -> "IMAGE"
+                                is UIMessagePart.Video -> "VIDEO"
+                                is UIMessagePart.Audio -> if(part.metadata?.get(P14_MEDIA_ROLE)?.jsonPrimitive?.contentOrNull=="voice_message") "VOICE" else "AUDIO"
+                                else -> "FILE"
+                            }
+                            P14ManifestPolicy.requireAttachment(manifest,capabilityKind,source.file.length())
                             val encryptedDir = File(ctx.context.cacheDir, "p14-remote").apply { mkdirs() }
                             val cipher = File(encryptedDir, "${Uuid.random()}.p20e2ee")
                             try {

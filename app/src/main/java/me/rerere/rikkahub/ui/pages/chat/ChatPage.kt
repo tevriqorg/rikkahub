@@ -76,6 +76,7 @@ import me.rerere.rikkahub.data.remote.p14.P14_DEFAULT_SERVER
 import me.rerere.rikkahub.data.remote.p14.p14ConfiguredServerUrl
 import me.rerere.rikkahub.service.ChatError
 import me.rerere.rikkahub.ui.activity.P14InboxActivity
+import me.rerere.rikkahub.ui.activity.P14EntryActivity
 import me.rerere.rikkahub.ui.components.ai.ChatAttachmentPickerActions
 import me.rerere.rikkahub.ui.components.ai.ChatInput
 import me.rerere.rikkahub.ui.components.ai.FilesPicker
@@ -735,6 +736,10 @@ private fun TopBar(
             val p14Connected = assistant.runtimeMode == AssistantRuntimeMode.REMOTE && chatModel?.modelId == "p14-hermes"
             TextButton(onClick = onP14Connection) { Text(if (p14Connected) "Server ✓" else "连接 Server") }
             if (p14Connected) {
+                TextButton(onClick = {
+                    context.startActivity(Intent(context, P14EntryActivity::class.java)
+                        .putExtra(P14EntryActivity.EXTRA_EXTERNAL_SESSION_ID, conversation.id.toString()))
+                }) { Text("Entry") }
                 TextButton(onClick = {
                     context.startActivity(Intent(context, P14InboxActivity::class.java))
                 }) { Text("Inbox") }

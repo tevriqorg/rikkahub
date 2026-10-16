@@ -44,6 +44,7 @@ import kotlinx.serialization.json.JsonObject
     val compatibility:String,
     @SerialName("enabled_views") val enabledViews:List<String> = emptyList(),
     @SerialName("message_capabilities") val messageCapabilities:List<String> = emptyList(),
+    @SerialName("quick_action_types") val quickActionTypes:List<String> = emptyList(),
     @SerialName("upload_limits") val uploadLimits:P14UploadLimits=P14UploadLimits(),
     @SerialName("feature_flags") val featureFlags:Map<String,Boolean> = emptyMap(),
 )
@@ -53,7 +54,7 @@ import kotlinx.serialization.json.JsonObject
 )
 data class P14EffectiveManifest(
     val source:String,val compatibility:String,val enabledViews:Set<String>,val messageCapabilities:Set<String>,
-    val maxAttachmentBytes:Long,val maxAttachmentsPerMessage:Int,
+    val quickActionTypes:List<String>,val maxAttachmentBytes:Long,val maxAttachmentsPerMessage:Int,
 )
 object P14RikkaCapabilities {
     const val PROTOCOL=1; const val SCHEMA="p14.remote-manifest/v1"
@@ -65,6 +66,7 @@ fun P14ManifestDto.effective(source:String="REMOTE"):P14EffectiveManifest {
     val caps=messageCapabilities.toSet().intersect(P14RikkaCapabilities.messages)
     return P14EffectiveManifest(source,compatibility,enabledViews.toSet().intersect(P14RikkaCapabilities.views),
         if(compatibility=="UPGRADE_REQUIRED") emptySet() else caps,
+        if(compatibility=="UPGRADE_REQUIRED" || "quick_action" !in caps) emptyList() else quickActionTypes.distinct(),
         uploadLimits.maxAttachmentBytes.coerceAtLeast(1),uploadLimits.maxAttachmentsPerMessage.coerceIn(1,100))
 }
-fun fallbackP14Manifest()=P14EffectiveManifest("BUILTIN_FALLBACK","LIMITED_MODE",setOf("chat","inbox"),setOf("text"),16L*1024*1024,1)
+fun fallbackP14Manifest()=P14EffectiveManifest("BUILTIN_FALLBACK","LIMITED_MODE",setOf("chat","inbox"),setOf("text"),emptyList(),16L*1024*1024,1)

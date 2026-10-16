@@ -21,6 +21,11 @@ import javax.crypto.SecretKey
 import javax.crypto.spec.GCMParameterSpec
 import kotlin.uuid.Uuid
 
+internal const val P14_DEVICE_CREDENTIAL_MARKER_PREFIX = "p14-device://"
+internal fun p14DeviceCredentialMarker(providerId: String) = P14_DEVICE_CREDENTIAL_MARKER_PREFIX + providerId
+internal fun p14DeviceCredentialProviderId(value: String): String? =
+    value.takeIf { it.startsWith(P14_DEVICE_CREDENTIAL_MARKER_PREFIX) }?.removePrefix(P14_DEVICE_CREDENTIAL_MARKER_PREFIX)?.takeIf { it.isNotBlank() }
+
 internal data class P14RuntimeConnection(val baseUrl: String, val bearerToken: String, val providerId: String)
 
 internal class P14RuntimeCredentialStore(context: Context) {
@@ -44,6 +49,11 @@ internal class P14RuntimeCredentialStore(context: Context) {
             cipher.init(Cipher.DECRYPT_MODE, key(), GCMParameterSpec(128, Base64.decode(iv, Base64.NO_WRAP)))
             cipher.doFinal(Base64.decode(data, Base64.NO_WRAP)).toString(Charsets.UTF_8)
         }.getOrNull()
+    }
+    fun loadForRequest(providerId: String, requestUrl: String): String? {
+        val base = prefs.getString("${providerId}_base", null) ?: return null
+        if (!requestUrl.startsWith(base)) return null
+        return load(providerId, base)
     }
     fun save(providerId: String, baseUrl: String, token: String) {
         val cipher=Cipher.getInstance(TRANSFORMATION); cipher.init(Cipher.ENCRYPT_MODE, key())
@@ -76,12 +86,25 @@ internal class P14RuntimeAccess(
     private val settingsStore: SettingsStore,
     private val http: OkHttpClient,
 ) {
-    private val store=P14RuntimeCredentialStore(context.applicationContext)
+    private val appContext=context.applicationContext
+    private val store=P14RuntimeCredentialStore(appContext)
     private val json=Json { ignoreUnknownKeys=true; explicitNulls=false }
 
     suspend fun prepare(provider: ProviderSetting.OpenAI): ProviderSetting.OpenAI {
         val pid=provider.id.toString(); val base=provider.baseUrl.trimEnd('/')
-        store.load(pid, base)?.let { store.markActive(pid,base); return provider.copy(apiKey=it) }
+        store.load(pid, base)?.let { token ->
+            store.markActive(pid,base)
+            val marker = p14DeviceCredentialMarker(pid)
+            if (provider.apiKey != marker) settingsStore.update { settings ->
+                settings.copy(providers=settings.providers.map { p ->
+                    if (p is ProviderSetting.OpenAI && p.id==provider.id) p.copy(apiKey=marker) else p
+                })
+            }
+            return provider.copy(apiKey=token)
+        }
+        require(p14DeviceCredentialProviderId(provider.apiKey) == null) {
+            "P14 device credential is unavailable on this installation; pair this device again"
+        }
         require(provider.apiKey.isNotBlank()) { "P14 Remote needs setup credential once on this device" }
         val setup=P14RuntimeConnection(base, provider.apiKey, pid)
         val session:DeviceSession=decode(get(setup,"device-session"))
@@ -95,10 +118,13 @@ internal class P14RuntimeAccess(
         }
         store.save(pid,base,token)
         store.markActive(pid,base)
-        // Never retain owner/setup or runtime bearer credentials in ordinary RikkaHub settings.
-        if (provider.apiKey.isNotBlank()) settingsStore.update { settings ->
+        P14RemoteWork.enqueue(appContext)
+        P14ProductSyncRuntime.start(appContext, http)
+        // Ordinary Provider settings retain only a non-secret marker; the bearer stays in Android Keystore.
+        val marker = p14DeviceCredentialMarker(pid)
+        settingsStore.update { settings ->
             settings.copy(providers=settings.providers.map { p ->
-                if (p is ProviderSetting.OpenAI && p.id==provider.id) p.copy(apiKey="") else p
+                if (p is ProviderSetting.OpenAI && p.id==provider.id) p.copy(apiKey=marker) else p
             })
         }
         return provider.copy(apiKey=token)

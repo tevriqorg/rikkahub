@@ -26,6 +26,8 @@ import me.rerere.rikkahub.data.remote.RikkaHubAPI
 import me.rerere.rikkahub.data.remote.SponsorAPI
 import me.rerere.rikkahub.data.datastore.SettingsStore
 import me.rerere.rikkahub.data.remote.RemoteFileStore
+import me.rerere.rikkahub.data.remote.p14.P14RuntimeCredentialStore
+import me.rerere.rikkahub.data.remote.p14.p14DeviceCredentialProviderId
 import me.rerere.rikkahub.data.sync.BackupManager
 import me.rerere.rikkahub.data.db.AppDatabaseFactory
 import me.rerere.rikkahub.data.db.AppDatabase
@@ -161,7 +163,9 @@ val dataSourceModule = module {
 
     single<OkHttpClient> {
         val settingsStore: SettingsStore = get()
-        val acceptLang = AcceptLanguageBuilder.fromAndroid(get())
+        val context: Context = get()
+        val p14CredentialStore = P14RuntimeCredentialStore(context)
+        val acceptLang = AcceptLanguageBuilder.fromAndroid(context)
             .build()
         java.net.Authenticator.setDefault(SettingsSocks5Authenticator(settingsStore))
         val initialNetworkSetting = settingsStore.settingsFlow.value.networkSetting
@@ -196,6 +200,15 @@ val dataSourceModule = module {
                 val originalRequest = chain.request()
                 val requestBuilder = originalRequest.newBuilder()
                     .addHeader(HttpHeaders.AcceptLanguage, acceptLang)
+
+                originalRequest.header(HttpHeaders.Authorization)
+                    ?.removePrefix("Bearer ")
+                    ?.let(::p14DeviceCredentialProviderId)
+                    ?.let { providerId ->
+                        val token = p14CredentialStore.loadForRequest(providerId, originalRequest.url.toString())
+                            ?: throw java.io.IOException("P14 device credential is unavailable; pair this device again")
+                        requestBuilder.header(HttpHeaders.Authorization, "Bearer $token")
+                    }
 
                 if (originalRequest.header(HttpHeaders.UserAgent) == null) {
                     val userAgent = settingsStore.settingsFlow.value.networkSetting.userAgent
