@@ -104,6 +104,7 @@ fun ChatPage(id: Uuid, text: String?, files: List<Uri>, nodeId: Uuid? = null) {
     val conversation by vm.conversation.collectAsStateWithLifecycle()
     val loadingJob by vm.conversationJob.collectAsStateWithLifecycle()
     val processingStatus by vm.processingStatus.collectAsStateWithLifecycle()
+    val remoteActivityStatusLines by vm.remoteActivityStatusLines.collectAsStateWithLifecycle()
     val currentChatModel by vm.currentChatModel.collectAsStateWithLifecycle()
     val assistant by vm.assistant.collectAsStateWithLifecycle()
     val errors by vm.errors.collectAsStateWithLifecycle()
@@ -203,6 +204,7 @@ fun ChatPage(id: Uuid, text: String?, files: List<Uri>, nodeId: Uuid? = null) {
                     inputState = inputState,
                     loadingJob = loadingJob,
                     processingStatus = processingStatus,
+                    remoteActivityStatusLines = remoteActivityStatusLines,
                     setting = setting,
                     conversation = conversation,
                     drawerState = drawerState,
@@ -236,6 +238,7 @@ fun ChatPage(id: Uuid, text: String?, files: List<Uri>, nodeId: Uuid? = null) {
                     inputState = inputState,
                     loadingJob = loadingJob,
                     processingStatus = processingStatus,
+                    remoteActivityStatusLines = remoteActivityStatusLines,
                     setting = setting,
                     conversation = conversation,
                     drawerState = drawerState,
@@ -263,6 +266,7 @@ private fun ChatPageContent(
     inputState: ChatInputState,
     loadingJob: Job?,
     processingStatus: String? = null,
+    remoteActivityStatusLines: List<String> = emptyList(),
     setting: Settings,
     bigScreen: Boolean,
     conversation: Conversation,
@@ -416,6 +420,7 @@ private fun ChatPageContent(
                 state = chatListState,
                 loading = loadingJob != null,
                 processingStatus = processingStatus,
+                remoteActivityStatusLines = remoteActivityStatusLines,
                 previewMode = previewMode,
                 settings = setting,
                 hazeState = hazeState,

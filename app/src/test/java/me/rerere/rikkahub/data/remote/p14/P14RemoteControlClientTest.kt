@@ -125,6 +125,44 @@ class P14RemoteControlClientTest {
         assertTrue(requests.single().url.encodedPath.endsWith("/v1/conversations/conversation-1/quick-actions"))
     }
 
+    @Test
+    fun `activity list reads authoritative remote projection`() = runTest {
+        val requests = mutableListOf<Request>()
+        val responseJson = """[
+            {
+                "activity_id":"activity-1",
+                "state":"running",
+                "phase":"collecting sources",
+                "progress_percent":25,
+                "revision":2
+            }
+        ]""".trimIndent()
+        val http = OkHttpClient.Builder().addInterceptor { chain ->
+            val request = chain.request()
+            requests += request
+            Response.Builder()
+                .request(request)
+                .protocol(Protocol.HTTP_1_1)
+                .code(200)
+                .message("OK")
+                .body(responseJson.toResponseBody("application/json".toMediaType()))
+                .build()
+        }.build()
+        val provider = ProviderSetting.OpenAI(
+            apiKey = "test-token",
+            baseUrl = "https://p14.example/v1",
+        )
+        val activities = P14RemoteControlClient(http).listActivities(provider, "conversation-1")
+
+        assertEquals(1, activities.size)
+        assertEquals("activity-1", activities.single().activityId)
+        assertEquals("running", activities.single().state)
+        assertEquals("collecting sources", activities.single().phase)
+        assertEquals(25, activities.single().progressPercent)
+        assertEquals(2, activities.single().revision)
+        assertTrue(requests.single().url.encodedPath.endsWith("/v1/conversations/conversation-1/activities"))
+    }
+
     private fun Request.bodyText(): String {
         val buffer = okio.Buffer()
         body?.writeTo(buffer)

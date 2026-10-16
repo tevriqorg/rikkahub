@@ -13,9 +13,13 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.google.firebase.analytics.FirebaseAnalytics
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.flatMapLatest
@@ -83,6 +87,9 @@ class ChatVM(
         chatService
             .getProcessingStatusFlow(_conversationId)
 
+    private val _remoteActivityStatusLines = MutableStateFlow<List<String>>(emptyList())
+    val remoteActivityStatusLines: StateFlow<List<String>> = _remoteActivityStatusLines.asStateFlow()
+
     val conversationJobs = chatService
         .getConversationJobs()
         .stateIn(viewModelScope, SharingStarted.Eagerly, emptyMap())
@@ -91,9 +98,15 @@ class ChatVM(
         // 添加对话引用
         chatService.addConversationReference(_conversationId)
 
-        // 初始化对话
+        // 初始化对话；Remote Activity 只在当前 ChatVM 生命周期内做轻量刷新。
         viewModelScope.launch {
             chatService.initializeConversation(_conversationId)
+            while (isActive) {
+                _remoteActivityStatusLines.value = runCatching {
+                    chatService.getP14RemoteActivityStatusLines(_conversationId)
+                }.getOrDefault(emptyList())
+                delay(5_000)
+            }
         }
 
         // 记住对话ID, 方便下次启动恢复

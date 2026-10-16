@@ -1633,6 +1633,23 @@ class ChatService(
         return P14RemoteMutationContext(provider, binding.conversationId)
     }
 
+    internal suspend fun getP14RemoteActivityStatusLines(conversationId: Uuid): List<String> {
+        val conversation = getConversationFlow(conversationId).value
+        val settings = settingsStore.awaitLoaded()
+        val remote = resolveP14RemoteMutationContext(conversationId, conversation, settings)
+            ?: return emptyList()
+        val activities = p14RemoteControlClient.listActivities(remote.provider, remote.conversationId)
+        val active = activities.filterNot { it.state in setOf("completed", "failed", "cancelled") }
+        val visible = if (active.isNotEmpty()) active.take(3) else activities.take(1)
+        return visible.map { activity ->
+            buildList {
+                add(activity.state.replaceFirstChar { ch -> ch.uppercase() })
+                activity.phase?.takeIf(String::isNotBlank)?.let(::add)
+                activity.progressPercent?.let { add("$it%") }
+            }.joinToString(" · ")
+        }
+    }
+
     private fun UIMessagePart.copyWithForkedFileUrl(): UIMessagePart {
         fun copyLocalFileIfNeeded(url: String): String {
             if (!url.startsWith("file:")) return url

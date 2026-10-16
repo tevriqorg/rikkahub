@@ -3,6 +3,8 @@ package me.rerere.rikkahub.data.remote.p14
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
@@ -39,6 +41,14 @@ internal class P14RemoteControlClient(
         val actionType: String,
         val syncSeq: Long,
         val deduplicated: Boolean,
+    )
+
+    data class ActivityProjection(
+        val activityId: String,
+        val state: String,
+        val phase: String?,
+        val progressPercent: Int?,
+        val revision: Int,
     )
 
     suspend fun resolveSession(
@@ -147,13 +157,51 @@ internal class P14RemoteControlClient(
         )
     }
 
+    suspend fun listActivities(
+        provider: ProviderSetting.OpenAI,
+        conversationId: String,
+    ): List<ActivityProjection> = withContext(Dispatchers.IO) {
+        requestArray(
+            provider = provider,
+            method = "GET",
+            path = "/conversations/$conversationId/activities",
+        ).map { element ->
+            val body = element.jsonObject
+            ActivityProjection(
+                activityId = body.requireString("activity_id"),
+                state = body.requireString("state"),
+                phase = body["phase"]?.jsonPrimitive?.contentOrNull,
+                progressPercent = body["progress_percent"]?.jsonPrimitive?.intOrNull,
+                revision = body["revision"]?.jsonPrimitive?.intOrNull
+                    ?: error("P14 activity omitted revision"),
+            )
+        }
+    }
+
     private fun request(
         provider: ProviderSetting.OpenAI,
         method: String,
         path: String,
         sessionId: String? = null,
-        body: kotlinx.serialization.json.JsonObject? = null,
-    ): kotlinx.serialization.json.JsonObject {
+        body: JsonObject? = null,
+    ): JsonObject = requestElement(provider, method, path, sessionId, body).jsonObject
+
+    private fun requestArray(
+        provider: ProviderSetting.OpenAI,
+        method: String,
+        path: String,
+        sessionId: String? = null,
+        body: JsonObject? = null,
+    ): JsonArray = requestElement(provider, method, path, sessionId, body) as? JsonArray
+        ?: error("P14 response is not a JSON array")
+
+    private fun requestElement(
+        provider: ProviderSetting.OpenAI,
+        method: String,
+        path: String,
+        sessionId: String?,
+        body: JsonObject?,
+    ): JsonElement {
         val builder = Request.Builder()
             .url(provider.baseUrl.trimEnd('/') + path)
             .header("Authorization", "Bearer ${provider.apiKey}")
@@ -172,7 +220,7 @@ internal class P14RemoteControlClient(
             check(response.isSuccessful) {
                 "P14 control request failed: HTTP ${response.code} $text"
             }
-            json.parseToJsonElement(text).jsonObject
+            json.parseToJsonElement(text)
         }
     }
 
