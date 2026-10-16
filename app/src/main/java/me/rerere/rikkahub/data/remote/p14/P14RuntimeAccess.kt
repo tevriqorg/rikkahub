@@ -95,8 +95,8 @@ internal class P14RuntimeAccess(
         }
         store.save(pid,base,token)
         store.markActive(pid,base)
-        // Never retain owner/setup credential in ordinary RikkaHub settings after exchange.
-        if (session.scope=="OWNER_SETUP") settingsStore.update { settings ->
+        // Never retain owner/setup or runtime bearer credentials in ordinary RikkaHub settings.
+        if (provider.apiKey.isNotBlank()) settingsStore.update { settings ->
             settings.copy(providers=settings.providers.map { p ->
                 if (p is ProviderSetting.OpenAI && p.id==provider.id) p.copy(apiKey="") else p
             })
