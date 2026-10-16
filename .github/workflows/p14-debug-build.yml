@@ -67,6 +67,11 @@ jobs:
           }
           JSON
 
+      - name: Test corrected P14 client boundary
+        run: |
+          chmod +x gradlew
+          ./gradlew :app:testDebugUnitTest --tests "me.rerere.rikkahub.data.remote.p14.*" --stacktrace
+
       - name: Build debug APK
         run: |
           chmod +x gradlew
