@@ -118,7 +118,7 @@ internal class P14ProductRepository(
                     createdAtEpochMs = now,
                 )
             )
-            attachmentRows.forEach(dao::upsertAttachment)
+            for (attachment in attachmentRows) dao.upsertAttachment(attachment)
             dao.insertOutbox(
                 P14ChatOutboxEntity(
                     clientOperationId = operationId,
@@ -311,7 +311,7 @@ internal class P14ProductRepository(
                     }
                     put("message_id", operation.messageId)
                     put("text", payload["text"]?.jsonPrimitive?.contentOrNull.orEmpty())
-                    put("attachment_ids", buildJsonArray { attachmentIds.forEach(::add) })
+                    put("attachment_ids", buildJsonArray { attachmentIds.forEach { add(JsonPrimitive(it)) } })
                     payload["reply_to_message_id"]?.jsonPrimitive?.contentOrNull?.let { put("reply_to_message_id", it) }
                     (payload["quote"] as? JsonObject)?.let { put("quote", it) }
                 }
