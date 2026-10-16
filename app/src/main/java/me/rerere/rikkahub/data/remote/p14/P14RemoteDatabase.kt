@@ -32,6 +32,7 @@ data class P14OperationEntity(
     @Query("SELECT COUNT(*) FROM p14_notifications WHERE state='UNREAD'") fun observeUnreadCount():Flow<Int>
     @Query("SELECT * FROM p14_notifications WHERE notification_id=:id LIMIT 1") suspend fun notification(id:String):P14NotificationEntity?
     @Query("SELECT * FROM p14_interactions WHERE interaction_id=:id LIMIT 1") suspend fun interaction(id:String):P14InteractionEntity?
+    @Query("UPDATE p14_interactions SET status='RESPONDED', response=:response WHERE interaction_id=:id AND status='PENDING'") suspend fun markInteractionResponded(id:String,response:String):Int
     @Query("DELETE FROM p14_notifications") suspend fun clearNotifications()
     @Insert(onConflict=OnConflictStrategy.IGNORE) suspend fun enqueueOperation(item:P14OperationEntity)
     @Query("SELECT * FROM p14_operations WHERE state IN ('PENDING','RETRY') ORDER BY rowid ASC LIMIT :limit") suspend fun pendingOperations(limit:Int=50):List<P14OperationEntity>

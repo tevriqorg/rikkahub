@@ -75,7 +75,9 @@ internal class P14ProductRepository(
 
     val entries: Flow<List<P14EntryEntity>> = dao.observeEntries()
     val pendingOutboxCount: Flow<Int> = dao.observePendingOutboxCount()
+    fun entryFlow(entryId: String): Flow<P14EntryEntity?> = dao.observeEntry(entryId)
     fun messages(conversationId: String): Flow<List<P14ProductMessageEntity>> = dao.observeMessages(conversationId)
+    fun conversationFlow(conversationId: String): Flow<P14ProductConversationEntity?> = dao.observeConversation(conversationId)
     fun attachments(conversationId: String): Flow<List<P14ProductAttachmentEntity>> = dao.observeAttachments(conversationId)
     suspend fun entry(entryId: String) = dao.entry(entryId)
     suspend fun conversation(conversationId: String) = dao.conversation(conversationId)
@@ -158,8 +160,10 @@ internal class P14ProductRepository(
 
     suspend fun syncAndFlushActive(): Boolean = withContext(Dispatchers.IO) {
         val connection = credentialStore.activeConnection() ?: return@withContext false
+        val manifest = P14ManifestPolicy.load(appContext, connection, http)
+        P14ManifestPolicy.requireChat(manifest)
         replay(connection)
-        P14DurableAttachmentUploader(appContext, http).uploadPending(connection)
+        P14DurableAttachmentUploader(appContext, http).uploadPending(connection, manifest)
         flush(connection)
         replay(connection)
         true
@@ -206,6 +210,7 @@ internal class P14ProductRepository(
                 "assistant.draft.updated" -> applyAssistantDraft(event)
                 "conversation.message.edited" -> applyMessageEdited(event)
                 "conversation.message.deleted" -> applyMessageDeleted(event)
+                "conversation.state.updated" -> applyConversationState(event)
                 else -> Unit // forward-compatible: unknown durable events still advance the cursor
             }
             event.caused_by_operation_id?.let { dao.ackByOperationId(it, System.currentTimeMillis()) }
@@ -295,6 +300,17 @@ internal class P14ProductRepository(
         val id = p["message_id"]?.jsonPrimitive?.contentOrNull ?: event.entity_id
         val existing = dao.message(id) ?: return
         dao.upsertMessage(existing.copy(tombstone = true, revision = p["revision"]?.jsonPrimitive?.intOrNull ?: existing.revision))
+    }
+
+    private suspend fun applyConversationState(event: P14SyncEventDto) {
+        val p=event.payload
+        val id=p["conversation_id"]?.jsonPrimitive?.contentOrNull ?: event.entity_id
+        val existing=dao.conversation(id) ?: return
+        dao.upsertConversation(existing.copy(
+            pinned=p["pinned"]?.jsonPrimitive?.contentOrNull?.toBooleanStrictOrNull() ?: existing.pinned,
+            archived=p["archived"]?.jsonPrimitive?.contentOrNull?.toBooleanStrictOrNull() ?: existing.archived,
+            stateRevision=p["revision"]?.jsonPrimitive?.intOrNull ?: existing.stateRevision,
+        ))
     }
 
     private suspend fun flush(connection: P14RuntimeConnection) {

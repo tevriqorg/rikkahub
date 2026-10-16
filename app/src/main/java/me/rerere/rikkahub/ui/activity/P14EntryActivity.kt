@@ -68,7 +68,6 @@ private fun P14EntryScreen(
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
     var conversationId by remember { mutableStateOf(initialConversationId) }
-    var entry by remember { mutableStateOf<P14EntryEntity?>(null) }
     var manifest by remember { mutableStateOf(fallbackP14Manifest()) }
     var notification by remember { mutableStateOf<P14NotificationEntity?>(null) }
     var interaction by remember { mutableStateOf<P14InteractionEntity?>(null) }
@@ -80,9 +79,6 @@ private fun P14EntryScreen(
         if (conversationId == null && externalSessionId != null) {
             conversationId = product.conversationForExternal(externalSessionId)?.conversationId
         }
-        conversationId?.let { id ->
-            entry = product.conversation(id)?.let { product.entry(it.entryId) }
-        }
         manifest = remote.manifestActive()
     }
     LaunchedEffect(notificationId, refreshContext) {
@@ -90,6 +86,8 @@ private fun P14EntryScreen(
         interaction = notificationId?.let { remote.interaction(it) }
     }
 
+    val productConversation = if (conversationId != null) product.conversationFlow(conversationId!!).collectAsState(initial = null).value else null
+    val entry = if (productConversation != null) product.entryFlow(productConversation.entryId).collectAsState(initial = null).value else null
     val messages = if (conversationId != null) product.messages(conversationId!!).collectAsState(initial = emptyList()).value else emptyList()
     val attachments = if (conversationId != null) product.attachments(conversationId!!).collectAsState(initial = emptyList()).value else emptyList()
     val canText = "chat" in manifest.enabledViews && "text" in manifest.messageCapabilities
@@ -145,6 +143,34 @@ private fun P14EntryScreen(
                             "Manifest: ${manifest.compatibility} · ${manifest.source}",
                             style = MaterialTheme.typography.labelSmall,
                         )
+                    }
+                }
+            }
+            productConversation?.let { state ->
+                item {
+                    ElevatedCard(Modifier.fillMaxWidth()) {
+                        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Text("Conversation state", style = MaterialTheme.typography.titleSmall)
+                            Text("rev ${state.stateRevision} · ${if(state.pinned) "Pinned" else "Not pinned"} · ${if(state.archived) "Archived" else "Active"}")
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                OutlinedButton(onClick = {
+                                    scope.launch {
+                                        status=runCatching {
+                                            remote.setConversationStateActive(state.conversationId,state.stateRevision,pinned=!state.pinned)
+                                            product.replayActive(); "Pin state updated"
+                                        }.getOrElse { it.message ?: "Pin failed" }
+                                    }
+                                }) { Text(if(state.pinned) "Unpin" else "Pin") }
+                                OutlinedButton(onClick = {
+                                    scope.launch {
+                                        status=runCatching {
+                                            remote.setConversationStateActive(state.conversationId,state.stateRevision,archived=!state.archived)
+                                            product.replayActive(); "Archive state updated"
+                                        }.getOrElse { it.message ?: "Archive failed" }
+                                    }
+                                }) { Text(if(state.archived) "Unarchive" else "Archive") }
+                            }
+                        }
                     }
                 }
             }

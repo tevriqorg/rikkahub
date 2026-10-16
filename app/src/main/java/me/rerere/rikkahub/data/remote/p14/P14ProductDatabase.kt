@@ -32,6 +32,9 @@ data class P14ProductConversationEntity(
     @ColumnInfo(name = "external_session_id") val externalSessionId: String,
     @ColumnInfo(name = "local_conversation_id") val localConversationId: String?,
     @ColumnInfo(name = "created_at_epoch_ms") val createdAtEpochMs: Long,
+    val pinned: Boolean = false,
+    val archived: Boolean = false,
+    @ColumnInfo(name = "state_revision") val stateRevision: Int = 0,
 )
 
 @Entity(
@@ -101,7 +104,9 @@ interface P14ProductDao {
 
     @Query("SELECT * FROM p14_entries ORDER BY created_at_epoch_ms DESC") fun observeEntries(): Flow<List<P14EntryEntity>>
     @Query("SELECT * FROM p14_entries WHERE entry_id=:entryId LIMIT 1") suspend fun entry(entryId: String): P14EntryEntity?
+    @Query("SELECT * FROM p14_entries WHERE entry_id=:entryId LIMIT 1") fun observeEntry(entryId: String): Flow<P14EntryEntity?>
     @Query("SELECT * FROM p14_conversations WHERE conversation_id=:conversationId LIMIT 1") suspend fun conversation(conversationId: String): P14ProductConversationEntity?
+    @Query("SELECT * FROM p14_conversations WHERE conversation_id=:conversationId LIMIT 1") fun observeConversation(conversationId: String): Flow<P14ProductConversationEntity?>
     @Query("SELECT * FROM p14_conversations WHERE external_session_id=:externalSessionId LIMIT 1") suspend fun conversationByExternalSession(externalSessionId: String): P14ProductConversationEntity?
     @Query("SELECT * FROM p14_messages WHERE message_id=:messageId LIMIT 1") suspend fun message(messageId: String): P14ProductMessageEntity?
     @Query("SELECT * FROM p14_messages WHERE conversation_id=:conversationId ORDER BY created_at_epoch_ms ASC, message_id ASC") fun observeMessages(conversationId: String): Flow<List<P14ProductMessageEntity>>

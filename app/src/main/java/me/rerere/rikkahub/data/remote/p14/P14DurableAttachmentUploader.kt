@@ -38,9 +38,17 @@ internal class P14DurableAttachmentUploader(
     private val json = Json { ignoreUnknownKeys = true }
     @Volatile private var cachedRecipientKey: String? = null
 
-    suspend fun uploadPending(connection: P14RuntimeConnection) {
-        for (attachment in dao.pendingAttachments()) {
+    suspend fun uploadPending(
+        connection: P14RuntimeConnection,
+        manifest: P14EffectiveManifest = P14ManifestPolicy.load(appContext, connection, http),
+    ) {
+        val pending=dao.pendingAttachments()
+        pending.groupBy { it.messageId }.values.forEach { group ->
+            require(group.size <= manifest.maxAttachmentsPerMessage) { "P14 Manifest attachment count limit exceeded" }
+        }
+        for (attachment in pending) {
             try {
+                P14ManifestPolicy.requireAttachment(manifest, attachment.kind, attachment.byteSize)
                 val remoteId = upload(connection, attachment)
                 dao.setAttachmentState(attachment.localAttachmentId, "SYNCED", remoteId)
             } catch (_: Throwable) {
@@ -51,6 +59,8 @@ internal class P14DurableAttachmentUploader(
 
     suspend fun ensureUploaded(connection: P14RuntimeConnection, attachment: P14ProductAttachmentEntity): String {
         attachment.remoteAttachmentId?.takeIf { attachment.state == "SYNCED" }?.let { return it }
+        val manifest=P14ManifestPolicy.load(appContext, connection, http)
+        P14ManifestPolicy.requireAttachment(manifest, attachment.kind, attachment.byteSize)
         return try {
             val remoteId = upload(connection, attachment)
             dao.setAttachmentState(attachment.localAttachmentId, "SYNCED", remoteId)
