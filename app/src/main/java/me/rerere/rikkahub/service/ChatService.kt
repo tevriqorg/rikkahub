@@ -65,6 +65,7 @@ import me.rerere.rikkahub.data.ai.transformers.TimeReminderTransformer
 import me.rerere.rikkahub.data.ai.transformers.WorkspaceReminderTransformer
 import me.rerere.rikkahub.data.remote.p14.P14RemoteAttachmentTransformer
 import me.rerere.rikkahub.data.remote.p14.P14RemoteControlClient
+import me.rerere.rikkahub.data.remote.p14.P14RuntimeAccess
 import me.rerere.rikkahub.data.event.AppEvent
 import me.rerere.rikkahub.data.event.AppEventBus
 import me.rerere.rikkahub.data.datastore.Settings
@@ -216,6 +217,7 @@ class ChatService(
     private val workspaceReminderTransformer = WorkspaceReminderTransformer(workspaceRepository)
     private val p14RemoteAttachmentTransformer = P14RemoteAttachmentTransformer(filesManager, okHttpClient)
     private val p14RemoteControlClient = P14RemoteControlClient(okHttpClient)
+    private val p14RuntimeAccess = P14RuntimeAccess(context, settingsStore, okHttpClient)
 
     private val sessionManager = ConversationSessionManager(
         scope = appScope,
@@ -682,6 +684,14 @@ class ChatService(
         val generationAssistant = assistant.forGenerationRuntime()
         val model = settings.getChatModelOf(initialConversation)
             ?: throw IllegalStateException("No chat model selected")
+        val generationSettings = if (remoteRuntime && model.modelId == "p14-hermes") {
+            val configured = model.findProvider(settings.providers) as? ProviderSetting.OpenAI
+                ?: error("P14 Remote requires an OpenAI-compatible provider")
+            val runtimeProvider = p14RuntimeAccess.prepare(configured)
+            settings.copy(providers = settings.providers.map { provider ->
+                if (provider.id == configured.id) runtimeProvider else provider
+            })
+        } else settings
 
         val senderName = if (assistant.useAssistantAvatar) {
             assistant.name.ifEmpty { context.getString(R.string.assistant_page_default_assistant) }
@@ -712,7 +722,7 @@ class ChatService(
 
             val tools = try {
                 chatToolFactory.createTools(
-                    settings = settings,
+                    settings = generationSettings,
                     assistant = generationAssistant,
                     model = model,
                     workspaceCwd = if (remoteRuntime) null else conversation.workspaceCwd,
@@ -734,7 +744,7 @@ class ChatService(
             // start generating
             val session = sessionManager.getOrCreate(conversationId)
             generationLoop.generateText(
-                settings = settings,
+                settings = generationSettings,
                 model = model,
                 processingStatus = session.processingStatus,
                 messages = conversation.currentMessages.let {
@@ -1653,8 +1663,9 @@ class ChatService(
         if (assistant.runtimeMode != AssistantRuntimeMode.REMOTE) return null
         val model = settings.getChatModelOf(conversation) ?: return null
         if (model.modelId != "p14-hermes") return null
-        val provider = model.findProvider(settings.providers) as? ProviderSetting.OpenAI
+        val configured = model.findProvider(settings.providers) as? ProviderSetting.OpenAI
             ?: error("P14 Remote requires an OpenAI-compatible provider")
+        val provider = p14RuntimeAccess.prepare(configured)
         val binding = p14RemoteControlClient.resolveSession(provider, conversationId.toString())
         return P14RemoteMutationContext(provider, binding.conversationId)
     }

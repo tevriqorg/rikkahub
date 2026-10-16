@@ -1,5 +1,7 @@
 package me.rerere.rikkahub.ui.pages.chat
 
+import android.content.Intent
+
 import android.net.Uri
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Column
@@ -38,6 +40,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.res.stringResource
@@ -69,6 +72,7 @@ import me.rerere.rikkahub.data.model.AssistantRuntimeMode
 import me.rerere.rikkahub.data.model.Conversation
 import me.rerere.rikkahub.data.repository.WorkspaceRepository
 import me.rerere.rikkahub.service.ChatError
+import me.rerere.rikkahub.ui.activity.P14InboxActivity
 import me.rerere.rikkahub.ui.components.ai.ChatAttachmentPickerActions
 import me.rerere.rikkahub.ui.components.ai.ChatInput
 import me.rerere.rikkahub.ui.components.ai.FilesPicker
@@ -597,6 +601,7 @@ private fun TopBar(
 ) {
     val scope = rememberCoroutineScope()
     val toaster = LocalToaster.current
+    val context = LocalContext.current
     val titleState = useEditState<String> {
         onUpdateTitle(it)
     }
@@ -653,6 +658,11 @@ private fun TopBar(
             }
         },
         actions = {
+            if (assistant.runtimeMode == AssistantRuntimeMode.REMOTE && chatModel?.modelId == "p14-hermes") {
+                TextButton(onClick = {
+                    context.startActivity(Intent(context, P14InboxActivity::class.java))
+                }) { Text("Inbox") }
+            }
             IconButton(
                 onClick = {
                     onClickMenu()
