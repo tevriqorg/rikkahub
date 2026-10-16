@@ -2,8 +2,10 @@ package me.rerere.rikkahub.data.remote.p14
 
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.put
 import me.rerere.ai.provider.ProviderSetting
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
@@ -70,6 +72,57 @@ class P14RemoteControlClientTest {
         assertEquals("edited text", editBody["text"]?.jsonPrimitive?.content)
         val deleteBody = Json.parseToJsonElement(requests[3].bodyText()).jsonObject
         assertEquals("3", deleteBody["base_revision"]?.jsonPrimitive?.content)
+    }
+
+    @Test
+    fun `quick action stays structured and generic`() = runTest {
+        val requests = mutableListOf<Request>()
+        val responseJson = """{
+            "action_id":"33333333-3333-4333-8333-333333333333",
+            "action_type":"content.accept",
+            "sync_seq":42,
+            "deduplicated":false
+        }""".trimIndent()
+        val http = OkHttpClient.Builder().addInterceptor { chain ->
+            val request = chain.request()
+            requests += request
+            Response.Builder()
+                .request(request)
+                .protocol(Protocol.HTTP_1_1)
+                .code(201)
+                .message("Created")
+                .body(responseJson.toResponseBody("application/json".toMediaType()))
+                .build()
+        }.build()
+        val provider = ProviderSetting.OpenAI(
+            apiKey = "test-token",
+            baseUrl = "https://p14.example/v1",
+        )
+        val client = P14RemoteControlClient(http)
+        val actionId = Uuid.parse("33333333-3333-4333-8333-333333333333")
+        val operationId = Uuid.parse("44444444-4444-4444-8444-444444444444")
+        val targetId = Uuid.parse("55555555-5555-4555-8555-555555555555")
+
+        val receipt = client.createQuickAction(
+            provider = provider,
+            conversationId = "conversation-1",
+            actionType = "content.accept",
+            targetMessageId = targetId,
+            payload = buildJsonObject { put("revision_id", "rev-2") },
+            clientOperationId = operationId,
+            actionId = actionId,
+        )
+
+        assertEquals(actionId.toString(), receipt.actionId)
+        assertEquals("content.accept", receipt.actionType)
+        assertEquals(42L, receipt.syncSeq)
+        val body = Json.parseToJsonElement(requests.single().bodyText()).jsonObject
+        assertEquals(operationId.toString(), body["client_operation_id"]?.jsonPrimitive?.content)
+        assertEquals(actionId.toString(), body["action_id"]?.jsonPrimitive?.content)
+        assertEquals("content.accept", body["action_type"]?.jsonPrimitive?.content)
+        assertEquals(targetId.toString(), body["target_message_id"]?.jsonPrimitive?.content)
+        assertEquals("rev-2", body["payload"]?.jsonObject?.get("revision_id")?.jsonPrimitive?.content)
+        assertTrue(requests.single().url.encodedPath.endsWith("/v1/conversations/conversation-1/quick-actions"))
     }
 
     private fun Request.bodyText(): String {

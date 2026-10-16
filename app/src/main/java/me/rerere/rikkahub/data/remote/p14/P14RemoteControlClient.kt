@@ -3,11 +3,13 @@ package me.rerere.rikkahub.data.remote.p14
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.longOrNull
 import kotlinx.serialization.json.put
 import me.rerere.ai.provider.ProviderSetting
 import okhttp3.MediaType.Companion.toMediaType
@@ -30,6 +32,13 @@ internal class P14RemoteControlClient(
         val revision: Int,
         val bodyText: String,
         val deleted: Boolean,
+    )
+
+    data class QuickActionReceipt(
+        val actionId: String,
+        val actionType: String,
+        val syncSeq: Long,
+        val deduplicated: Boolean,
     )
 
     suspend fun resolveSession(
@@ -105,6 +114,37 @@ internal class P14RemoteControlClient(
         )
         body["revision"]?.jsonPrimitive?.intOrNull
             ?: error("P14 delete response omitted revision")
+    }
+
+    suspend fun createQuickAction(
+        provider: ProviderSetting.OpenAI,
+        conversationId: String,
+        actionType: String,
+        targetMessageId: Uuid? = null,
+        payload: JsonObject = buildJsonObject {},
+        clientOperationId: Uuid = Uuid.random(),
+        actionId: Uuid = Uuid.random(),
+    ): QuickActionReceipt = withContext(Dispatchers.IO) {
+        val body = request(
+            provider = provider,
+            method = "POST",
+            path = "/conversations/$conversationId/quick-actions",
+            body = buildJsonObject {
+                put("client_operation_id", clientOperationId.toString())
+                put("action_id", actionId.toString())
+                put("action_type", actionType)
+                targetMessageId?.let { put("target_message_id", it.toString()) }
+                put("payload", payload)
+            },
+        )
+        QuickActionReceipt(
+            actionId = body.requireString("action_id"),
+            actionType = body.requireString("action_type"),
+            syncSeq = body["sync_seq"]?.jsonPrimitive?.longOrNull
+                ?: error("P14 quick action response omitted sync_seq"),
+            deduplicated = body["deduplicated"]?.jsonPrimitive?.contentOrNull?.toBooleanStrictOrNull()
+                ?: false,
+        )
     }
 
     private fun request(
