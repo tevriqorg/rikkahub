@@ -51,6 +51,12 @@ internal class P14RemoteControlClient(
         val revision: Int,
     )
 
+    data class ConversationState(
+        val pinned: Boolean,
+        val archived: Boolean,
+        val revision: Int,
+    )
+
     suspend fun resolveSession(
         provider: ProviderSetting.OpenAI,
         externalSessionId: String,
@@ -65,6 +71,40 @@ internal class P14RemoteControlClient(
             entryId = body.requireString("entry_id"),
             conversationId = body.requireString("conversation_id"),
         )
+    }
+
+    suspend fun getConversationState(
+        provider: ProviderSetting.OpenAI,
+        conversationId: String,
+    ): ConversationState = withContext(Dispatchers.IO) {
+        val body = request(
+            provider = provider,
+            method = "GET",
+            path = "/conversations/$conversationId/state",
+        )
+        parseConversationState(body)
+    }
+
+    suspend fun setConversationState(
+        provider: ProviderSetting.OpenAI,
+        conversationId: String,
+        baseRevision: Int,
+        pinned: Boolean? = null,
+        archived: Boolean? = null,
+        clientOperationId: Uuid = Uuid.random(),
+    ): ConversationState = withContext(Dispatchers.IO) {
+        val body = request(
+            provider = provider,
+            method = "POST",
+            path = "/conversations/$conversationId/state",
+            body = buildJsonObject {
+                put("client_operation_id", clientOperationId.toString())
+                put("base_revision", baseRevision)
+                pinned?.let { put("pinned", it) }
+                archived?.let { put("archived", it) }
+            },
+        )
+        parseConversationState(body)
     }
 
     suspend fun getMessageState(
@@ -177,6 +217,15 @@ internal class P14RemoteControlClient(
             )
         }
     }
+
+    private fun parseConversationState(body: JsonObject): ConversationState = ConversationState(
+        pinned = body["pinned"]?.jsonPrimitive?.contentOrNull?.toBooleanStrictOrNull()
+            ?: error("P14 conversation state omitted pinned"),
+        archived = body["archived"]?.jsonPrimitive?.contentOrNull?.toBooleanStrictOrNull()
+            ?: error("P14 conversation state omitted archived"),
+        revision = body["revision"]?.jsonPrimitive?.intOrNull
+            ?: error("P14 conversation state omitted revision"),
+    )
 
     private fun request(
         provider: ProviderSetting.OpenAI,

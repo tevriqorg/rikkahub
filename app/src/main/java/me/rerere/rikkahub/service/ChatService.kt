@@ -1208,6 +1208,32 @@ class ChatService(
     }
 
     suspend fun toggleConversationPinned(conversationId: Uuid) {
+        val conversation = getConversationFlow(conversationId).value
+        val settings = settingsStore.awaitLoaded()
+        val remote = resolveP14RemoteMutationContext(conversationId, conversation, settings)
+        if (remote != null) {
+            val initial = p14RemoteControlClient.getConversationState(remote.provider, remote.conversationId)
+            val desiredPinned = !initial.pinned
+            val authoritative = try {
+                p14RemoteControlClient.setConversationState(
+                    provider = remote.provider,
+                    conversationId = remote.conversationId,
+                    baseRevision = initial.revision,
+                    pinned = desiredPinned,
+                )
+            } catch (failure: Exception) {
+                val recovered = runCatching {
+                    p14RemoteControlClient.getConversationState(remote.provider, remote.conversationId)
+                }.getOrNull()
+                if (recovered?.pinned == desiredPinned) recovered else throw failure
+            }
+            updateConversationMetadata(
+                conversationId = conversationId,
+                update = { it.copy(isPinned = authoritative.pinned) },
+                persist = { conversationRepo.updatePinStatus(conversationId, authoritative.pinned) },
+            )
+            return
+        }
         updateConversationMetadata(
             conversationId = conversationId,
             update = { it.copy(isPinned = !it.isPinned) },

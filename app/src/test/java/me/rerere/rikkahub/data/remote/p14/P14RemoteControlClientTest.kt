@@ -126,6 +126,34 @@ class P14RemoteControlClientTest {
     }
 
     @Test
+    fun `conversation state stays server authoritative`() = runTest {
+        val requests = mutableListOf<Request>()
+        val responses = ArrayDeque(
+            listOf(
+                """{"conversation_id":"conversation-1","pinned":false,"archived":false,"revision":0}""",
+                """{"conversation_id":"conversation-1","pinned":true,"archived":false,"revision":1,"sync_seq":9,"deduplicated":false}""",
+            )
+        )
+        val http = OkHttpClient.Builder().addInterceptor { chain ->
+            val request = chain.request()
+            requests += request
+            Response.Builder().request(request).protocol(Protocol.HTTP_1_1).code(200).message("OK")
+                .body(responses.removeFirst().toResponseBody("application/json".toMediaType())).build()
+        }.build()
+        val provider = ProviderSetting.OpenAI(apiKey = "test-token", baseUrl = "https://p14.example/v1")
+        val client = P14RemoteControlClient(http)
+        val initial = client.getConversationState(provider, "conversation-1")
+        val updated = client.setConversationState(provider, "conversation-1", initial.revision, pinned = true)
+
+        assertEquals(false, initial.pinned)
+        assertEquals(true, updated.pinned)
+        assertEquals(1, updated.revision)
+        val body = Json.parseToJsonElement(requests[1].bodyText()).jsonObject
+        assertEquals("0", body["base_revision"]?.jsonPrimitive?.content)
+        assertEquals("true", body["pinned"]?.jsonPrimitive?.content)
+    }
+
+    @Test
     fun `activity list reads authoritative remote projection`() = runTest {
         val requests = mutableListOf<Request>()
         val responseJson = """[
