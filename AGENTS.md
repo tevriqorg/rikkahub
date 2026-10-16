@@ -6,6 +6,16 @@ RikkaHub is a native Android LLM chat client that supports switching between dif
 for conversations.
 Built with Jetpack Compose, Kotlin, and follows Material 3 Expressive (MD3 Expressive) design language.
 
+
+## P14 Remote Client Boundary
+
+- The canonical P14 Android client lives in this repository on branch `p14/remote`; do not create a standalone P14 Android app in `tevriqorg/P14-Entry`.
+- `tevriqorg/P14-Entry` owns P14 requirements, protocol, and Server implementation only.
+- GitHub Actions is the build/test authority. VPS hosts may package/sign an already-built APK but must not compile Android source.
+- CI APK artifacts are not release/install authority. Human-test and formal P14 APKs must be signed with the fixed P14 signing certificate documented in `docs/P14_REMOTE_GOVERNANCE.md`.
+- Do not publish automatic debug prereleases. Only explicit stable GitHub Releases are eligible for P20 delivery.
+- Preserve application/package identity for the P14 test track; do not silently create a second launcher/applicationId.
+
 ## Design Language
 
 The UI follows Material 3 Expressive. New and reworked screens should match it rather than the older baseline

@@ -4,10 +4,10 @@ on:
   workflow_dispatch:
   push:
     branches:
-      - feat/p14-remote-runtime-v1
+      - p14/remote
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   build-debug:
@@ -24,12 +24,6 @@ jobs:
           java-version: '21'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Restore stable P14 debug keystore
-        uses: actions/cache@v4
-        with:
-          path: ~/.android/debug.keystore
-          key: rikkahub-p14-debug-keystore-v1
 
       - name: Set up pnpm
         uses: pnpm/action-setup@v4
@@ -80,21 +74,6 @@ jobs:
       - name: Upload debug APKs
         uses: actions/upload-artifact@v4
         with:
-          name: rikkahub-p14-debug-${{ github.sha }}
+          name: rikkahub-p14-ci-${{ github.sha }}
           path: app/build/outputs/apk/debug/*.apk
           if-no-files-found: error
-
-      - name: Publish P14 debug prerelease
-        if: success()
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: p14-debug-${{ github.run_number }}
-          name: P14 Remote Runtime Debug #${{ github.run_number }}
-          prerelease: true
-          make_latest: false
-          body: |
-            Automated P14 Remote Runtime test build.
-
-            Commit: `${{ github.sha }}`
-            Branch: `${{ github.ref_name }}`
-          files: app/build/outputs/apk/debug/*.apk
