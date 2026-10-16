@@ -64,6 +64,10 @@
       android:exported="false"
       android:theme="@style/Theme.Rikkahub" />
     <activity
+      android:name=".ui.activity.P14EntryActivity"
+      android:exported="false"
+      android:theme="@style/Theme.Rikkahub" />
+    <activity
       android:name=".ui.activity.SafeModeActivity"
       android:exported="false"
       android:label="@string/title_activity_safe_mode"

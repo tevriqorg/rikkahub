@@ -9,6 +9,8 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
 import me.rerere.ai.provider.ProviderSetting
 import me.rerere.rikkahub.data.datastore.SettingsStore
 import okhttp3.HttpUrl.Companion.toHttpUrl
@@ -48,20 +50,36 @@ internal class P14RemoteRepository(
         P14SystemNotifications.project(context, dao, items)
     }
 
-    suspend fun manifest(provider:ProviderSetting.OpenAI):P14EffectiveManifest {
-        val c=access.connection(provider)
-        return runCatching {
-            val url=c.baseUrl.toHttpUrl().newBuilder().addPathSegment("remote-manifest")
-                .addQueryParameter("client_protocol",P14RikkaCapabilities.PROTOCOL.toString()).build()
-            val dto:P14ManifestDto=json.decodeFromString(execute(Request.Builder().url(url).header("Authorization","Bearer ${c.bearerToken}").get().build()))
-            val effective=dto.effective()
-            context.getSharedPreferences("p14-manifest",Context.MODE_PRIVATE).edit().putString(c.baseUrl,json.encodeToString(dto)).apply()
-            effective
-        }.getOrElse {
-            val raw=context.getSharedPreferences("p14-manifest",Context.MODE_PRIVATE).getString(c.baseUrl,null)
-            if(raw!=null) runCatching { json.decodeFromString<P14ManifestDto>(raw).effective("LAST_KNOWN_GOOD") }.getOrElse{fallbackP14Manifest()}
-            else fallbackP14Manifest()
-        }
+    suspend fun manifest(provider:ProviderSetting.OpenAI):P14EffectiveManifest = manifest(access.connection(provider))
+    suspend fun manifestActive():P14EffectiveManifest {
+        val c=P14RuntimeCredentialStore(context).activeConnection() ?: return fallbackP14Manifest()
+        return manifest(c)
+    }
+    private fun manifest(c:P14RuntimeConnection):P14EffectiveManifest = runCatching {
+        val url=c.baseUrl.toHttpUrl().newBuilder().addPathSegment("remote-manifest")
+            .addQueryParameter("client_protocol",P14RikkaCapabilities.PROTOCOL.toString()).build()
+        val dto:P14ManifestDto=json.decodeFromString(execute(Request.Builder().url(url).header("Authorization","Bearer ${c.bearerToken}").get().build()))
+        val effective=dto.effective()
+        context.getSharedPreferences("p14-manifest",Context.MODE_PRIVATE).edit().putString(c.baseUrl,json.encodeToString(dto)).apply()
+        effective
+    }.getOrElse {
+        val raw=context.getSharedPreferences("p14-manifest",Context.MODE_PRIVATE).getString(c.baseUrl,null)
+        if(raw!=null) runCatching { json.decodeFromString<P14ManifestDto>(raw).effective("LAST_KNOWN_GOOD") }.getOrElse{fallbackP14Manifest()}
+        else fallbackP14Manifest()
+    }
+
+    suspend fun notification(notificationId:String):P14NotificationEntity?=withContext(Dispatchers.IO){ dao.notification(notificationId) }
+    suspend fun quickActionActive(conversationId:String,actionType:String):String=withContext(Dispatchers.IO) {
+        val c=P14RuntimeCredentialStore(context).activeConnection() ?: error("P14 device is not connected")
+        val manifest=manifest(c)
+        require(actionType in manifest.quickActionTypes) { "Quick Action is not enabled by the current P14 Manifest" }
+        val id=Uuid.random().toString()
+        val payload=buildJsonObject {
+            put("client_operation_id",id); put("action_id",Uuid.random().toString()); put("action_type",actionType)
+            put("payload",buildJsonObject {})
+        }.toString()
+        post(c,"conversations/$conversationId/quick-actions",payload)
+        id
     }
 
     suspend fun queueState(notificationId:String,state:String) {

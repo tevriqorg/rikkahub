@@ -73,6 +73,7 @@ import me.rerere.rikkahub.data.model.Conversation
 import me.rerere.rikkahub.data.repository.WorkspaceRepository
 import me.rerere.rikkahub.service.ChatError
 import me.rerere.rikkahub.ui.activity.P14InboxActivity
+import me.rerere.rikkahub.ui.activity.P14EntryActivity
 import me.rerere.rikkahub.ui.components.ai.ChatAttachmentPickerActions
 import me.rerere.rikkahub.ui.components.ai.ChatInput
 import me.rerere.rikkahub.ui.components.ai.FilesPicker
@@ -659,6 +660,10 @@ private fun TopBar(
         },
         actions = {
             if (assistant.runtimeMode == AssistantRuntimeMode.REMOTE && chatModel?.modelId == "p14-hermes") {
+                TextButton(onClick = {
+                    context.startActivity(Intent(context, P14EntryActivity::class.java)
+                        .putExtra(P14EntryActivity.EXTRA_EXTERNAL_SESSION_ID, conversation.id.toString()))
+                }) { Text("Entry") }
                 TextButton(onClick = {
                     context.startActivity(Intent(context, P14InboxActivity::class.java))
                 }) { Text("Inbox") }

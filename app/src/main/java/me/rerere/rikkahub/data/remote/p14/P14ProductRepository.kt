@@ -12,6 +12,7 @@ import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
@@ -78,6 +79,7 @@ internal class P14ProductRepository(
     fun attachments(conversationId: String): Flow<List<P14ProductAttachmentEntity>> = dao.observeAttachments(conversationId)
     suspend fun entry(entryId: String) = dao.entry(entryId)
     suspend fun conversation(conversationId: String) = dao.conversation(conversationId)
+    suspend fun conversationForExternal(externalSessionId: String) = dao.conversationByExternalSession(externalSessionId)
     suspend fun message(messageId: String) = dao.message(messageId)
 
     suspend fun acceptRikkaMessage(
