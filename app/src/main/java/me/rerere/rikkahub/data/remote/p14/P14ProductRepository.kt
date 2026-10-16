@@ -164,7 +164,7 @@ internal class P14ProductRepository(
         P14ManifestPolicy.requireChat(manifest)
         replay(connection)
         P14DurableAttachmentUploader(appContext, http).uploadPending(connection, manifest)
-        flush(connection)
+        flush(connection, manifest)
         replay(connection)
         true
     }
@@ -313,13 +313,16 @@ internal class P14ProductRepository(
         ))
     }
 
-    private suspend fun flush(connection: P14RuntimeConnection) {
+    private suspend fun flush(connection: P14RuntimeConnection, manifest: P14EffectiveManifest) {
         for (operation in dao.pendingOutbox()) {
             val attachments = dao.attachmentsForMessage(operation.messageId)
             if (attachments.any { it.state != "SYNCED" || it.remoteAttachmentId == null }) continue
             dao.markOutboxInFlight(operation.clientOperationId)
             try {
                 val payload = json.parseToJsonElement(operation.payloadJson).jsonObject
+                if (payload["reply_to_message_id"]?.jsonPrimitive?.contentOrNull != null) {
+                    require("reply" in manifest.messageCapabilities) { "P14 Manifest disabled reply" }
+                }
                 val attachmentIds = attachments.mapNotNull { it.remoteAttachmentId }
                 val body = buildJsonObject {
                     put("client_operation_id", operation.clientOperationId)

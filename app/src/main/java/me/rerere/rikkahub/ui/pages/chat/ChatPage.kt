@@ -69,6 +69,7 @@ import me.rerere.rikkahub.data.datastore.getSelectedASRProvider
 import me.rerere.rikkahub.data.files.FilesManager
 import me.rerere.rikkahub.data.model.Assistant
 import me.rerere.rikkahub.data.model.AssistantRuntimeMode
+import me.rerere.rikkahub.data.remote.p14.P14EffectiveManifest
 import me.rerere.rikkahub.data.model.Conversation
 import me.rerere.rikkahub.data.repository.WorkspaceRepository
 import me.rerere.rikkahub.service.ChatError
@@ -110,6 +111,7 @@ fun ChatPage(id: Uuid, text: String?, files: List<Uri>, nodeId: Uuid? = null) {
     val loadingJob by vm.conversationJob.collectAsStateWithLifecycle()
     val processingStatus by vm.processingStatus.collectAsStateWithLifecycle()
     val remoteActivityStatusLines by vm.remoteActivityStatusLines.collectAsStateWithLifecycle()
+    val remoteManifest by vm.remoteManifest.collectAsStateWithLifecycle()
     val currentChatModel by vm.currentChatModel.collectAsStateWithLifecycle()
     val assistant by vm.assistant.collectAsStateWithLifecycle()
     val errors by vm.errors.collectAsStateWithLifecycle()
@@ -210,6 +212,7 @@ fun ChatPage(id: Uuid, text: String?, files: List<Uri>, nodeId: Uuid? = null) {
                     loadingJob = loadingJob,
                     processingStatus = processingStatus,
                     remoteActivityStatusLines = remoteActivityStatusLines,
+                    remoteManifest = remoteManifest,
                     setting = setting,
                     conversation = conversation,
                     drawerState = drawerState,
@@ -244,6 +247,7 @@ fun ChatPage(id: Uuid, text: String?, files: List<Uri>, nodeId: Uuid? = null) {
                     loadingJob = loadingJob,
                     processingStatus = processingStatus,
                     remoteActivityStatusLines = remoteActivityStatusLines,
+                    remoteManifest = remoteManifest,
                     setting = setting,
                     conversation = conversation,
                     drawerState = drawerState,
@@ -272,6 +276,7 @@ private fun ChatPageContent(
     loadingJob: Job?,
     processingStatus: String? = null,
     remoteActivityStatusLines: List<String> = emptyList(),
+    remoteManifest: P14EffectiveManifest? = null,
     setting: Settings,
     bigScreen: Boolean,
     conversation: Conversation,
@@ -295,7 +300,8 @@ private fun ChatPageContent(
     val attachmentPickerActions = rememberChatAttachmentPickerActions(
         inputState = inputState,
         setting = setting,
-        allowAnyDocument = assistant.runtimeMode == AssistantRuntimeMode.REMOTE,
+        allowAnyDocument = assistant.runtimeMode == AssistantRuntimeMode.REMOTE &&
+            remoteManifest?.messageCapabilities?.contains("file") == true,
         onAttachmentAdded = { showFilesSheet = false },
     )
 
@@ -325,6 +331,7 @@ private fun ChatPageContent(
                     assistant = assistant,
                     chatModel = currentChatModel,
                     conversation = conversation,
+                    remoteManifest = remoteManifest,
                     bigScreen = bigScreen,
                     drawerState = drawerState,
                     previewMode = previewMode,
@@ -436,11 +443,15 @@ private fun ChatPageContent(
                     vm.regenerateAtMessage(it)
                 },
                 onReply = {
-                    inputState.startReply(it)
+                    if (remoteManifest?.messageCapabilities?.contains("reply") != false) {
+                        inputState.startReply(it)
+                    } else toaster.show("Reply is disabled by P14 Manifest", type = ToastType.Warning)
                 },
                 onEdit = {
-                    inputState.editingMessage = it.id
-                    inputState.setContents(it.parts)
+                    if (remoteManifest?.messageCapabilities?.contains("edit") != false) {
+                        inputState.editingMessage = it.id
+                        inputState.setContents(it.parts)
+                    } else toaster.show("Edit is disabled by P14 Manifest", type = ToastType.Warning)
                 },
                 onForkMessage = {
                     scope.launch {
@@ -449,7 +460,9 @@ private fun ChatPageContent(
                     }
                 },
                 onDelete = {
-                    if (loadingJob != null) {
+                    if (remoteManifest?.messageCapabilities?.contains("delete") == false) {
+                        toaster.show("Delete is disabled by P14 Manifest", type = ToastType.Warning)
+                    } else if (loadingJob != null) {
                         vm.showDeleteBlockedWhileGeneratingError()
                     } else {
                         vm.deleteMessage(it)
@@ -593,6 +606,7 @@ private fun TopBar(
     assistant: Assistant,
     chatModel: Model?,
     conversation: Conversation,
+    remoteManifest: P14EffectiveManifest?,
     drawerState: DrawerState,
     bigScreen: Boolean,
     previewMode: Boolean,
@@ -660,13 +674,17 @@ private fun TopBar(
         },
         actions = {
             if (assistant.runtimeMode == AssistantRuntimeMode.REMOTE && chatModel?.modelId == "p14-hermes") {
-                TextButton(onClick = {
-                    context.startActivity(Intent(context, P14EntryActivity::class.java)
-                        .putExtra(P14EntryActivity.EXTRA_EXTERNAL_SESSION_ID, conversation.id.toString()))
-                }) { Text("Entry") }
-                TextButton(onClick = {
-                    context.startActivity(Intent(context, P14InboxActivity::class.java))
-                }) { Text("Inbox") }
+                if (remoteManifest?.enabledViews?.contains("chat") == true) {
+                    TextButton(onClick = {
+                        context.startActivity(Intent(context, P14EntryActivity::class.java)
+                            .putExtra(P14EntryActivity.EXTRA_EXTERNAL_SESSION_ID, conversation.id.toString()))
+                    }) { Text("Entry") }
+                }
+                if (remoteManifest?.enabledViews?.contains("inbox") == true) {
+                    TextButton(onClick = {
+                        context.startActivity(Intent(context, P14InboxActivity::class.java))
+                    }) { Text("Inbox") }
+                }
             }
             IconButton(
                 onClick = {

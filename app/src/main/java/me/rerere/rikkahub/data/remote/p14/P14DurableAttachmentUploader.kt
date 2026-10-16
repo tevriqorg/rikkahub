@@ -30,6 +30,7 @@ internal class P14DurableAttachmentUploader(
     httpClient: OkHttpClient,
 ) {
     private val appContext = context.applicationContext
+    private val http = httpClient
     private val dao = P14ProductDatabase.get(appContext).dao()
     private val client = httpClient.newBuilder()
         .readTimeout(10, TimeUnit.MINUTES)
