@@ -21,24 +21,13 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Fetch canonical P14 recovery authority
-        run: |
-          set -euo pipefail
-          mkdir -p /tmp/p14-recovery-authority
-          base="https://raw.githubusercontent.com/tevriqorg/P14-Entry/fix/p14r3-recovery"
-          fallback="https://raw.githubusercontent.com/tevriqorg/P14-Entry/p14r3/server"
-          curl -fsSL "$base/requirements/P14R3_RECOVERY_MATRIX.json" -o /tmp/p14-recovery-authority/matrix.json || \
-            curl -fsSL "$fallback/requirements/P14R3_RECOVERY_MATRIX.json" -o /tmp/p14-recovery-authority/matrix.json
-          curl -fsSL "$base/scripts/check_p14r3_recovery.py" -o /tmp/p14-recovery-authority/check.py || \
-            curl -fsSL "$fallback/scripts/check_p14r3_recovery.py" -o /tmp/p14-recovery-authority/check.py
-
-      - name: Validate canonical matrix and commit Row mapping
+      - name: Validate pinned P14 recovery authority and commit Row mapping
         env:
           P14_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
-        run: python3 /tmp/p14-recovery-authority/check.py --matrix /tmp/p14-recovery-authority/matrix.json --skip-repo-docs --repo android --head "$P14_HEAD_SHA"
+        run: python3 scripts/check_p14_recovery.py --head "$P14_HEAD_SHA"
 
       - name: Validate PR requirement-row mapping
         if: github.event_name == 'pull_request'
         env:
           P14_PR_BODY: ${{ github.event.pull_request.body }}
-        run: python3 /tmp/p14-recovery-authority/check.py --matrix /tmp/p14-recovery-authority/matrix.json --skip-repo-docs --pr-body-env P14_PR_BODY
+        run: python3 scripts/check_p14_recovery.py --head "${{ github.event.pull_request.head.sha }}" --pr-body-env P14_PR_BODY
