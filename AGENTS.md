@@ -10,7 +10,10 @@ Built with Jetpack Compose, Kotlin, and follows Material 3 Expressive (MD3 Expre
 ## P14 Remote Client Boundary
 
 - The canonical P14 Android client lives in this repository on branch `p14/remote`; do not create a standalone P14 Android app in `tevriqorg/P14-Entry`.
-- `tevriqorg/P14-Entry` owns P14 requirements, protocol, and Server implementation only.
+- `tevriqorg/P14-Entry` owns P14 requirements, protocol, Server implementation, and the single P14R3 recovery authority.
+- Before changing P14 code, fresh-read `tevriqorg/P14-Entry#51` and the central `requirements/P14R3_RECOVERY_MATRIX.json`; choose the exact existing recovery Row ID(s). Chat history and implementation convenience are not authority.
+- Every new P14 recovery commit after governance activation must carry a `P14-Row: ROW-ID[, ROW-ID]` trailer. Recovery PRs must declare `P14-Recovery-Rows`, `P14-Scope-Change: no`, and `P14-Acceptance-Evidence`. CI validates these against the central matrix.
+- A missing requirement must not be silently added in Android. Scope changes happen first in the human-approved P14 authority, then the central matrix `scope_revision` changes.
 - GitHub Actions is the build/test authority. VPS hosts may package/sign an already-built APK but must not compile Android source.
 - CI APK artifacts are not release/install authority. Human-test and formal P14 APKs must be signed with the fixed P14 signing certificate documented in `docs/P14_REMOTE_GOVERNANCE.md`.
 - Do not publish automatic debug prereleases. Only explicit stable GitHub Releases are eligible for P20 delivery.

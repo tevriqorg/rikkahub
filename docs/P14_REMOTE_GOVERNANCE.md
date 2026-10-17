@@ -8,6 +8,17 @@
 - `tevriqorg/P14-Entry` is requirements / protocol / P14 Server authority; it is not an Android product repository.
 - No standalone `org.tevriq.p14.entry` launcher/application is permitted.
 
+
+## Recovery anti-drift authority
+
+- Single human-approved recovery authority: `tevriqorg/P14-Entry#51`.
+- Single machine-readable recovery matrix: `tevriqorg/P14-Entry/requirements/P14R3_RECOVERY_MATRIX.json`.
+- This repository must **reference** that matrix; do not maintain a second copied requirement matrix here.
+- Before code changes, select existing Row ID(s). New recovery commits after activation require a `P14-Row:` commit trailer.
+- A recovery PR must declare the Row IDs it touches and must state `P14-Scope-Change: no`.
+- A row is not complete because code exists. It becomes GREEN only when the central matrix has acceptance evidence and no remaining work.
+- Scope cannot be expanded, removed, or deferred from this repository. Human-approved authority must change first.
+
 ## Build and release
 
 - GitHub Actions performs all Android compilation and tests.
