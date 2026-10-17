@@ -1,0 +1,42 @@
+name: P14 Recovery Governance
+
+on:
+  pull_request:
+    branches:
+      - p14/remote
+  push:
+    branches:
+      - p14/remote
+      - fix/p14r3-recovery
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  recovery-guard:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Fetch canonical P14 recovery authority
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/p14-recovery-authority
+          base="https://raw.githubusercontent.com/tevriqorg/P14-Entry/fix/p14r3-recovery"
+          fallback="https://raw.githubusercontent.com/tevriqorg/P14-Entry/p14r3/server"
+          curl -fsSL "$base/requirements/P14R3_RECOVERY_MATRIX.json" -o /tmp/p14-recovery-authority/matrix.json || \
+            curl -fsSL "$fallback/requirements/P14R3_RECOVERY_MATRIX.json" -o /tmp/p14-recovery-authority/matrix.json
+          curl -fsSL "$base/scripts/check_p14r3_recovery.py" -o /tmp/p14-recovery-authority/check.py || \
+            curl -fsSL "$fallback/scripts/check_p14r3_recovery.py" -o /tmp/p14-recovery-authority/check.py
+
+      - name: Validate canonical matrix and commit Row mapping
+        run: python3 /tmp/p14-recovery-authority/check.py --matrix /tmp/p14-recovery-authority/matrix.json --skip-repo-docs --repo android
+
+      - name: Validate PR requirement-row mapping
+        if: github.event_name == 'pull_request'
+        env:
+          P14_PR_BODY: ${{ github.event.pull_request.body }}
+        run: python3 /tmp/p14-recovery-authority/check.py --matrix /tmp/p14-recovery-authority/matrix.json --skip-repo-docs --pr-body-env P14_PR_BODY
