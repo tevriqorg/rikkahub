@@ -157,11 +157,19 @@ internal class P14RuntimeAccess(
 
     fun deviceId()=store.deviceId()
 
-    internal fun get(c:P14RuntimeConnection,path:String):String=execute(c,Request.Builder().url("${c.baseUrl}/${path.trimStart('/')}").get())
-    internal fun post(c:P14RuntimeConnection,path:String,body:String):String=execute(c,Request.Builder().url("${c.baseUrl}/${path.trimStart('/')}").post(body.toRequestBody(JSON)))
-    internal fun put(c:P14RuntimeConnection,path:String,body:String):String=execute(c,Request.Builder().url("${c.baseUrl}/${path.trimStart('/')}").put(body.toRequestBody(JSON)))
-    private fun execute(c:P14RuntimeConnection,b:Request.Builder):String=http.newCall(b.header("Authorization","Bearer ${c.bearerToken}").header("Accept","application/json").build()).execute().use { r ->
-        val text=r.body?.string().orEmpty(); if(!r.isSuccessful) throw P14RemoteHttpException(r.code,text.take(800)); text
+    internal suspend fun get(c:P14RuntimeConnection,path:String):String=execute(c,Request.Builder().url("${c.baseUrl}/${path.trimStart('/')}").get())
+    internal suspend fun post(c:P14RuntimeConnection,path:String,body:String):String=execute(c,Request.Builder().url("${c.baseUrl}/${path.trimStart('/')}").post(body.toRequestBody(JSON)))
+    internal suspend fun put(c:P14RuntimeConnection,path:String,body:String):String=execute(c,Request.Builder().url("${c.baseUrl}/${path.trimStart('/')}").put(body.toRequestBody(JSON)))
+    private suspend fun execute(c:P14RuntimeConnection,b:Request.Builder):String = withContext(Dispatchers.IO) {
+        http.newCall(
+            b.header("Authorization", "Bearer ${c.bearerToken}")
+                .header("Accept", "application/json")
+                .build()
+        ).execute().use { r ->
+            val text = r.body?.string().orEmpty()
+            if (!r.isSuccessful) throw P14RemoteHttpException(r.code, text.take(800))
+            text
+        }
     }
     private inline fun <reified T> decode(text:String):T=json.decodeFromString(text)
     companion object { private val JSON="application/json; charset=utf-8".toMediaType() }
