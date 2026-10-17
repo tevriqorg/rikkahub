@@ -12,6 +12,7 @@ on:
 
 permissions:
   contents: read
+  pull-requests: read
 
 jobs:
   recovery-guard:
@@ -31,3 +32,12 @@ jobs:
         env:
           P14_PR_BODY: ${{ github.event.pull_request.body }}
         run: python3 scripts/check_p14_recovery.py --head "${{ github.event.pull_request.head.sha }}" --pr-body-env P14_PR_BODY
+
+      - name: Validate open recovery PR metadata on push
+        if: github.event_name == 'push' && github.ref_name == 'fix/p14r3-recovery'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          body="$(gh api "repos/${GITHUB_REPOSITORY}/pulls?state=open&head=${GITHUB_REPOSITORY_OWNER}:${GITHUB_REF_NAME}" --jq '.[0].body // ""')"
+          test -n "$body" || { echo "No open recovery PR found for ${GITHUB_REF_NAME}"; exit 1; }
+          P14_PR_BODY="$body" python3 scripts/check_p14_recovery.py --head "$GITHUB_SHA" --pr-body-env P14_PR_BODY
