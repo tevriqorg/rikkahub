@@ -33,6 +33,11 @@ internal class P14RuntimeCredentialStore(context: Context) {
     fun deviceId(): String = prefs.getString("device_id", null) ?: Uuid.random().toString().also {
         prefs.edit().putString("device_id", it).apply()
     }
+    fun canAdoptDeviceId(): Boolean = prefs.all.keys.none { it.endsWith("_token") }
+    fun adoptDeviceId(deviceId: String) {
+        require(canAdoptDeviceId()) { "P14 device identity already has stored credentials" }
+        prefs.edit().putString("device_id", deviceId).apply()
+    }
     fun markActive(providerId:String, baseUrl:String) { prefs.edit().putString("active_provider",providerId).putString("active_base",baseUrl.trimEnd('/')).apply() }
     fun activeConnection():P14RuntimeConnection? {
         val pid=prefs.getString("active_provider",null)?:return null
@@ -109,7 +114,19 @@ internal class P14RuntimeAccess(
         val setup=P14RuntimeConnection(base, provider.apiKey, pid)
         val session:DeviceSession=decode(get(setup,"device-session"))
         val token=when(session.scope) {
-            "DEVICE" -> { require(session.deviceId==store.deviceId()) { "P14 device credential belongs to another installation" }; provider.apiKey }
+            "DEVICE" -> {
+                val credentialDeviceId = requireNotNull(session.deviceId) { "P14 device credential has no device identity" }
+                if (credentialDeviceId != store.deviceId()) {
+                    // A manually pasted, pre-issued device credential is an explicit device import.
+                    // Adopt its app-private UUID only when this install has no existing P14 credential;
+                    // never overwrite an established device identity with active credentials.
+                    require(store.canAdoptDeviceId()) {
+                        "P14 device credential belongs to another installation; use a setup credential or the existing paired provider"
+                    }
+                    store.adoptDeviceId(credentialDeviceId)
+                }
+                provider.apiKey
+            }
             "OWNER_SETUP" -> {
                 val issued:DeviceIssued=decode(post(setup,"devices/${store.deviceId()}/credential", json.encodeToString(IssueCommand())))
                 require(issued.active && issued.deviceId==store.deviceId()); issued.deviceToken
