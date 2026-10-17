@@ -33,7 +33,9 @@ jobs:
             curl -fsSL "$fallback/scripts/check_p14r3_recovery.py" -o /tmp/p14-recovery-authority/check.py
 
       - name: Validate canonical matrix and commit Row mapping
-        run: python3 /tmp/p14-recovery-authority/check.py --matrix /tmp/p14-recovery-authority/matrix.json --skip-repo-docs --repo android
+        env:
+          P14_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: python3 /tmp/p14-recovery-authority/check.py --matrix /tmp/p14-recovery-authority/matrix.json --skip-repo-docs --repo android --head "$P14_HEAD_SHA"
 
       - name: Validate PR requirement-row mapping
         if: github.event_name == 'pull_request'
