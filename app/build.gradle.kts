@@ -27,7 +27,12 @@ android {
         minSdk = 26
         targetSdk = 37
         versionCode = 191
-        versionName = "2.5.6"
+        versionName = buildString {
+            append("2.5.6")
+            val explicitSuffix = providers.environmentVariable("P14_BUILD_SUFFIX").orNull?.trim()?.takeIf { it.isNotEmpty() }
+            val ciSuffix = providers.environmentVariable("GITHUB_SHA").orNull?.trim()?.takeIf { it.isNotEmpty() }?.take(8)?.let { "p14-$it" }
+            (explicitSuffix ?: ciSuffix)?.let { append("-").append(it) }
+        }
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
