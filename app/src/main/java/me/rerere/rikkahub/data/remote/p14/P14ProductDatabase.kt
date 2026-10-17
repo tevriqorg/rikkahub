@@ -12,6 +12,8 @@ import androidx.room.PrimaryKey
 import androidx.room.Query
 import androidx.room.Room
 import androidx.room.RoomDatabase
+import androidx.room.migration.Migration
+import androidx.sqlite.db.SupportSQLiteDatabase
 import androidx.room.Upsert
 import kotlinx.coroutines.flow.Flow
 
@@ -136,20 +138,40 @@ interface P14ProductDao {
         P14ChatOutboxEntity::class,
         P14ProductSyncStateEntity::class,
     ],
-    version = 1,
+    version = 2,
     exportSchema = false,
 )
 abstract class P14ProductDatabase : RoomDatabase() {
     abstract fun dao(): P14ProductDao
 
     companion object {
+        private val MIGRATION_1_2 = object : Migration(1, 2) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                val existingColumns = db.query("PRAGMA table_info(`p14_conversations`)").use { cursor ->
+                    val nameIndex = cursor.getColumnIndexOrThrow("name")
+                    buildSet {
+                        while (cursor.moveToNext()) add(cursor.getString(nameIndex))
+                    }
+                }
+                if ("pinned" !in existingColumns) {
+                    db.execSQL("ALTER TABLE `p14_conversations` ADD COLUMN `pinned` INTEGER NOT NULL DEFAULT 0")
+                }
+                if ("archived" !in existingColumns) {
+                    db.execSQL("ALTER TABLE `p14_conversations` ADD COLUMN `archived` INTEGER NOT NULL DEFAULT 0")
+                }
+                if ("state_revision" !in existingColumns) {
+                    db.execSQL("ALTER TABLE `p14_conversations` ADD COLUMN `state_revision` INTEGER NOT NULL DEFAULT 0")
+                }
+            }
+        }
+
         @Volatile private var instance: P14ProductDatabase? = null
         fun get(context: Context): P14ProductDatabase = instance ?: synchronized(this) {
             instance ?: Room.databaseBuilder(
                 context.applicationContext,
                 P14ProductDatabase::class.java,
                 "rikkahub-p14-product.db",
-            ).build().also { instance = it }
+            ).addMigrations(MIGRATION_1_2).build().also { instance = it }
         }
     }
 }
