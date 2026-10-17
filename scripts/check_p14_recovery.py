@@ -14,6 +14,8 @@ def load_lock():
     if data.get("schema") != "p14.recovery-authority-lock/v1": fail("unexpected lock schema")
     if data.get("authority_issue") != "tevriqorg/P14-Entry#51": fail("authority issue drifted")
     if not data.get("scope_revision"): fail("scope_revision missing")
+    digest=data.get("authority_scope_sha256","")
+    if not re.fullmatch(r"[0-9a-f]{64}",digest): fail("authority_scope_sha256 missing or invalid")
     rows=data.get("valid_row_ids")
     if not isinstance(rows,list) or not rows: fail("valid_row_ids missing")
     ids=set(rows)
