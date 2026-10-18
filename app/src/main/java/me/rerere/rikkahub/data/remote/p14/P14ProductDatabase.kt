@@ -91,6 +91,33 @@ data class P14ChatOutboxEntity(
     @ColumnInfo(name = "acked_at_epoch_ms") val ackedAtEpochMs: Long? = null,
 )
 
+@Entity(tableName="p14_actions",indices=[Index("conversation_id")])
+data class P14ActionEntity(
+    @PrimaryKey @ColumnInfo(name="action_id") val actionId:String,
+    @ColumnInfo(name="conversation_id") val conversationId:String,
+    @ColumnInfo(name="action_type") val actionType:String,
+    val status:String,
+    @ColumnInfo(name="result_text") val resultText:String?=null,
+    @ColumnInfo(name="destination_ref") val destinationRef:String?=null,
+    @ColumnInfo(name="created_at_epoch_ms") val createdAtEpochMs:Long,
+)
+
+@Entity(tableName="p14_entry_views",primaryKeys=["entry_id","view_name"])
+data class P14EntryViewEntity(
+    @ColumnInfo(name="entry_id") val entryId:String,
+    @ColumnInfo(name="view_name") val viewName:String,
+    val enabled:Boolean,
+)
+
+@Entity(tableName="p14_view_outbox",indices=[Index("state")])
+data class P14ViewOutboxEntity(
+    @PrimaryKey @ColumnInfo(name="operation_id") val operationId:String,
+    @ColumnInfo(name="entry_id") val entryId:String,
+    @ColumnInfo(name="view_name") val viewName:String,
+    val enabled:Boolean,
+    val state:String="PENDING",
+)
+
 @Entity(tableName = "p14_observations", indices = [Index("state"), Index("captured_at_epoch_ms")])
 data class P14ObservationEntity(
     @PrimaryKey @ColumnInfo(name="observation_id") val observationId:String,
@@ -117,6 +144,15 @@ data class P14ProductSyncStateEntity(
 
 @Dao
 interface P14ProductDao {
+    @Upsert suspend fun upsertAction(item:P14ActionEntity)
+    @Query("SELECT * FROM p14_actions WHERE action_id=:id LIMIT 1") suspend fun action(id:String):P14ActionEntity?
+    @Query("SELECT * FROM p14_actions WHERE conversation_id=:conversationId ORDER BY created_at_epoch_ms DESC") fun observeActions(conversationId:String):Flow<List<P14ActionEntity>>
+    @Upsert suspend fun upsertEntryView(item:P14EntryViewEntity)
+    @Query("SELECT * FROM p14_entry_views WHERE entry_id=:entryId") fun observeEntryViews(entryId:String):Flow<List<P14EntryViewEntity>>
+    @Insert(onConflict=OnConflictStrategy.IGNORE) suspend fun insertViewOutbox(item:P14ViewOutboxEntity):Long
+    @Query("SELECT * FROM p14_view_outbox WHERE state IN ('PENDING','RETRY','IN_FLIGHT') ORDER BY rowid ASC LIMIT :limit") suspend fun pendingViewOutbox(limit:Int=30):List<P14ViewOutboxEntity>
+    @Query("UPDATE p14_view_outbox SET state=:state WHERE operation_id=:id") suspend fun setViewOutboxState(id:String,state:String)
+    @Query("UPDATE p14_view_outbox SET state='ACKED' WHERE operation_id=:id") suspend fun ackViewOutbox(id:String)
     @Upsert suspend fun upsertObservation(item:P14ObservationEntity)
     @Insert(onConflict = OnConflictStrategy.IGNORE) suspend fun insertObservationOutbox(item:P14ObservationOutboxEntity):Long
     @Query("SELECT * FROM p14_observations WHERE observation_id=:id LIMIT 1") suspend fun observation(id:String):P14ObservationEntity?
@@ -134,6 +170,7 @@ interface P14ProductDao {
 
     @Query("SELECT * FROM p14_entries ORDER BY created_at_epoch_ms DESC") fun observeEntries(): Flow<List<P14EntryEntity>>
     @Query("SELECT * FROM p14_conversations ORDER BY pinned DESC, created_at_epoch_ms DESC LIMIT :limit OFFSET :offset") suspend fun directoryPage(limit:Int,offset:Int):List<P14ProductConversationEntity>
+    @Query("SELECT c.* FROM p14_conversations c JOIN p14_entry_views v ON c.entry_id=v.entry_id WHERE v.view_name=:viewName AND v.enabled=1 ORDER BY c.pinned DESC,c.created_at_epoch_ms DESC LIMIT :limit OFFSET :offset") suspend fun directoryPageForView(viewName:String,limit:Int,offset:Int):List<P14ProductConversationEntity>
     @Query("SELECT * FROM p14_entries WHERE entry_id=:entryId LIMIT 1") suspend fun entry(entryId: String): P14EntryEntity?
     @Query("SELECT * FROM p14_entries WHERE entry_id=:entryId LIMIT 1") fun observeEntry(entryId: String): Flow<P14EntryEntity?>
     @Query("SELECT * FROM p14_conversations WHERE conversation_id=:conversationId LIMIT 1") suspend fun conversation(conversationId: String): P14ProductConversationEntity?
@@ -170,8 +207,11 @@ interface P14ProductDao {
         P14ProductSyncStateEntity::class,
         P14ObservationEntity::class,
         P14ObservationOutboxEntity::class,
+        P14ActionEntity::class,
+        P14EntryViewEntity::class,
+        P14ViewOutboxEntity::class,
     ],
-    version = 4,
+    version = 5,
     exportSchema = false,
 )
 abstract class P14ProductDatabase : RoomDatabase() {
@@ -215,13 +255,23 @@ abstract class P14ProductDatabase : RoomDatabase() {
             }
         }
 
+        internal val MIGRATION_4_5 = object : Migration(4, 5) {
+            override fun migrate(db:SupportSQLiteDatabase) {
+                db.execSQL("CREATE TABLE IF NOT EXISTS `p14_actions` (`action_id` TEXT NOT NULL, `conversation_id` TEXT NOT NULL, `action_type` TEXT NOT NULL, `status` TEXT NOT NULL, `result_text` TEXT, `destination_ref` TEXT, `created_at_epoch_ms` INTEGER NOT NULL, PRIMARY KEY(`action_id`))")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_p14_actions_conversation_id` ON `p14_actions` (`conversation_id`)")
+                db.execSQL("CREATE TABLE IF NOT EXISTS `p14_entry_views` (`entry_id` TEXT NOT NULL, `view_name` TEXT NOT NULL, `enabled` INTEGER NOT NULL, PRIMARY KEY(`entry_id`,`view_name`))")
+                db.execSQL("CREATE TABLE IF NOT EXISTS `p14_view_outbox` (`operation_id` TEXT NOT NULL, `entry_id` TEXT NOT NULL, `view_name` TEXT NOT NULL, `enabled` INTEGER NOT NULL, `state` TEXT NOT NULL, PRIMARY KEY(`operation_id`))")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_p14_view_outbox_state` ON `p14_view_outbox` (`state`)")
+            }
+        }
+
         @Volatile private var instance: P14ProductDatabase? = null
         fun get(context: Context): P14ProductDatabase = instance ?: synchronized(this) {
             instance ?: Room.databaseBuilder(
                 context.applicationContext,
                 P14ProductDatabase::class.java,
                 "rikkahub-p14-product.db",
-            ).addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4).build().also { instance = it }
+            ).addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5).build().also { instance = it }
         }
     }
 }

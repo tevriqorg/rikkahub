@@ -47,6 +47,8 @@ class P14EntryActivity : ComponentActivity() {
         val remote = P14RemoteRepository(applicationContext, settingsStore, http)
         val sharedText = if (intent.action == Intent.ACTION_SEND && intent.type == "text/plain")
             intent.getStringExtra(Intent.EXTRA_TEXT) else null
+        @Suppress("DEPRECATION")
+        val sharedFile = if (intent.action == Intent.ACTION_SEND) intent.getParcelableExtra<Uri>(Intent.EXTRA_STREAM) else null
         val notificationId = intent.getStringExtra(EXTRA_NOTIFICATION_ID)
         val interactionResponse = intent.getStringExtra(EXTRA_INTERACTION_RESPONSE)
         if (notificationId != null) lifecycleScope.launch {
@@ -61,6 +63,7 @@ class P14EntryActivity : ComponentActivity() {
                     remote = remote,
                     settingsStore = settingsStore,
                     initialSharedText = sharedText,
+                    initialSharedFile = sharedFile,
                     initialConversationId = intent.getStringExtra(EXTRA_CONVERSATION_ID),
                     externalSessionId = intent.getStringExtra(EXTRA_EXTERNAL_SESSION_ID),
                     notificationId = notificationId,
@@ -85,6 +88,7 @@ private fun P14EntryScreen(
     remote: P14RemoteRepository,
     settingsStore: SettingsStore,
     initialSharedText: String?,
+    initialSharedFile: Uri?,
     initialConversationId: String?,
     externalSessionId: String?,
     notificationId: String?,
@@ -120,9 +124,10 @@ private fun P14EntryScreen(
     val requestLocation=rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
         if (granted) recordLocation() else status="Location permission denied"
     }
-    var captureOpen by remember { mutableStateOf(!initialSharedText.isNullOrBlank()) }
+    var captureOpen by remember { mutableStateOf(!initialSharedText.isNullOrBlank() || initialSharedFile!=null) }
     var captureText by remember { mutableStateOf(initialSharedText.orEmpty()) }
-    var captureFiles by remember { mutableStateOf<List<Uri>>(emptyList()) }
+    var captureFiles by remember { mutableStateOf<List<Uri>>(listOfNotNull(initialSharedFile)) }
+    var selectedView by remember { mutableStateOf("chat") }
     val chooseFiles = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) {
         captureFiles = (captureFiles + it).distinct()
     }
@@ -143,9 +148,9 @@ private fun P14EntryScreen(
         interaction = notificationId?.let { remote.interaction(it) }
     }
 
-    LaunchedEffect(conversationId,directoryPage,refreshContext) {
+    LaunchedEffect(conversationId,directoryPage,selectedView,refreshContext) {
         if (conversationId == null) {
-            val page = product.directoryPage(directoryPage*20)
+            val page = product.directoryPage(directoryPage*20,view=selectedView)
             if (directoryPage==0) directory=page else directory=(directory+page).distinctBy{it.conversationId}
             directoryHasMore = page.size==20
         }
@@ -154,6 +159,8 @@ private fun P14EntryScreen(
     val entry = if (productConversation != null) product.entryFlow(productConversation.entryId).collectAsState(initial = null).value else null
     val messages = if (conversationId != null) product.messages(conversationId!!).collectAsState(initial = emptyList()).value else emptyList()
     val attachments = if (conversationId != null) product.attachments(conversationId!!).collectAsState(initial = emptyList()).value else emptyList()
+    val actions = if (conversationId != null) product.actions(conversationId!!).collectAsState(initial=emptyList()).value else emptyList()
+    val viewMemberships = if (entry != null) product.entryViews(entry.entryId).collectAsState(initial=emptyList()).value else emptyList()
     val canText = "chat" in manifest.enabledViews && "text" in manifest.messageCapabilities
     val upgradeRequired = manifest.compatibility == "UPGRADE_REQUIRED"
 
@@ -281,6 +288,14 @@ private fun P14EntryScreen(
                 }
                 status?.let{Text(it,style=MaterialTheme.typography.bodySmall)}
                 Text("Entry history · server-synced and local",style=MaterialTheme.typography.titleMedium)
+                Row(horizontalArrangement=Arrangement.spacedBy(4.dp),modifier=Modifier.fillMaxWidth()) {
+                    listOf("chat","todo","idea","research","execute").forEach { view ->
+                        TextButton(onClick={ selectedView=view;directoryPage=0;directory=emptyList() },
+                            contentPadding=PaddingValues(horizontal=4.dp)) {
+                            Text(if (view==selectedView) view.uppercase() else view)
+                        }
+                    }
+                }
                 LazyColumn(verticalArrangement=Arrangement.spacedBy(7.dp),modifier=Modifier.weight(1f)) {
                     items(directory,key={it.conversationId}) { item ->
                         OutlinedCard(onClick={conversationId=item.conversationId},modifier=Modifier.fillMaxWidth()) {
@@ -308,6 +323,41 @@ private fun P14EntryScreen(
                             "Manifest: ${manifest.compatibility} · ${manifest.source}",
                             style = MaterialTheme.typography.labelSmall,
                         )
+                    }
+                }
+            }
+            entry?.let { currentEntry ->
+                item {
+                    ElevatedCard(Modifier.fillMaxWidth()) {
+                        Column(Modifier.padding(12.dp),verticalArrangement=Arrangement.spacedBy(6.dp)) {
+                            Text("Work surfaces (one Entry, multiple Views)",style=MaterialTheme.typography.titleSmall)
+                            Row(horizontalArrangement=Arrangement.spacedBy(5.dp)) {
+                                listOf("todo","idea","research","execute").forEach { view ->
+                                    val enabled=viewMemberships.any { it.viewName==view && it.enabled }
+                                    TextButton(onClick={scope.launch {
+                                        status=runCatching {
+                                            product.assignEntryView(currentEntry.entryId,view,!enabled)
+                                            P14RemoteWork.enqueue(context)
+                                            "View assignment queued"
+                                        }.getOrElse{it.message?:"View failed"}
+                                    }},contentPadding=PaddingValues(horizontal=3.dp)) {
+                                        Text("${if(enabled) "✓ " else "+ "}$view")
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            if(actions.isNotEmpty()) item {
+                ElevatedCard(Modifier.fillMaxWidth()) {
+                    Column(Modifier.padding(12.dp),verticalArrangement=Arrangement.spacedBy(7.dp)) {
+                        Text("Actions / Results",style=MaterialTheme.typography.titleMedium)
+                        actions.forEach { action ->
+                            Text("${action.actionType} · ${action.status}",style=MaterialTheme.typography.titleSmall)
+                            action.resultText?.let{Text(it)}
+                            action.destinationRef?.let{Text("Destination: $it",style=MaterialTheme.typography.labelSmall)}
+                        }
                     }
                 }
             }

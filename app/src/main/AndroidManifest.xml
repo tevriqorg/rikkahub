@@ -66,8 +66,18 @@
       android:theme="@style/Theme.Rikkahub" />
     <activity
       android:name=".ui.activity.P14EntryActivity"
-      android:exported="false"
-      android:theme="@style/Theme.Rikkahub" />
+      android:exported="true"
+      android:label="P14 Capture"
+      android:theme="@style/Theme.Rikkahub">
+      <intent-filter>
+        <action android:name="android.intent.action.SEND" />
+        <category android:name="android.intent.category.DEFAULT" />
+        <data android:mimeType="text/plain" />
+        <data android:mimeType="image/*" />
+        <data android:mimeType="audio/*" />
+        <data android:mimeType="application/*" />
+      </intent-filter>
+    </activity>
     <activity
       android:name=".ui.activity.SafeModeActivity"
       android:exported="false"
