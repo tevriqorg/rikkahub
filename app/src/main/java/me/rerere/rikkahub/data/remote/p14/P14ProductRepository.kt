@@ -37,6 +37,9 @@ import java.net.URLConnection
 import java.util.UUID
 import kotlin.uuid.Uuid
 
+internal fun durableP14AudioKind(part:UIMessagePart.Audio):String =
+    if (part.metadata?.get("p14_media_role")?.jsonPrimitive?.contentOrNull=="voice_message") "VOICE" else "AUDIO"
+
 internal data class P14EntryDirectoryItem(val entryId:String, val conversationId:String, val bodyText:String, val pinned:Boolean, val archived:Boolean)
 
 internal data class P14AcceptedMutation(
@@ -77,13 +80,27 @@ internal class P14ProductRepository(
     private val credentialStore = P14RuntimeCredentialStore(appContext)
 
     val entries: Flow<List<P14EntryEntity>> = dao.observeEntries()
-    suspend fun directoryPage(offset:Int,limit:Int=20):List<P14EntryDirectoryItem> = withContext(Dispatchers.IO) {
+    suspend fun directoryPage(offset:Int,limit:Int=20,view:String="chat"):List<P14EntryDirectoryItem> = withContext(Dispatchers.IO) {
         require(offset>=0 && limit in 1..100)
-        dao.directoryPage(limit,offset).map { c ->
+        require(view in setOf("chat","todo","idea","research","execute"))
+        val raw = if(view=="chat") dao.directoryPage(limit,offset) else dao.directoryPageForView(view,limit,offset)
+        raw.map { c ->
             P14EntryDirectoryItem(c.entryId,c.conversationId,dao.entry(c.entryId)?.bodyText.orEmpty(),c.pinned,c.archived)
         }
     }
     val pendingOutboxCount: Flow<Int> = dao.observePendingOutboxCount()
+    fun actions(conversationId:String):Flow<List<P14ActionEntity>> = dao.observeActions(conversationId)
+    fun entryViews(entryId:String):Flow<List<P14EntryViewEntity>> = dao.observeEntryViews(entryId)
+    suspend fun assignEntryView(entryId:String,view:String,enabled:Boolean):String = withContext(Dispatchers.IO) {
+        require(view in setOf("todo","idea","research","execute"))
+        require(dao.entry(entryId)!=null) { "Unknown Entry" }
+        val id=UUID.randomUUID().toString()
+        database.withTransaction {
+            dao.upsertEntryView(P14EntryViewEntity(entryId,view,enabled))
+            dao.insertViewOutbox(P14ViewOutboxEntity(id,entryId,view,enabled))
+        }
+        id
+    }
     fun entryFlow(entryId: String): Flow<P14EntryEntity?> = dao.observeEntry(entryId)
     fun messages(conversationId: String): Flow<List<P14ProductMessageEntity>> = dao.observeMessages(conversationId)
     fun conversationFlow(conversationId: String): Flow<P14ProductConversationEntity?> = dao.observeConversation(conversationId)
@@ -181,6 +198,7 @@ internal class P14ProductRepository(
         P14DurableAttachmentUploader(appContext, http).uploadPending(connection, manifest)
         flush(connection, manifest)
         flushObservations(connection)
+        flushViewAssignments(connection)
         replay(connection)
         true
     }
@@ -242,9 +260,15 @@ internal class P14ProductRepository(
                 "conversation.message.deleted" -> applyMessageDeleted(event)
                 "conversation.state.updated" -> applyConversationState(event)
                 "observation.created" -> applyObservation(event)
+                "conversation.quick_action.created" -> applyActionCreated(event)
+                "conversation.action.result" -> applyActionResult(event)
+                "entry.view.updated" -> applyViewUpdated(event)
                 else -> Unit // forward-compatible: unknown durable events still advance the cursor
             }
-            event.caused_by_operation_id?.let { dao.ackByOperationId(it, System.currentTimeMillis()) }
+            event.caused_by_operation_id?.let {
+                dao.ackByOperationId(it, System.currentTimeMillis())
+                dao.ackViewOutbox(it)
+            }
             cursor = event.sync_seq
         }
         dao.upsertSyncState(P14ProductSyncStateEntity(SYNC_SCOPE, cursor))
@@ -349,6 +373,51 @@ internal class P14ProductRepository(
         ))
     }
 
+    private suspend fun applyActionCreated(event:P14SyncEventDto) {
+        val p=event.payload
+        val id=p.requiredString("action_id")
+        val existing=dao.action(id)
+        dao.upsertAction(P14ActionEntity(id,p.requiredString("conversation_id"),p.stringOrEmpty("action_type"),
+            existing?.status ?: "accepted",existing?.resultText,existing?.destinationRef,
+            existing?.createdAtEpochMs ?: p.epochMs("created_at",event.occurred_at)))
+    }
+
+    private suspend fun applyActionResult(event:P14SyncEventDto) {
+        val p=event.payload
+        val id=p.requiredString("action_id")
+        val existing=dao.action(id)
+        dao.upsertAction(P14ActionEntity(id,p.requiredString("conversation_id"),
+            existing?.actionType ?: "action",p.stringOrEmpty("status"),
+            p["result_text"]?.jsonPrimitive?.contentOrNull,
+            p["destination_ref"]?.jsonPrimitive?.contentOrNull,
+            existing?.createdAtEpochMs ?: p.epochMs("created_at",event.occurred_at)))
+    }
+
+    private suspend fun applyViewUpdated(event:P14SyncEventDto) {
+        val p=event.payload
+        val view=p.requiredString("view_name")
+        if(view !in setOf("todo","idea","research","execute")) return
+        val enabled=p["enabled"]?.jsonPrimitive?.contentOrNull?.toBooleanStrictOrNull() ?: return
+        dao.upsertEntryView(P14EntryViewEntity(p.requiredString("entry_id"),view,enabled))
+    }
+
+    private suspend fun flushViewAssignments(connection:P14RuntimeConnection) {
+        for (operation in dao.pendingViewOutbox()) {
+            dao.setViewOutboxState(operation.operationId,"IN_FLIGHT")
+            try {
+                val body=buildJsonObject {
+                    put("client_operation_id",operation.operationId)
+                    put("enabled",operation.enabled)
+                }
+                post(connection,"entries/${operation.entryId}/views/${operation.viewName}",body.toString())
+                dao.setViewOutboxState(operation.operationId,"ACKED")
+            } catch(error:Exception) {
+                dao.setViewOutboxState(operation.operationId,"RETRY")
+                throw error
+            }
+        }
+    }
+
     private suspend fun applyObservation(event:P14SyncEventDto) {
         val p=event.payload
         val id=p.requiredString("observation_id")
@@ -436,7 +505,7 @@ internal class P14ProductRepository(
             when (part) {
                 is UIMessagePart.Image -> { locator = part.url; kind = "IMAGE"; name = Uri.parse(locator).lastPathSegment ?: "image"; mime = appContext.contentResolver.getType(Uri.parse(locator)) ?: URLConnection.guessContentTypeFromName(name) ?: "image/jpeg" }
                 is UIMessagePart.Video -> { locator = part.url; kind = "VIDEO"; name = Uri.parse(locator).lastPathSegment ?: "video"; mime = appContext.contentResolver.getType(Uri.parse(locator)) ?: URLConnection.guessContentTypeFromName(name) ?: "video/mp4" }
-                is UIMessagePart.Audio -> { locator = part.url; kind = if (part.metadata?.get("p14_media_role")?.jsonPrimitive?.contentOrNull == "voice_message") "VOICE" else "AUDIO"; name = Uri.parse(locator).lastPathSegment ?: "audio"; mime = appContext.contentResolver.getType(Uri.parse(locator)) ?: URLConnection.guessContentTypeFromName(name) ?: "audio/mpeg" }
+                is UIMessagePart.Audio -> { locator = part.url; kind = durableP14AudioKind(part); name = Uri.parse(locator).lastPathSegment ?: "audio"; mime = appContext.contentResolver.getType(Uri.parse(locator)) ?: URLConnection.guessContentTypeFromName(name) ?: "audio/mpeg" }
                 is UIMessagePart.Document -> { locator = part.url; kind = "FILE"; name = part.fileName.ifBlank { Uri.parse(locator).lastPathSegment ?: "file" }; mime = part.mime.ifBlank { "application/octet-stream" } }
                 else -> return@mapIndexedNotNull null
             }
