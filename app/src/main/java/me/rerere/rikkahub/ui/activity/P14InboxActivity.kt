@@ -1,6 +1,7 @@
 package me.rerere.rikkahub.ui.activity
 
 import android.os.Bundle
+import android.content.Intent
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.layout.*
@@ -26,16 +27,16 @@ class P14InboxActivity:ComponentActivity() {
         repo=P14RemoteRepository(applicationContext,get<SettingsStore>(),get<OkHttpClient>())
         lifecycleScope.launch { runCatching { repo.refreshActive() } }
         intent.getStringExtra("notification_id")?.let { id -> lifecycleScope.launch { repo.queueState(id,"OPENED") } }
-        setContent { RikkahubTheme { P14InboxScreen(repo,{finish()},{ P14Push.enable(this){} }) } }
+        setContent { RikkahubTheme { P14InboxScreen(repo,{finish()},{ P14Push.enable(this){} },{startActivity(Intent(this,P14EntryActivity::class.java))}) } }
     }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
-@Composable private fun P14InboxScreen(repo:P14RemoteRepository,onBack:()->Unit,onEnablePush:()->Unit) {
+@Composable private fun P14InboxScreen(repo:P14RemoteRepository,onBack:()->Unit,onEnablePush:()->Unit,onOpenEntries:()->Unit) {
     val notifications by repo.notifications.collectAsState(initial=emptyList())
     val scope=rememberCoroutineScope()
     Scaffold(
-        topBar={ TopAppBar(title={Text("P14 Remote Inbox")},navigationIcon={TextButton(onClick=onBack){Text("Back")}},actions={TextButton(onClick=onEnablePush){Text("Enable Push")}}) }
+        topBar={ TopAppBar(title={Text("P14 Remote Inbox")},navigationIcon={TextButton(onClick=onBack){Text("Back")}},actions={TextButton(onClick=onOpenEntries){Text("Entries")};TextButton(onClick=onEnablePush){Text("Enable Push")}}) }
     ){ pad ->
         if(notifications.isEmpty()) Box(Modifier.padding(pad).fillMaxSize()) { Text("No durable notifications",Modifier.padding(24.dp)) }
         else LazyColumn(Modifier.padding(pad).fillMaxSize(),contentPadding=PaddingValues(12.dp),verticalArrangement=Arrangement.spacedBy(10.dp)) {

@@ -673,11 +673,15 @@ private fun TopBar(
             }
         },
         actions = {
-            if (assistant.runtimeMode == AssistantRuntimeMode.REMOTE && chatModel?.modelId == "p14-hermes") {
+            if (chatModel?.modelId == "p14-hermes") {
                 if (remoteManifest?.enabledViews?.contains("chat") == true) {
                     TextButton(onClick = {
                         context.startActivity(Intent(context, P14EntryActivity::class.java)
-                            .putExtra(P14EntryActivity.EXTRA_EXTERNAL_SESSION_ID, conversation.id.toString()))
+                            .apply {
+                                if (conversation.messageNodes.isNotEmpty()) {
+                                    putExtra(P14EntryActivity.EXTRA_EXTERNAL_SESSION_ID, conversation.id.toString())
+                                }
+                            })
                     }) { Text("Entry") }
                 }
                 if (remoteManifest?.enabledViews?.contains("inbox") == true) {
