@@ -40,6 +40,7 @@ import me.rerere.rikkahub.data.remote.p14.P14ProductSyncRuntime
 import me.rerere.rikkahub.data.remote.p14.P14RemoteWork
 import me.rerere.rikkahub.data.remote.p14.P14ChatRecovery
 import me.rerere.rikkahub.data.remote.p14.P14ProductDatabase
+import me.rerere.rikkahub.data.remote.p14.P14LocationObservationScheduler
 import me.rerere.rikkahub.data.repository.ConversationRepository
 import okhttp3.OkHttpClient
 import org.koin.core.context.GlobalContext
@@ -99,6 +100,7 @@ class RikkaHubApp : Application() {
                 ).restoreAll()
             }.onFailure { Log.e(TAG, "P14 local projection recovery failed", it) }
         }
+        P14LocationObservationScheduler.configure(this)
         P14RemoteWork.enqueue(this)
         P14ProductSyncRuntime.start(this, p14Http)
 

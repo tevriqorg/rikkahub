@@ -6,7 +6,7 @@ import org.yaml.snakeyaml.Yaml
 import org.yaml.snakeyaml.constructor.SafeConstructor
 
 /** Portable, non-executable profile. No credential is serialized or logged. */
-internal class P14ProfileStore(context:Context) {
+internal class P14ProfileStore(private val context:Context) {
     private val prefs=context.applicationContext.getSharedPreferences("p14-native-profile",Context.MODE_PRIVATE)
     private val yaml=Yaml(SafeConstructor(LoaderOptions()))
     fun exportProfile():String = prefs.getString("active_profile",null) ?: DEFAULT_PROFILE
@@ -19,6 +19,12 @@ internal class P14ProfileStore(context:Context) {
     }
     fun locationEnabled():Boolean = readLocationPolicy(exportProfile()).first
     fun retentionDays():Int = readLocationPolicy(exportProfile()).second
+    fun locationMinDistanceMeters():Float {
+        val root=yaml.load<Any>(exportProfile()) as? Map<*,*> ?: return 500f
+        val location=(root["observation"] as? Map<*,*>)?.get("location") as? Map<*,*>
+        val policy=location?.get("policy") as? Map<*,*>
+        return ((policy?.get("min_distance_m") as? Number)?.toFloat() ?: 500f).coerceIn(100f,10000f)
+    }
 
     fun importProfile(source:String) {
         require(source.length<=32768) { "Profile is too large" }
@@ -42,6 +48,7 @@ internal class P14ProfileStore(context:Context) {
         val supported=setOf("text","photo","scan","file","voice","share","draft_mode")
         require(capture?.keys?.all{it in supported}!=false) { "Unknown Capture capability" }
         check(prefs.edit().putString("active_profile",source).commit()) { "Profile activation failed" }
+        P14LocationObservationScheduler.configure(context)
     }
 
     private fun readLocationPolicy(source:String):Pair<Boolean,Int> {
