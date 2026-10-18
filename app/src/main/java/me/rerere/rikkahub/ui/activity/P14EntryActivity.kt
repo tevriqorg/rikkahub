@@ -260,7 +260,9 @@ private fun P14EntryScreen(
     val attachments = if (conversationId != null) product.attachments(conversationId!!,historyLimit).collectAsState(initial = emptyList()).value else emptyList()
     val actions = if (conversationId != null) product.actions(conversationId!!).collectAsState(initial=emptyList()).value else emptyList()
     var nearbyObservations by remember(entry?.entryId,refreshContext) { mutableStateOf<List<P14ObservationEntity>>(emptyList()) }
+    var linkedObservationIds by remember(entry?.entryId,refreshContext) { mutableStateOf<List<String>>(emptyList()) }
     LaunchedEffect(entry?.entryId,refreshContext) {
+        if(entry != null) linkedObservationIds=runCatching{product.linkedObservationIds(entry.entryId)}.getOrDefault(emptyList())
         if(entry != null && profileStore.locationEnabled()) {
             nearbyObservations=product.recentObservations().filter {
                 kotlin.math.abs(it.capturedAtEpochMs-entry.createdAtEpochMs)<=2*60*60*1000L
@@ -509,6 +511,7 @@ private fun P14EntryScreen(
                         Column(Modifier.padding(12.dp)) {
                             Text("Nearby context · opt-in Location",style=MaterialTheme.typography.titleSmall)
                             Text("Context is separate from user-authored Entry")
+                            if(linkedObservationIds.isNotEmpty()) Text("Linked Location observations: ${linkedObservationIds.size}")
                             nearbyObservations.take(3).forEach { observation ->
                                 TextButton(onClick={scope.launch {
                                     status=runCatching {

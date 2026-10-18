@@ -236,6 +236,11 @@ internal class P14ProductRepository(
     }
 
     suspend fun recentObservations():List<P14ObservationEntity> = dao.recentObservations()
+    suspend fun linkedObservationIds(entryId:String):List<String> = withContext(Dispatchers.IO) {
+        val c=credentialStore.activeConnection() ?: return@withContext emptyList()
+        val text=get(c,"${c.baseUrl}/entries/$entryId/context/observations")
+        json.parseToJsonElement(text).jsonArray.map { it.jsonObject.requiredString("observation_id") }
+    }
 
     suspend fun currentCursor(): Long = dao.syncState(SYNC_SCOPE)?.lastSyncSeq ?: 0L
 
