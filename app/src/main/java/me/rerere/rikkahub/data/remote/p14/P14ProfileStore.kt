@@ -33,8 +33,28 @@ internal class P14ProfileStore(private val context:Context) {
 
     fun importProfile(source:String) {
         P14CapabilityRegistry.activation(source,P14CapabilityRegistry.granted(context))
+        val candidate=yaml.load<Any>(source) as? Map<*,*> ?: error("Invalid Profile")
+        val hub=candidate["hub"] as? Map<*,*>
+        if(hub!=null) {
+            require(hub["kind"]=="hermes") { "Unsupported Hub transport" }
+            val ref=hub["credential_ref"] as? String ?: error("Hub credential reference is required")
+            val endpoint=hub["endpoint"] as? String ?: error("Hub endpoint is required")
+            require(endpoint.startsWith("https://") || endpoint.startsWith("http://127.0.0.1")) { "Unencrypted external Hub forbidden" }
+            val active=P14RuntimeCredentialStore(context).activeConnection()
+            require(active!=null && active.providerId==ref && active.baseUrl.trimEnd('/')==endpoint.trimEnd('/')) {
+                "Hub credential_ref has no matching active secure connection"
+            }
+            // Do not read, export, or log the resolved secret value.
+        }
+        val previous=prefs.getString("active_profile",null)
         check(prefs.edit().putString("active_profile",source).commit()) { "Profile activation failed" }
-        P14LocationObservationScheduler.configure(context)
+        try { P14LocationObservationScheduler.configure(context) }
+        catch(error:Exception) {
+            if(previous==null) prefs.edit().remove("active_profile").commit()
+            else prefs.edit().putString("active_profile",previous).commit()
+            runCatching { P14LocationObservationScheduler.configure(context) }
+            throw error
+        }
     }
 
     private fun readLocationPolicy(source:String):Pair<Boolean,Int> {
