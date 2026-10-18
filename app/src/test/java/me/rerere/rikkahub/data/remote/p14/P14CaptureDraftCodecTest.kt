@@ -14,7 +14,7 @@ class P14CaptureDraftCodecTest {
         assertEquals(original,roundTrip)
         assertEquals(original.draftId,roundTrip.draftId)
         assertEquals(original.messageId,roundTrip.messageId)
-        assertEquals(1300,roundTrip.materials.last().voiceDurationMs)
+        assertEquals(1300L,roundTrip.materials.last().voiceDurationMs)
         assertFalse(P14DraftCodec.encode(original).contains("Bearer "))
     }
 }
