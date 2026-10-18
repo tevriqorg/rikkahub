@@ -359,11 +359,17 @@ internal class P14ProductRepository(
             for(raw in items) {
                 val item=raw.jsonObject
                 val mid=item.requiredString("message_id")
-                if(dao.message(mid)!=null) continue
+                val existing=dao.message(mid)
+                if(existing!=null && existing.deliveryState!="SYNCED") continue
                 val convoId=item.requiredString("conversation_id")
                 val time=item.epochMs("created_at",Instant.now().toString())
-                dao.upsertMessage(P14ProductMessageEntity(mid,convoId,item.stringOrEmpty("role"),
-                    item.stringOrEmpty("body_text"),deliveryState="SYNCED",createdAtEpochMs=time))
+                val revision=item["revision"]?.jsonPrimitive?.intOrNull ?: 1
+                if(existing==null || revision>=existing.revision) {
+                    dao.upsertMessage(P14ProductMessageEntity(mid,convoId,item.stringOrEmpty("role"),
+                        item.stringOrEmpty("body_text"),revision=revision,
+                        tombstone=item["tombstone"]?.jsonPrimitive?.contentOrNull=="true",
+                        deliveryState="SYNCED",createdAtEpochMs=existing?.createdAtEpochMs ?: time))
+                }
                 item["attachments"]?.jsonArray?.forEach { a ->
                     val att=a.jsonObject
                     val rid=att.requiredString("attachment_id")
