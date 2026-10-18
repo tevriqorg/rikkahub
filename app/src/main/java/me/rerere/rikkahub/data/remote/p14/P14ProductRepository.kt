@@ -210,12 +210,19 @@ internal class P14ProductRepository(
     }
 
     /** Explicit policy-gated Location Observation: never a user Entry or Inbox Notification. */
-    suspend fun acceptLocationObservation(latitude:Double,longitude:Double,accuracyM:Double?):String = withContext(Dispatchers.IO) {
+    suspend fun acceptLocationObservation(latitude:Double,longitude:Double,accuracyM:Double?,permissionState:String="foreground"):String = withContext(Dispatchers.IO) {
         require(P14ProfileStore(appContext).locationEnabled()) { "Location Observation is disabled by Profile" }
         require(latitude in -90.0..90.0 && longitude in -180.0..180.0)
+        require(permissionState in setOf("foreground","background"))
+        val profile=P14ProfileStore(appContext)
+        val (profileId,profileVersion)=profile.profileIdentity()
         val id=UUID.randomUUID().toString()
         database.withTransaction {
-            dao.upsertObservation(P14ObservationEntity(id,"LOCATION",latitude,longitude,accuracyM,System.currentTimeMillis()))
+            dao.upsertObservation(P14ObservationEntity(id,"LOCATION",latitude,longitude,accuracyM,System.currentTimeMillis(),
+                profileId=profileId,profileVersion=profileVersion,
+                sourceDeviceId=credentialStore.deviceId(),permissionState=permissionState,
+                policyMode="significant-change",policyMinDistanceM=profile.locationMinDistanceMeters(),
+                retentionDays=profile.retentionDays()))
             dao.insertObservationOutbox(P14ObservationOutboxEntity("obs-op-$id",id))
         }
         id
@@ -440,7 +447,14 @@ internal class P14ProductRepository(
         val long=p["longitude"]?.jsonPrimitive?.contentOrNull?.toDoubleOrNull() ?: return
         dao.upsertObservation(P14ObservationEntity(id,"LOCATION",lat,long,
             p["accuracy_m"]?.jsonPrimitive?.contentOrNull?.toDoubleOrNull(),
-            old?.capturedAtEpochMs ?: p.epochMs("captured_at",event.occurred_at),"SYNCED"))
+            old?.capturedAtEpochMs ?: p.epochMs("captured_at",event.occurred_at),"SYNCED",
+            profileId=p.stringOrEmpty("profile_id").ifBlank { old?.profileId ?: "legacy-unattributed" },
+            profileVersion=p["profile_version"]?.jsonPrimitive?.intOrNull ?: old?.profileVersion ?: 1,
+            sourceDeviceId=p.stringOrEmpty("source_device_id").ifBlank { old?.sourceDeviceId ?: "unknown" },
+            permissionState=p.stringOrEmpty("permission_state").ifBlank { old?.permissionState ?: "unspecified" },
+            policyMode=p.stringOrEmpty("policy_mode").ifBlank { "significant-change" },
+            policyMinDistanceM=p["policy_min_distance_m"]?.jsonPrimitive?.contentOrNull?.toDoubleOrNull() ?: 500.0,
+            retentionDays=p["retention_days"]?.jsonPrimitive?.intOrNull ?: 7))
     }
 
     private suspend fun flushObservations(connection:P14RuntimeConnection) {
@@ -455,6 +469,13 @@ internal class P14ProductRepository(
                     put("longitude",observation.longitude)
                     observation.accuracyM?.let{put("accuracy_m",it)}
                     put("captured_at",Instant.ofEpochMilli(observation.capturedAtEpochMs).toString())
+                    put("profile_id",observation.profileId)
+                    put("profile_version",observation.profileVersion)
+                    put("permission_state",observation.permissionState)
+                    put("policy_mode",observation.policyMode)
+                    put("policy_min_distance_m",observation.policyMinDistanceM)
+                    put("retention_days",observation.retentionDays)
+                    // Source-device identity is server-authenticated; never trust a caller-provided field.
                 }
                 post(connection,"observations/location",body.toString())
                 dao.setObservationOutboxState(operation.operationId,"ACKED")

@@ -51,7 +51,7 @@ internal class P14LocationObservationWorker(context:Context, params:WorkerParame
                 Location.distanceBetween(previous.latitude,previous.longitude,fix.latitude,fix.longitude,distance)
                 if(distance[0] < policy.locationMinDistanceMeters()) return Result.success()
             }
-            repo.acceptLocationObservation(fix.latitude,fix.longitude,fix.accuracy.toDouble())
+            repo.acceptLocationObservation(fix.latitude,fix.longitude,fix.accuracy.toDouble(),"background")
             P14RemoteWork.enqueue(ctx)
             Result.success()
         }.getOrElse { Result.retry() }

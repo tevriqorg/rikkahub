@@ -127,6 +127,13 @@ data class P14ObservationEntity(
     @ColumnInfo(name="accuracy_m") val accuracyM:Double?,
     @ColumnInfo(name="captured_at_epoch_ms") val capturedAtEpochMs:Long,
     val state:String="PENDING",
+    @ColumnInfo(name="profile_id") val profileId:String="legacy-unattributed",
+    @ColumnInfo(name="profile_version") val profileVersion:Int=1,
+    @ColumnInfo(name="source_device_id") val sourceDeviceId:String="unknown",
+    @ColumnInfo(name="permission_state") val permissionState:String="unspecified",
+    @ColumnInfo(name="policy_mode") val policyMode:String="significant-change",
+    @ColumnInfo(name="policy_min_distance_m") val policyMinDistanceM:Double=500.0,
+    @ColumnInfo(name="retention_days") val retentionDays:Int=7,
 )
 
 @Entity(tableName="p14_observation_outbox", indices=[Index("state")])
@@ -211,7 +218,7 @@ interface P14ProductDao {
         P14EntryViewEntity::class,
         P14ViewOutboxEntity::class,
     ],
-    version = 5,
+    version = 6,
     exportSchema = false,
 )
 abstract class P14ProductDatabase : RoomDatabase() {
@@ -265,13 +272,25 @@ abstract class P14ProductDatabase : RoomDatabase() {
             }
         }
 
+        internal val MIGRATION_5_6 = object : Migration(5, 6) {
+            override fun migrate(db:SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE p14_observations ADD COLUMN profile_id TEXT NOT NULL DEFAULT 'legacy-unattributed'")
+                db.execSQL("ALTER TABLE p14_observations ADD COLUMN profile_version INTEGER NOT NULL DEFAULT 1")
+                db.execSQL("ALTER TABLE p14_observations ADD COLUMN source_device_id TEXT NOT NULL DEFAULT 'unknown'")
+                db.execSQL("ALTER TABLE p14_observations ADD COLUMN permission_state TEXT NOT NULL DEFAULT 'unspecified'")
+                db.execSQL("ALTER TABLE p14_observations ADD COLUMN policy_mode TEXT NOT NULL DEFAULT 'significant-change'")
+                db.execSQL("ALTER TABLE p14_observations ADD COLUMN policy_min_distance_m REAL NOT NULL DEFAULT 500.0")
+                db.execSQL("ALTER TABLE p14_observations ADD COLUMN retention_days INTEGER NOT NULL DEFAULT 7")
+            }
+        }
+
         @Volatile private var instance: P14ProductDatabase? = null
         fun get(context: Context): P14ProductDatabase = instance ?: synchronized(this) {
             instance ?: Room.databaseBuilder(
                 context.applicationContext,
                 P14ProductDatabase::class.java,
                 "rikkahub-p14-product.db",
-            ).addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5).build().also { instance = it }
+            ).addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6).build().also { instance = it }
         }
     }
 }

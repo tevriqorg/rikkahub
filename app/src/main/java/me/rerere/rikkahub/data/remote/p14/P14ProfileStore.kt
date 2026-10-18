@@ -10,6 +10,10 @@ internal class P14ProfileStore(private val context:Context) {
     private val prefs=context.applicationContext.getSharedPreferences("p14-native-profile",Context.MODE_PRIVATE)
     private val yaml=Yaml(SafeConstructor(LoaderOptions()))
     fun exportProfile():String = prefs.getString("active_profile",null) ?: DEFAULT_PROFILE
+    fun profileIdentity():Pair<String,Int> {
+        val root=yaml.load<Any>(exportProfile()) as? Map<*,*> ?: error("Invalid active Profile")
+        return requireNotNull(root["id"] as? String) to requireNotNull((root["version"] as? Number)?.toInt())
+    }
     fun captureEnabled(kind:String):Boolean {
         require(kind in setOf("text","photo","scan","file","voice","share"))
         val root=yaml.load<Any>(exportProfile()) as? Map<*,*> ?: return false
