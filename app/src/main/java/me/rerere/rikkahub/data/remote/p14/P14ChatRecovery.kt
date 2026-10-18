@@ -7,6 +7,8 @@ import kotlinx.coroutines.withContext
 import me.rerere.ai.core.MessageRole
 import me.rerere.ai.ui.UIMessage
 import me.rerere.ai.ui.UIMessagePart
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
 import me.rerere.rikkahub.data.datastore.Settings
 import me.rerere.rikkahub.data.datastore.SettingsStore
 import me.rerere.rikkahub.data.datastore.getAssistantById
@@ -75,12 +77,7 @@ internal class P14ChatRecovery(
                     if (row.bodyText.isNotBlank()) add(UIMessagePart.Text(row.bodyText))
                     dao.attachmentsForMessage(row.messageId).forEach { attachment ->
                         val locator = attachment.localLocator.takeIf { it.isNotBlank() } ?: return@forEach
-                        add(when (attachment.kind) {
-                            "IMAGE" -> UIMessagePart.Image(locator)
-                            "VIDEO" -> UIMessagePart.Video(locator)
-                            "AUDIO", "VOICE" -> UIMessagePart.Audio(locator)
-                            else -> UIMessagePart.Document(locator, attachment.fileName, attachment.mimeType)
-                        })
+                        add(recoverP14AttachmentPart(attachment) ?: return@forEach)
                     }
                 }
                 if (parts.isEmpty()) null else UIMessage(uuid, MessageRole.USER, parts)
@@ -113,4 +110,20 @@ internal fun mergeAcceptedP14Messages(existing: Conversation, accepted: List<UIM
     val missing = accepted.filter { ids.add(it.id) }
     if (missing.isEmpty()) return existing
     return existing.copy(messageNodes = existing.messageNodes + missing.map(MessageNode::of))
+}
+
+/** Recover True Voice as VOICE rather than silently downgrading it to imported AUDIO. */
+internal fun recoverP14AttachmentPart(attachment: P14ProductAttachmentEntity): UIMessagePart? {
+    val locator = attachment.localLocator.takeIf { it.isNotBlank() } ?: return null
+    return when (attachment.kind) {
+        "IMAGE" -> UIMessagePart.Image(locator)
+        "VIDEO" -> UIMessagePart.Video(locator)
+        "VOICE" -> UIMessagePart.Audio(locator, buildJsonObject {
+            put("p14_media_role", "voice_message")
+            put("p14_mime_type", attachment.mimeType)
+            attachment.durationMs?.let { put("p14_duration_ms", it) }
+        })
+        "AUDIO" -> UIMessagePart.Audio(locator)
+        else -> UIMessagePart.Document(locator, attachment.fileName, attachment.mimeType)
+    }
 }
