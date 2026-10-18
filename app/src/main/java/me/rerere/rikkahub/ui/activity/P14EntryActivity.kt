@@ -289,7 +289,7 @@ private fun P14EntryScreen(
                 status?.let{Text(it,style=MaterialTheme.typography.bodySmall)}
                 Text("Entry history · server-synced and local",style=MaterialTheme.typography.titleMedium)
                 Row(horizontalArrangement=Arrangement.spacedBy(4.dp),modifier=Modifier.fillMaxWidth()) {
-                    listOf("chat","todo","idea","research","execute").forEach { view ->
+                    listOf("chat","todo","idea","research","execute").filter{it in manifest.enabledViews}.forEach { view ->
                         TextButton(onClick={ selectedView=view;directoryPage=0;directory=emptyList() },
                             contentPadding=PaddingValues(horizontal=4.dp)) {
                             Text(if (view==selectedView) view.uppercase() else view)
@@ -332,7 +332,7 @@ private fun P14EntryScreen(
                         Column(Modifier.padding(12.dp),verticalArrangement=Arrangement.spacedBy(6.dp)) {
                             Text("Work surfaces (one Entry, multiple Views)",style=MaterialTheme.typography.titleSmall)
                             Row(horizontalArrangement=Arrangement.spacedBy(5.dp)) {
-                                listOf("todo","idea","research","execute").forEach { view ->
+                                listOf("todo","idea","research","execute").filter{it in manifest.enabledViews}.forEach { view ->
                                     val enabled=viewMemberships.any { it.viewName==view && it.enabled }
                                     TextButton(onClick={scope.launch {
                                         status=runCatching {

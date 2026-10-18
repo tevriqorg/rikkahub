@@ -58,7 +58,7 @@ data class P14EffectiveManifest(
 )
 object P14RikkaCapabilities {
     const val PROTOCOL=1; const val SCHEMA="p14.remote-manifest/v1"
-    val views=setOf("chat","inbox","activity")
+    val views=setOf("chat","todo","idea","research","execute","inbox","activity")
     val messages=setOf("text","image","voice","audio","video","file","reply","edit","delete","quick_action","notification_interaction")
 }
 fun P14ManifestDto.effective(source:String="REMOTE"):P14EffectiveManifest {
