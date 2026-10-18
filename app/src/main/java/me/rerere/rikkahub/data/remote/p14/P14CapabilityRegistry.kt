@@ -28,9 +28,9 @@ internal object P14CapabilityRegistry {
             val enabled=config["enabled"]==true
             val required=config["required"]==true
             val needed=when(name) {
-                "photo", "scan" -> setOf("CAMERA")
+                "scan" -> setOf("CAMERA")
                 "voice" -> setOf("MICROPHONE")
-                "observation.location" -> setOf("LOCATION")
+                "observation.location" -> setOf("LOCATION","BACKGROUND_LOCATION")
                 else -> emptySet()
             }
             val status=when {
@@ -58,9 +58,9 @@ internal object P14CapabilityRegistry {
 
     fun activation(source:String,granted:Set<String>):List<P14EffectiveCapability> {
         val states=resolve(source,granted)
-        val impossible=states.filter { it.required && it.state in setOf(P14Availability.UNSUPPORTED,P14Availability.DISABLED) }
+        val impossible=states.filter { it.required && it.state != P14Availability.READY }
         require(impossible.isEmpty()) { "Required capability unavailable: ${impossible.joinToString { it.id }}" }
-        // A required feature without OS permission is visible but never automatically granted.
+        // Required capabilities may not silently bypass Android permission grants.
         return states
     }
 }

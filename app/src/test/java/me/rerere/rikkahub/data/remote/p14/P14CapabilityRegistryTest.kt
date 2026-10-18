@@ -23,6 +23,11 @@ observation:
         assertEquals(P14Availability.PERMISSION_REQUIRED,items["observation.location"]?.state)
         assertEquals(P14Availability.READY,P14CapabilityRegistry.resolve(config,setOf("MICROPHONE","LOCATION")).first { it.id=="voice" }.state)
     }
+    @Test fun requiredPermissionMustBeGrantedBeforeActivation() {
+        assertThrows(IllegalArgumentException::class.java) {
+            P14CapabilityRegistry.activation(config.replace("voice: {enabled: true, required: false}","voice: {enabled: true, required: true}"),emptySet())
+        }
+    }
     @Test fun requiredUncompiledFailsWithoutActivating() {
         assertThrows(IllegalArgumentException::class.java) {
             P14CapabilityRegistry.activation(config.replace("uncompiled: {enabled: true, required: false}","uncompiled: {enabled: true, required: true}"),emptySet())
