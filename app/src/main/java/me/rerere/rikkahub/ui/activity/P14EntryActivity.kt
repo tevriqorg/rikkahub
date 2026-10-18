@@ -245,6 +245,7 @@ private fun P14EntryScreen(
             directoryHasMore = page.size==20
         }
     }
+    var historyLimit by remember(conversationId) { mutableIntStateOf(50) }
     LaunchedEffect(conversationId,historyLimit) {
         val id=conversationId ?: return@LaunchedEffect
         val entryId=product.conversationForId(id)?.entryId ?: return@LaunchedEffect
@@ -255,7 +256,6 @@ private fun P14EntryScreen(
     }
     val productConversation = if (conversationId != null) product.conversationFlow(conversationId!!).collectAsState(initial = null).value else null
     val entry = if (productConversation != null) product.entryFlow(productConversation.entryId).collectAsState(initial = null).value else null
-    var historyLimit by remember(conversationId) { mutableIntStateOf(50) }
     val messages = if (conversationId != null) product.messages(conversationId!!,historyLimit).collectAsState(initial = emptyList()).value else emptyList()
     val attachments = if (conversationId != null) product.attachments(conversationId!!,historyLimit).collectAsState(initial = emptyList()).value else emptyList()
     val actions = if (conversationId != null) product.actions(conversationId!!).collectAsState(initial=emptyList()).value else emptyList()

@@ -292,7 +292,7 @@ internal class P14ProductRepository(
         val previous=dao.entry(entryId)
         if(previous==null) dao.upsertEntry(P14EntryEntity(entryId,item.stringOrEmpty("body_text"),created))
         if(dao.conversation(convoId)==null)
-            dao.upsertConversation(P14ProductConversationEntity(convoId,entryId,null,null,created))
+            dao.upsertConversation(P14ProductConversationEntity(convoId,entryId,"remote-bootstrap:$convoId",null,created))
     }
 
     /** Keyset paging of older server-authoritative Entries; no historical event flood. */
@@ -316,7 +316,7 @@ internal class P14ProductRepository(
     suspend fun seedWorkEntry(entryId:String,conversationId:String,bodyText:String) = database.withTransaction {
         if(dao.entry(entryId)==null) dao.upsertEntry(P14EntryEntity(entryId,bodyText,System.currentTimeMillis()))
         if(dao.conversation(conversationId)==null)
-            dao.upsertConversation(P14ProductConversationEntity(conversationId,entryId,null,null,System.currentTimeMillis()))
+            dao.upsertConversation(P14ProductConversationEntity(conversationId,entryId,"remote-bootstrap:$conversationId",null,System.currentTimeMillis()))
     }
 
     /** Load current Action and View cards for an older Entry without zero-cursor full replay. */
