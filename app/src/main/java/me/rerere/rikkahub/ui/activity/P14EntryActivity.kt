@@ -135,6 +135,7 @@ private fun P14EntryScreen(
     var captureText by remember { mutableStateOf(initialSharedText.orEmpty()) }
     var captureFiles by remember { mutableStateOf<List<Uri>>(listOfNotNull(initialSharedFile)) }
     var recordedVoiceDurations by remember { mutableStateOf<Map<Uri,Long>>(emptyMap()) }
+    var scanUris by remember { mutableStateOf<Set<Uri>>(emptySet()) }
     var activeRecorder by remember { mutableStateOf<MediaRecorder?>(null) }
     var recordingFile by remember { mutableStateOf<File?>(null) }
     var recordingStart by remember { mutableLongStateOf(0L) }
@@ -142,7 +143,10 @@ private fun P14EntryScreen(
     var scanFile by remember { mutableStateOf<File?>(null) }
     val scanCamera=rememberLauncherForActivityResult(ActivityResultContracts.TakePicture()){ok ->
         val uri=scanTarget
-        if(ok && uri!=null) captureFiles=(captureFiles+uri).distinct()
+        if(ok && uri!=null) {
+            captureFiles=(captureFiles+uri).distinct()
+            scanUris=scanUris+uri
+        }
         else scanFile?.delete()
         scanTarget=null;scanFile=null
     }
@@ -324,23 +328,27 @@ private fun P14EntryScreen(
                                                     val mime=context.contentResolver.getType(source).orEmpty()
                                                     val durable=withContext(Dispatchers.IO) {
                                                         val dir=File(context.filesDir,"p14_capture").apply{mkdirs()}
-                                                        val output=File(dir,UUID.randomUUID().toString())
+                                                        val extension=source.lastPathSegment?.substringAfterLast('.',"")
+                                                            ?.takeIf{it.length in 1..8 && it.all(Char::isLetterOrDigit)}.orEmpty()
+                                                        val output=File(dir,UUID.randomUUID().toString() + if(extension.isBlank()) "" else ".$extension")
                                                         context.contentResolver.openInputStream(source)?.use{input->output.outputStream().use{input.copyTo(it)}}
                                                             ?: error("Cannot import file")
                                                         Uri.fromFile(output).toString()
                                                     }
                                                     val effectiveMime=if(source in recordedVoiceDurations) "audio/mp4" else mime
                                                     val capability=when {
+                                                        source in scanUris -> "scan"
                                                         effectiveMime.startsWith("image/")->"photo"
                                                         effectiveMime.startsWith("audio/")->"voice"
                                                         else->"file"
                                                     }
                                                     check(profileStore.captureEnabled(capability)) { "Profile disabled $capability Capture" }
                                                     add(when {
-                                                        effectiveMime.startsWith("image/")->UIMessagePart.Image(durable)
+                                                        effectiveMime.startsWith("image/")->UIMessagePart.Image(durable,
+                                                            if(source in scanUris) buildJsonObject {put("p14_media_role","scan")} else null)
                                                         effectiveMime.startsWith("audio/")->UIMessagePart.Audio(durable,
                                                             recordedVoiceDurations[source]?.let{duration-> buildJsonObject {
-                                                                put("p14_media_role","voice_message");put("p14_duration_ms",duration)
+                                                                put("p14_media_role","voice_message");put("p14_duration_ms",duration);put("p14_mime_type","audio/mp4")
                                                             }})
                                                         effectiveMime.startsWith("video/")->UIMessagePart.Video(durable)
                                                         else->UIMessagePart.Document(durable,source.lastPathSegment?:"file",mime.ifBlank{"application/octet-stream"})
@@ -351,7 +359,7 @@ private fun P14EntryScreen(
                                             val result=product.acceptRikkaMessage(localId.toString(),localId.toString(),UIMessage(role=MessageRole.USER,parts=parts),assistant.id.toString(),model.id.toString())
                                             P14RemoteWork.enqueue(context)
                                             conversationId=result.conversationId
-                                            captureOpen=false;captureText="";captureFiles=emptyList();recordedVoiceDurations=emptyMap()
+                                            captureOpen=false;captureText="";captureFiles=emptyList();recordedVoiceDurations=emptyMap();scanUris=emptySet()
                                             "Entry durably saved"
                                         }.getOrElse{it.message?:"Save failed"}
                                     }

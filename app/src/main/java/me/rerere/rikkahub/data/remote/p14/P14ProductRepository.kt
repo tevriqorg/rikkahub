@@ -503,9 +503,9 @@ internal class P14ProductRepository(
             val name: String
             val mime: String
             when (part) {
-                is UIMessagePart.Image -> { locator = part.url; kind = "IMAGE"; name = Uri.parse(locator).lastPathSegment ?: "image"; mime = appContext.contentResolver.getType(Uri.parse(locator)) ?: URLConnection.guessContentTypeFromName(name) ?: "image/jpeg" }
+                is UIMessagePart.Image -> { locator = part.url; kind = "IMAGE"; name = (if(part.metadata?.get("p14_media_role")?.jsonPrimitive?.contentOrNull=="scan") "scan-" else "") + (Uri.parse(locator).lastPathSegment ?: "image"); mime = appContext.contentResolver.getType(Uri.parse(locator)) ?: URLConnection.guessContentTypeFromName(name) ?: "image/jpeg" }
                 is UIMessagePart.Video -> { locator = part.url; kind = "VIDEO"; name = Uri.parse(locator).lastPathSegment ?: "video"; mime = appContext.contentResolver.getType(Uri.parse(locator)) ?: URLConnection.guessContentTypeFromName(name) ?: "video/mp4" }
-                is UIMessagePart.Audio -> { locator = part.url; kind = durableP14AudioKind(part); name = Uri.parse(locator).lastPathSegment ?: "audio"; mime = appContext.contentResolver.getType(Uri.parse(locator)) ?: URLConnection.guessContentTypeFromName(name) ?: "audio/mpeg" }
+                is UIMessagePart.Audio -> { locator = part.url; kind = durableP14AudioKind(part); name = Uri.parse(locator).lastPathSegment ?: "audio"; mime = part.metadata?.get("p14_mime_type")?.jsonPrimitive?.contentOrNull ?: appContext.contentResolver.getType(Uri.parse(locator)) ?: URLConnection.guessContentTypeFromName(name) ?: "audio/mpeg" }
                 is UIMessagePart.Document -> { locator = part.url; kind = "FILE"; name = part.fileName.ifBlank { Uri.parse(locator).lastPathSegment ?: "file" }; mime = part.mime.ifBlank { "application/octet-stream" } }
                 else -> return@mapIndexedNotNull null
             }
