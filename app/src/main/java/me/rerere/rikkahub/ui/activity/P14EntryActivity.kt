@@ -206,8 +206,9 @@ private fun P14EntryScreen(
     }
     val productConversation = if (conversationId != null) product.conversationFlow(conversationId!!).collectAsState(initial = null).value else null
     val entry = if (productConversation != null) product.entryFlow(productConversation.entryId).collectAsState(initial = null).value else null
-    val messages = if (conversationId != null) product.messages(conversationId!!).collectAsState(initial = emptyList()).value else emptyList()
-    val attachments = if (conversationId != null) product.attachments(conversationId!!).collectAsState(initial = emptyList()).value else emptyList()
+    var historyLimit by remember(conversationId) { mutableIntStateOf(50) }
+    val messages = if (conversationId != null) product.messages(conversationId!!,historyLimit).collectAsState(initial = emptyList()).value else emptyList()
+    val attachments = if (conversationId != null) product.attachments(conversationId!!,historyLimit).collectAsState(initial = emptyList()).value else emptyList()
     val actions = if (conversationId != null) product.actions(conversationId!!).collectAsState(initial=emptyList()).value else emptyList()
     val viewMemberships = if (entry != null) product.entryViews(entry.entryId).collectAsState(initial=emptyList()).value else emptyList()
     val canText = "chat" in manifest.enabledViews && "text" in manifest.messageCapabilities
@@ -516,6 +517,7 @@ private fun P14EntryScreen(
                     }
                 }
             }
+            if(messages.size>=historyLimit) item { OutlinedButton(onClick={historyLimit=(historyLimit+50).coerceAtMost(10000)}) {Text("Load older messages")} }
             items(messages, key = { it.messageId }) { message ->
                 val count = attachments.count { it.messageId == message.messageId }
                 ElevatedCard(Modifier.fillMaxWidth()) {

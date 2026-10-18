@@ -102,9 +102,9 @@ internal class P14ProductRepository(
         id
     }
     fun entryFlow(entryId: String): Flow<P14EntryEntity?> = dao.observeEntry(entryId)
-    fun messages(conversationId: String): Flow<List<P14ProductMessageEntity>> = dao.observeMessages(conversationId)
+    fun messages(conversationId:String,limit:Int=50):Flow<List<P14ProductMessageEntity>> = dao.observeMessagesPaged(conversationId,limit)
     fun conversationFlow(conversationId: String): Flow<P14ProductConversationEntity?> = dao.observeConversation(conversationId)
-    fun attachments(conversationId: String): Flow<List<P14ProductAttachmentEntity>> = dao.observeAttachments(conversationId)
+    fun attachments(conversationId:String,limit:Int=50):Flow<List<P14ProductAttachmentEntity>> = dao.observeAttachmentsPaged(conversationId,limit)
     suspend fun entry(entryId: String) = dao.entry(entryId)
     suspend fun conversation(conversationId: String) = dao.conversation(conversationId)
     suspend fun conversationForExternal(externalSessionId: String) = dao.conversationByExternalSession(externalSessionId)

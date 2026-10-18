@@ -179,10 +179,10 @@ interface P14ProductDao {
     @Query("SELECT * FROM p14_conversations WHERE local_conversation_id=:localId LIMIT 1") suspend fun conversationByLocalId(localId: String): P14ProductConversationEntity?
     @Query("SELECT * FROM p14_conversations WHERE local_conversation_id IS NOT NULL ORDER BY created_at_epoch_ms DESC") suspend fun localConversations(): List<P14ProductConversationEntity>
     @Query("SELECT * FROM p14_messages WHERE message_id=:messageId LIMIT 1") suspend fun message(messageId: String): P14ProductMessageEntity?
-    @Query("SELECT * FROM p14_messages WHERE conversation_id=:conversationId ORDER BY created_at_epoch_ms ASC, message_id ASC") fun observeMessages(conversationId: String): Flow<List<P14ProductMessageEntity>>
+    @Query("SELECT * FROM (SELECT * FROM p14_messages WHERE conversation_id=:conversationId ORDER BY created_at_epoch_ms DESC, message_id DESC LIMIT :limit) ORDER BY created_at_epoch_ms ASC, message_id ASC") fun observeMessagesPaged(conversationId:String,limit:Int):Flow<List<P14ProductMessageEntity>>
     @Query("SELECT * FROM p14_messages WHERE conversation_id=:conversationId ORDER BY created_at_epoch_ms ASC, message_id ASC") suspend fun listMessages(conversationId: String): List<P14ProductMessageEntity>
     @Query("SELECT * FROM p14_attachments WHERE message_id=:messageId ORDER BY created_at_epoch_ms ASC") suspend fun attachmentsForMessage(messageId: String): List<P14ProductAttachmentEntity>
-    @Query("SELECT * FROM p14_attachments WHERE conversation_id=:conversationId ORDER BY created_at_epoch_ms ASC") fun observeAttachments(conversationId: String): Flow<List<P14ProductAttachmentEntity>>
+    @Query("SELECT * FROM p14_attachments WHERE message_id IN (SELECT message_id FROM p14_messages WHERE conversation_id=:conversationId ORDER BY created_at_epoch_ms DESC, message_id DESC LIMIT :limit) ORDER BY created_at_epoch_ms ASC") fun observeAttachmentsPaged(conversationId:String,limit:Int):Flow<List<P14ProductAttachmentEntity>>
     @Query("SELECT * FROM p14_attachments WHERE state IN ('PENDING','RETRY') ORDER BY created_at_epoch_ms ASC LIMIT :limit") suspend fun pendingAttachments(limit: Int = 20): List<P14ProductAttachmentEntity>
     @Query("UPDATE p14_attachments SET state=:state, remote_attachment_id=:remoteAttachmentId WHERE local_attachment_id=:localAttachmentId") suspend fun setAttachmentState(localAttachmentId: String, state: String, remoteAttachmentId: String?)
 
