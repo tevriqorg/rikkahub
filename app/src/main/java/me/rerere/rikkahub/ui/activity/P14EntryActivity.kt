@@ -250,7 +250,11 @@ private fun P14EntryScreen(
         val id=conversationId ?: return@LaunchedEffect
         val entryId=product.conversationForId(id)?.entryId ?: return@LaunchedEffect
         runCatching {
-            product.loadEntryHistory(entryId,0,historyLimit)
+            for (offset in 0 until historyLimit step 100) {
+                val count=minOf(100,historyLimit-offset)
+                val loaded=product.loadEntryHistory(entryId,offset,count)
+                if(loaded<count) break
+            }
             product.hydrateEntryState(entryId,id)
         }
     }
