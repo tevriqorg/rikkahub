@@ -208,6 +208,8 @@ private fun P14EntryScreen(
         onDispose { runCatching { activeRecorder?.stop() };runCatching { activeRecorder?.release() };recordingFile?.takeIf{activeRecorder!=null}?.delete() }
     }
     var selectedView by remember { mutableStateOf("chat") }
+    var workItems by remember { mutableStateOf<List<P14WorkItem>>(emptyList()) }
+    var workError by remember { mutableStateOf<String?>(null) }
     var supplementActionId by remember { mutableStateOf<String?>(null) }
     var supplementInput by remember { mutableStateOf("") }
     val chooseFiles = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
@@ -229,6 +231,13 @@ private fun P14EntryScreen(
         interaction = notificationId?.let { remote.interaction(it) }
     }
 
+    LaunchedEffect(selectedView,directoryPage,refreshContext) {
+        if(selectedView!="chat") {
+            runCatching { remote.workItems(selectedView,directoryPage*20) }
+                .onSuccess { workItems=if(directoryPage==0) it else (workItems+it).distinctBy{item->item.source+item.sourceId} ;workError=null }
+                .onFailure {workError=it.message ?: "Work view unavailable"}
+        }
+    }
     LaunchedEffect(conversationId,directoryPage,selectedView,refreshContext) {
         if (conversationId == null) {
             val page = product.directoryPage(directoryPage*20,view=selectedView)
@@ -239,7 +248,10 @@ private fun P14EntryScreen(
     LaunchedEffect(conversationId,historyLimit) {
         val id=conversationId ?: return@LaunchedEffect
         val entryId=product.conversationForId(id)?.entryId ?: return@LaunchedEffect
-        runCatching { product.loadEntryHistory(entryId,0,historyLimit) }
+        runCatching {
+            product.loadEntryHistory(entryId,0,historyLimit)
+            product.hydrateEntryState(entryId,id)
+        }
     }
     val productConversation = if (conversationId != null) product.conversationFlow(conversationId!!).collectAsState(initial = null).value else null
     val entry = if (productConversation != null) product.entryFlow(productConversation.entryId).collectAsState(initial = null).value else null
@@ -436,8 +448,23 @@ private fun P14EntryScreen(
                         }
                     }
                 }
+                workError?.let { Text(it,style=MaterialTheme.typography.labelSmall) }
                 LazyColumn(verticalArrangement=Arrangement.spacedBy(7.dp),modifier=Modifier.weight(1f)) {
-                    items(directory,key={it.conversationId}) { item ->
+                    if(selectedView!="chat") items(workItems,key={it.source+it.sourceId}) { item ->
+                        OutlinedCard(onClick={scope.launch {
+                            val cid=item.conversationId ?: return@launch
+                            product.seedWorkEntry(item.entryId,cid,item.bodyText.orEmpty())
+                            conversationId=cid
+                        }},modifier=Modifier.fillMaxWidth()) {
+                            Column(Modifier.padding(12.dp)) {
+                                Text("${item.kind} · ${item.status}",style=MaterialTheme.typography.titleSmall)
+                                item.phase?.let { Text(it) }
+                                item.progressPercent?.let { Text("$it%") }
+                                item.resultText?.let { Text(it) }
+                            }
+                        }
+                    }
+                    if(selectedView=="chat") items(directory,key={it.conversationId}) { item ->
                         OutlinedCard(onClick={conversationId=item.conversationId},modifier=Modifier.fillMaxWidth()) {
                             Column(Modifier.padding(12.dp)) {
                                 Text(item.bodyText.take(150).ifBlank{"Entry ${item.entryId}"})
@@ -445,7 +472,9 @@ private fun P14EntryScreen(
                             }
                         }
                     }
-                    if(directoryHasMore) item { TextButton(onClick={directoryPage++}){Text("Load more")}}
+                    if(directoryHasMore || (selectedView!="chat" && workItems.size >= (directoryPage+1)*20)) item {
+                        TextButton(onClick={directoryPage++}){Text("Load more")}
+                    }
                 }
                 OutlinedButton(onClick={directoryPage=0;refreshContext++}) {Text("Refresh Entry list")}
             }

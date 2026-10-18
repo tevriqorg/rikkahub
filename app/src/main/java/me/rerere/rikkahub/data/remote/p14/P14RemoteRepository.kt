@@ -21,6 +21,21 @@ import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import kotlin.uuid.Uuid
 
+@Serializable internal data class P14WorkItem(
+    val source:String,
+    @SerialName("source_id") val sourceId:String?=null,
+    @SerialName("entry_id") val entryId:String,
+    @SerialName("conversation_id") val conversationId:String?=null,
+    val kind:String,
+    val status:String,
+    val phase:String?=null,
+    @SerialName("progress_percent") val progressPercent:Int?=null,
+    @SerialName("interaction_id") val interactionId:String?=null,
+    @SerialName("result_text") val resultText:String?=null,
+    @SerialName("destination_ref") val destinationRef:String?=null,
+    @SerialName("body_text") val bodyText:String?=null,
+)
+
 internal class P14RemoteRepository(
     private val context:Context,
     private val settingsStore:SettingsStore,
@@ -31,6 +46,15 @@ internal class P14RemoteRepository(
     private val access=P14RuntimeAccess(context,settingsStore,http)
     val notifications:Flow<List<P14NotificationEntity>> = dao.observeNotifications()
     val unreadCount:Flow<Int> = dao.observeUnreadCount()
+
+    suspend fun workItems(view:String,offset:Int=0,limit:Int=20):List<P14WorkItem> = withContext(Dispatchers.IO) {
+        require(view in setOf("todo","idea","research","execute"))
+        val connection=P14RuntimeCredentialStore(context).activeConnection() ?: return@withContext emptyList()
+        val url=connection.baseUrl.toHttpUrl().newBuilder().addPathSegments("views/$view/work")
+            .addQueryParameter("offset",offset.toString()).addQueryParameter("limit",limit.toString()).build()
+        val raw=execute(Request.Builder().url(url).header("Authorization","Bearer ${connection.bearerToken}").get().build())
+        json.decodeFromString<List<P14WorkItem>>(raw)
+    }
 
     suspend fun runtimeProvider(provider:ProviderSetting.OpenAI)=access.prepare(provider)
     suspend fun refresh(provider:ProviderSetting.OpenAI) = refresh(access.connection(provider))

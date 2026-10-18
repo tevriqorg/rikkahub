@@ -313,6 +313,34 @@ internal class P14ProductRepository(
     }
 
     /** Lazily materialize a single Entry's messages, without changing the authoritative cursor. */
+    suspend fun seedWorkEntry(entryId:String,conversationId:String,bodyText:String) = database.withTransaction {
+        if(dao.entry(entryId)==null) dao.upsertEntry(P14EntryEntity(entryId,bodyText,System.currentTimeMillis()))
+        if(dao.conversation(conversationId)==null)
+            dao.upsertConversation(P14ProductConversationEntity(conversationId,entryId,null,null,System.currentTimeMillis()))
+    }
+
+    /** Load current Action and View cards for an older Entry without zero-cursor full replay. */
+    suspend fun hydrateEntryState(entryId:String,conversationId:String) = withContext(Dispatchers.IO) {
+        val c=credentialStore.activeConnection() ?: return@withContext
+        val actions=json.parseToJsonElement(get(c,"${c.baseUrl}/conversations/$conversationId/actions")).jsonArray
+        val views=json.parseToJsonElement(get(c,"${c.baseUrl}/entries/$entryId/views")).jsonArray
+        database.withTransaction {
+            for (item in actions) {
+                val a=item.jsonObject
+                val id=a.requiredString("action_id")
+                val prior=dao.action(id)
+                dao.upsertAction(P14ActionEntity(id,conversationId,a.stringOrEmpty("action_type"),
+                    a.stringOrEmpty("status"),a["result_text"]?.jsonPrimitive?.contentOrNull,
+                    a["destination_ref"]?.jsonPrimitive?.contentOrNull,
+                    prior?.createdAtEpochMs?:System.currentTimeMillis()))
+            }
+            for (item in views) {
+                val view=item.jsonPrimitive.contentOrNull ?: continue
+                if(view in setOf("todo","idea","research","execute")) dao.upsertEntryView(P14EntryViewEntity(entryId,view,true))
+            }
+        }
+    }
+
     suspend fun loadEntryHistory(entryId:String,offset:Int=0,limit:Int=50):Int = withContext(Dispatchers.IO) {
         val connection=credentialStore.activeConnection() ?: return@withContext 0
         val url=connection.baseUrl.toHttpUrl().newBuilder()
