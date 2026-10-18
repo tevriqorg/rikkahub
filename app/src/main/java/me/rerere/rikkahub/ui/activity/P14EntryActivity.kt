@@ -4,6 +4,12 @@ import android.os.Bundle
 import android.content.Intent
 import android.net.Uri
 import android.Manifest
+import android.os.Build
+import android.os.SystemClock
+import android.media.MediaRecorder
+import androidx.core.content.FileProvider
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
 import android.content.Context
 import android.content.pm.PackageManager
 import android.location.LocationManager
@@ -128,6 +134,45 @@ private fun P14EntryScreen(
     var captureOpen by remember { mutableStateOf(!initialSharedText.isNullOrBlank() || initialSharedFile!=null) }
     var captureText by remember { mutableStateOf(initialSharedText.orEmpty()) }
     var captureFiles by remember { mutableStateOf<List<Uri>>(listOfNotNull(initialSharedFile)) }
+    var recordedVoiceDurations by remember { mutableStateOf<Map<Uri,Long>>(emptyMap()) }
+    var activeRecorder by remember { mutableStateOf<MediaRecorder?>(null) }
+    var recordingFile by remember { mutableStateOf<File?>(null) }
+    var recordingStart by remember { mutableLongStateOf(0L) }
+    var scanTarget by remember { mutableStateOf<Uri?>(null) }
+    var scanFile by remember { mutableStateOf<File?>(null) }
+    val scanCamera=rememberLauncherForActivityResult(ActivityResultContracts.TakePicture()){ok ->
+        val uri=scanTarget
+        if(ok && uri!=null) captureFiles=(captureFiles+uri).distinct()
+        else scanFile?.delete()
+        scanTarget=null;scanFile=null
+    }
+    val startVoice: () -> Unit = {
+        val file=File(context.filesDir,"p14_voice_${UUID.randomUUID()}.m4a")
+        runCatching {
+            @Suppress("DEPRECATION")
+            val recorder=if(Build.VERSION.SDK_INT>=Build.VERSION_CODES.S) MediaRecorder(context) else MediaRecorder()
+            recorder.setAudioSource(MediaRecorder.AudioSource.MIC)
+            recorder.setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
+            recorder.setAudioEncoder(MediaRecorder.AudioEncoder.AAC)
+            recorder.setOutputFile(file.absolutePath)
+            recorder.prepare();recorder.start()
+            activeRecorder=recorder;recordingFile=file;recordingStart=SystemClock.elapsedRealtime()
+        }.onFailure {file.delete();status=it.message ?: "Mic unavailable"}
+    }
+    val requestMicrophone=rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()){granted->
+        if(granted) startVoice() else status="Microphone permission denied"
+    }
+    val requestCamera=rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()){granted->
+        if(granted){
+            val file=File(context.cacheDir,"p14_scan_${UUID.randomUUID()}.jpg")
+            scanFile=file
+            scanTarget=FileProvider.getUriForFile(context,"${context.packageName}.fileprovider",file)
+            scanCamera.launch(scanTarget!!)
+        }else status="Camera permission denied"
+    }
+    DisposableEffect(Unit) {
+        onDispose { runCatching { activeRecorder?.stop() };runCatching { activeRecorder?.release() };recordingFile?.takeIf{activeRecorder!=null}?.delete() }
+    }
     var selectedView by remember { mutableStateOf("chat") }
     val chooseFiles = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) {
         captureFiles = (captureFiles + it).distinct()
@@ -235,6 +280,32 @@ private fun P14EntryScreen(
                                 Text("${captureFiles.size} files")
                             }
                             Row(horizontalArrangement=Arrangement.spacedBy(8.dp)) {
+                                OutlinedButton(onClick={
+                                    if(ContextCompat.checkSelfPermission(context,Manifest.permission.CAMERA)==PackageManager.PERMISSION_GRANTED) {
+                                        val file=File(context.cacheDir,"p14_scan_${UUID.randomUUID()}.jpg")
+                                        scanFile=file
+                                        scanTarget=FileProvider.getUriForFile(context,"${context.packageName}.fileprovider",file)
+                                        scanCamera.launch(scanTarget!!)
+                                    } else requestCamera.launch(Manifest.permission.CAMERA)
+                                }){Text("Scan photo")}
+                                OutlinedButton(onClick={
+                                    if(activeRecorder==null) {
+                                        if(ContextCompat.checkSelfPermission(context,Manifest.permission.RECORD_AUDIO)==PackageManager.PERMISSION_GRANTED) startVoice()
+                                        else requestMicrophone.launch(Manifest.permission.RECORD_AUDIO)
+                                    }else{
+                                        val file=recordingFile
+                                        val duration=SystemClock.elapsedRealtime()-recordingStart
+                                        val stopped=runCatching{activeRecorder?.stop();activeRecorder?.release()}.isSuccess
+                                        activeRecorder=null;recordingFile=null
+                                        if(stopped && file?.isFile==true && file.length()>0L && duration>=300L) {
+                                            val uri=Uri.fromFile(file)
+                                            recordedVoiceDurations=recordedVoiceDurations+(uri to duration)
+                                            captureFiles=(captureFiles+uri).distinct()
+                                        }else file?.delete()
+                                    }
+                                }){Text(if(activeRecorder!=null) "Stop voice" else "Record voice")}
+                            }
+                            Row(horizontalArrangement=Arrangement.spacedBy(8.dp)) {
                                 Button(enabled=captureText.isNotBlank()||captureFiles.isNotEmpty(),onClick={
                                     scope.launch {
                                         status=runCatching {
@@ -258,16 +329,20 @@ private fun P14EntryScreen(
                                                             ?: error("Cannot import file")
                                                         Uri.fromFile(output).toString()
                                                     }
+                                                    val effectiveMime=if(source in recordedVoiceDurations) "audio/mp4" else mime
                                                     val capability=when {
-                                                        mime.startsWith("image/")->"photo"
-                                                        mime.startsWith("audio/")->"voice"
+                                                        effectiveMime.startsWith("image/")->"photo"
+                                                        effectiveMime.startsWith("audio/")->"voice"
                                                         else->"file"
                                                     }
                                                     check(profileStore.captureEnabled(capability)) { "Profile disabled $capability Capture" }
                                                     add(when {
-                                                        mime.startsWith("image/")->UIMessagePart.Image(durable)
-                                                        mime.startsWith("audio/")->UIMessagePart.Audio(durable)
-                                                        mime.startsWith("video/")->UIMessagePart.Video(durable)
+                                                        effectiveMime.startsWith("image/")->UIMessagePart.Image(durable)
+                                                        effectiveMime.startsWith("audio/")->UIMessagePart.Audio(durable,
+                                                            recordedVoiceDurations[source]?.let{duration-> buildJsonObject {
+                                                                put("p14_media_role","voice_message");put("p14_duration_ms",duration)
+                                                            }})
+                                                        effectiveMime.startsWith("video/")->UIMessagePart.Video(durable)
                                                         else->UIMessagePart.Document(durable,source.lastPathSegment?:"file",mime.ifBlank{"application/octet-stream"})
                                                     })
                                                 }
@@ -276,7 +351,7 @@ private fun P14EntryScreen(
                                             val result=product.acceptRikkaMessage(localId.toString(),localId.toString(),UIMessage(role=MessageRole.USER,parts=parts),assistant.id.toString(),model.id.toString())
                                             P14RemoteWork.enqueue(context)
                                             conversationId=result.conversationId
-                                            captureOpen=false;captureText="";captureFiles=emptyList()
+                                            captureOpen=false;captureText="";captureFiles=emptyList();recordedVoiceDurations=emptyMap()
                                             "Entry durably saved"
                                         }.getOrElse{it.message?:"Save failed"}
                                     }
