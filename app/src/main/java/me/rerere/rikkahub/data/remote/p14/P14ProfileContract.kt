@@ -24,6 +24,15 @@ internal object P14ProfileContract {
         val capture = root["capture"] as? Map<*, *> ?: emptyMap<Any, Any>()
         require(capture["draft_mode"] in listOf(null, "single-active")) { "Unsupported draft mode" }
         val unsupported = mutableSetOf<String>()
+        val knownTopLevel=setOf("schema","id","name","version","capture","observation","hub","metadata")
+        for ((key,value) in root) {
+            val name=key as? String ?: error("Malformed Profile property")
+            if(name !in knownTopLevel) {
+                val required=(value as? Map<*,*>)?.get("required")==true
+                require(!required) { "Unsupported required Profile field: $name" }
+                unsupported += "root.$name"
+            }
+        }
         for ((key, value) in capture) {
             if (key == "draft_mode") continue
             val name = key as? String ?: error("Invalid capture capability name")

@@ -42,5 +42,6 @@ class P14ProfileContractTest {
         rejects(base.replace("local_days: 7","local_days: 90"))
         rejects(base+"\ntoken: do-not-ever-import")
         rejects(base.replace("p14.profile/v1","p14.profile/v2"))
+        rejects(base+"\nnew_runtime: {required: true, enabled: true}")
     }
 }
