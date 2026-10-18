@@ -6,7 +6,7 @@ import org.junit.Test
 
 class P14CaptureDraftCodecTest {
     @Test fun roundTripPreservesMixedDraftAndVoiceIdentity() {
-        val original=P14CaptureDraft("notes",listOf(
+        val original=P14CaptureDraft(text="notes",materials=listOf(
             P14DraftMaterial("file:///private/p14_scan.jpg","image/jpeg","source",scan=true),
             P14DraftMaterial("file:///private/p14_voice.m4a","audio/mp4","voice",voiceDurationMs=1300),
         ))
