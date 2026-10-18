@@ -32,7 +32,7 @@ class P14ProfileContractTest {
         assertEquals(7,result.localRetentionDays)
     }
     @Test fun optionalUnknownCapabilityDoesNotBecomeExecutable() {
-        val result=P14ProfileContract.validate(base.replace("    text: {enabled: true}","    text: {enabled: true}\n    lidar: {enabled: true, required: false}"))
+        val result=P14ProfileContract.validate(base.replace("  text: {enabled: true}","  text: {enabled: true}\n  lidar: {enabled: true, required: false}"))
         assertTrue("lidar" in result.unsupportedOptional)
     }
     @Test fun unsafeOrRequiredUnsupportedConfigFailsClosed() {
