@@ -14,6 +14,7 @@ import me.rerere.rikkahub.data.datastore.findModelById
 import me.rerere.rikkahub.data.model.AssistantRuntimeMode
 import me.rerere.rikkahub.data.model.Conversation
 import me.rerere.rikkahub.data.model.ConversationConfig
+import me.rerere.rikkahub.data.model.getChatModelOf
 import me.rerere.rikkahub.data.model.MessageNode
 import me.rerere.rikkahub.data.repository.ConversationRepository
 import kotlin.uuid.Uuid
@@ -55,9 +56,12 @@ internal class P14ChatRecovery(
         }
         val assistant = source.assistantId?.let { runCatching { Uuid.parse(it) }.getOrNull() }
             ?.let(settings::getAssistantById)
+            ?: existing?.let { settings.getAssistantById(it.assistantId) }
             ?: matchingAssistants.singleOrNull()
             ?: return false  // No safe local owner. Never invent a non-P14 chat.
-        val model = storedModel ?: settings.findModelById(assistant.chatModelId ?: settings.chatModelId)
+        val model = storedModel
+            ?: existing?.let(settings::getChatModelOf)
+            ?: settings.findModelById(assistant.chatModelId ?: settings.chatModelId)
         if (model?.modelId != "p14-hermes") return false
         if (existing != null && existing.assistantId != assistant.id) return false
 
