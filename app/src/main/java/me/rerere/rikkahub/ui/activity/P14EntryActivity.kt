@@ -107,6 +107,7 @@ private fun P14EntryScreen(
     var notification by remember { mutableStateOf<P14NotificationEntity?>(null) }
     var interaction by remember { mutableStateOf<P14InteractionEntity?>(null) }
     var input by remember { mutableStateOf("") }
+    var sendingContinuation by remember { mutableStateOf(false) }
     var status by remember { mutableStateOf<String?>(null) }
     val profileStore=remember(context) { P14ProfileStore(context) }
     var profileOpen by remember { mutableStateOf(false) }
@@ -131,11 +132,41 @@ private fun P14EntryScreen(
     val requestLocation=rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
         if (granted) recordLocation() else status="Location permission denied"
     }
-    var captureOpen by remember { mutableStateOf(!initialSharedText.isNullOrBlank() || initialSharedFile!=null) }
-    var captureText by remember { mutableStateOf(initialSharedText.orEmpty()) }
-    var captureFiles by remember { mutableStateOf<List<Uri>>(listOfNotNull(initialSharedFile)) }
-    var recordedVoiceDurations by remember { mutableStateOf<Map<Uri,Long>>(emptyMap()) }
-    var scanUris by remember { mutableStateOf<Set<Uri>>(emptySet()) }
+    val draftStore=remember(context) { P14CaptureDraftStore(context) }
+    var savedDraft by remember { mutableStateOf(draftStore.read()) }
+    var captureOpen by remember { mutableStateOf(!initialSharedText.isNullOrBlank() || initialSharedFile!=null || savedDraft.text.isNotBlank() || savedDraft.materials.isNotEmpty()) }
+    var captureText by remember { mutableStateOf(initialSharedText ?: savedDraft.text) }
+    var captureFiles by remember { mutableStateOf(savedDraft.materials.map { Uri.parse(it.locator) }) }
+    var recordedVoiceDurations by remember { mutableStateOf(savedDraft.materials.mapNotNull { m -> m.voiceDurationMs?.let { Uri.parse(m.locator) to it } }.toMap()) }
+    var scanUris by remember { mutableStateOf(savedDraft.materials.filter { it.scan }.map { Uri.parse(it.locator) }.toSet()) }
+    var savingCapture by remember { mutableStateOf(false) }
+    var importsPending by remember { mutableIntStateOf(0) }
+    fun persistText(value:String) {
+        val changed=savedDraft.copy(text=value)
+        runCatching { draftStore.save(changed) }
+            .onSuccess { savedDraft=changed; captureText=value }
+            .onFailure { status=it.message ?: "Draft not saved" }
+    }
+    fun importMaterial(source:Uri, scan:Boolean=false, voiceMs:Long?=null) {
+        importsPending++
+        scope.launch {
+            runCatching {
+                val item=withContext(Dispatchers.IO) { draftStore.import(source,scan,voiceMs) }
+                val next=savedDraft.copy(materials=savedDraft.materials+item)
+                withContext(Dispatchers.IO) { draftStore.save(next) }
+                savedDraft=next
+                captureFiles=next.materials.map { Uri.parse(it.locator) }
+                recordedVoiceDurations=next.materials.mapNotNull { m -> m.voiceDurationMs?.let { Uri.parse(m.locator) to it } }.toMap()
+                scanUris=next.materials.filter { it.scan }.map { Uri.parse(it.locator) }.toSet()
+                captureOpen=true
+            }.onFailure { status=it.message ?: "Failed to preserve Capture source" }
+            importsPending--
+        }
+    }
+    LaunchedEffect(initialSharedText,initialSharedFile) {
+        if(!initialSharedText.isNullOrBlank()) persistText(initialSharedText)
+        if(initialSharedFile!=null) importMaterial(initialSharedFile)
+    }
     var activeRecorder by remember { mutableStateOf<MediaRecorder?>(null) }
     var recordingFile by remember { mutableStateOf<File?>(null) }
     var recordingStart by remember { mutableLongStateOf(0L) }
@@ -144,8 +175,7 @@ private fun P14EntryScreen(
     val scanCamera=rememberLauncherForActivityResult(ActivityResultContracts.TakePicture()){ok ->
         val uri=scanTarget
         if(ok && uri!=null) {
-            captureFiles=(captureFiles+uri).distinct()
-            scanUris=scanUris+uri
+            importMaterial(uri,scan=true)
         }
         else scanFile?.delete()
         scanTarget=null;scanFile=null
@@ -178,8 +208,8 @@ private fun P14EntryScreen(
         onDispose { runCatching { activeRecorder?.stop() };runCatching { activeRecorder?.release() };recordingFile?.takeIf{activeRecorder!=null}?.delete() }
     }
     var selectedView by remember { mutableStateOf("chat") }
-    val chooseFiles = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) {
-        captureFiles = (captureFiles + it).distinct()
+    val chooseFiles = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
+        uris.forEach { importMaterial(it) }
     }
     var directoryPage by remember { mutableStateOf(0) }
     var directory by remember { mutableStateOf<List<P14EntryDirectoryItem>>(emptyList()) }
@@ -240,16 +270,20 @@ private fun P14EntryScreen(
                         placeholder = { Text(if (upgradeRequired) "Client upgrade required" else "Continue this Entry") },
                     )
                     Button(
-                        enabled = input.isNotBlank() && canText && !upgradeRequired,
+                        enabled = input.isNotBlank() && canText && !upgradeRequired && !sendingContinuation,
                         onClick = {
+                            if(sendingContinuation) return@Button
                             val id = conversationId ?: return@Button
                             val text = input
-                            input = ""
+                            sendingContinuation=true
                             scope.launch {
-                                runCatching {
+                                try {
                                     product.acceptEntryContinuation(id, text)
+                                    input=""  // Only discard input after P14 transaction commits.
                                     P14RemoteWork.enqueue(context)
-                                }.onFailure { status = it.message }
+                                } catch(error:Exception) {
+                                    status=error.message ?: "Message remains unsent; retry"
+                                } finally { sendingContinuation=false }
                             }
                         },
                     ) { Text("Send") }
@@ -279,7 +313,7 @@ private fun P14EntryScreen(
                     ElevatedCard(Modifier.fillMaxWidth()) {
                         Column(Modifier.padding(12.dp), verticalArrangement=Arrangement.spacedBy(8.dp)) {
                             Text("Mixed Capture · Save first, process later",style=MaterialTheme.typography.titleMedium)
-                            OutlinedTextField(value=captureText,onValueChange={captureText=it},modifier=Modifier.fillMaxWidth(),label={Text("Text / URL / shared material")})
+                            OutlinedTextField(value=captureText,onValueChange={persistText(it)},modifier=Modifier.fillMaxWidth(),label={Text("Text / URL / shared material")})
                             Row(horizontalArrangement=Arrangement.spacedBy(8.dp)) {
                                 OutlinedButton(onClick={chooseFiles.launch(arrayOf("image/*","audio/*","video/*","application/*"))}) { Text("Add photo/audio/file") }
                                 Text("${captureFiles.size} files")
@@ -304,14 +338,15 @@ private fun P14EntryScreen(
                                         activeRecorder=null;recordingFile=null
                                         if(stopped && file?.isFile==true && file.length()>0L && duration>=300L) {
                                             val uri=Uri.fromFile(file)
-                                            recordedVoiceDurations=recordedVoiceDurations+(uri to duration)
-                                            captureFiles=(captureFiles+uri).distinct()
+                                            importMaterial(uri,voiceMs=duration)
                                         }else file?.delete()
                                     }
                                 }){Text(if(activeRecorder!=null) "Stop voice" else "Record voice")}
                             }
                             Row(horizontalArrangement=Arrangement.spacedBy(8.dp)) {
-                                Button(enabled=captureText.isNotBlank()||captureFiles.isNotEmpty(),onClick={
+                                Button(enabled=(captureText.isNotBlank()||captureFiles.isNotEmpty()) && !savingCapture && importsPending==0,onClick={
+                                    if(savingCapture || importsPending>0) return@Button
+                                    savingCapture=true
                                     scope.launch {
                                         status=runCatching {
                                             val settings=settingsStore.awaitLoaded()
@@ -321,12 +356,16 @@ private fun P14EntryScreen(
                                                 settings.findModelById(it.chatModelId ?: settings.chatModelId)?.id==model.id
                                             } ?: error("Select a P14 assistant before Capture")
                                             val parts=buildList<UIMessagePart> {
+                                                if(!initialSharedText.isNullOrBlank() || initialSharedFile!=null) {
+                                                    check(profileStore.captureEnabled("share")) { "Profile disabled Share Capture" }
+                                                }
                                                 if(captureText.isNotBlank()) {
                                                     check(profileStore.captureEnabled("text")) { "Profile disabled text Capture" }
                                                     add(UIMessagePart.Text(captureText.trim()))
                                                 }
                                                 captureFiles.forEach { source ->
-                                                    val mime=context.contentResolver.getType(source).orEmpty()
+                                                    val originalMaterial=savedDraft.materials.firstOrNull { it.locator==source.toString() }
+                                                    val mime=originalMaterial?.mime ?: context.contentResolver.getType(source).orEmpty()
                                                     val durable=withContext(Dispatchers.IO) {
                                                         val dir=File(context.filesDir,"p14_capture").apply{mkdirs()}
                                                         val extension=source.lastPathSegment?.substringAfterLast('.',"")
@@ -356,13 +395,19 @@ private fun P14EntryScreen(
                                                     })
                                                 }
                                             }
-                                            val localId=kotlin.uuid.Uuid.random()
-                                            val result=product.acceptRikkaMessage(localId.toString(),localId.toString(),UIMessage(role=MessageRole.USER,parts=parts),assistant.id.toString(),model.id.toString())
-                                            P14RemoteWork.enqueue(context)
+                                            // Stable draft identities prevent creating another Entry if an OS kill
+                                            // happens after Room commit but before draft-clear/UI navigation.
+                                            val localId=kotlin.uuid.Uuid.parse(savedDraft.draftId)
+                                            val userMessage=UIMessage(id=kotlin.uuid.Uuid.parse(savedDraft.messageId),role=MessageRole.USER,parts=parts)
+                                            val result=product.acceptRikkaMessage(localId.toString(),localId.toString(),userMessage,assistant.id.toString(),model.id.toString())
+                                            runCatching { withContext(Dispatchers.IO) { draftStore.clearAfterAccept() } }
+                                            savedDraft=P14CaptureDraft()
                                             conversationId=result.conversationId
                                             captureOpen=false;captureText="";captureFiles=emptyList();recordedVoiceDurations=emptyMap();scanUris=emptySet()
+                                            P14RemoteWork.enqueue(context)
                                             "Entry durably saved"
                                         }.getOrElse{it.message?:"Save failed"}
+                                        savingCapture=false
                                     }
                                 }) { Text("Save Entry") }
                                 TextButton(onClick={captureOpen=false}) { Text("Cancel") }

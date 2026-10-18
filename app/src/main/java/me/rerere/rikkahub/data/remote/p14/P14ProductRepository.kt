@@ -120,6 +120,12 @@ internal class P14ProductRepository(
         require(message.role == MessageRole.USER) { "P14 local acceptance only accepts user messages" }
         val ids = compatIds(externalSessionId)
         val existing = dao.conversationByExternalSession(externalSessionId)
+        // Retrying the exact same saved draft after a crash must not reset ACKED work,
+        // overwrite a synced message or create a second Entry.
+        dao.message(message.id.toString())?.let { saved ->
+            require(saved.conversationId == ids.conversationId) { "Message identity reused across conversations" }
+            return@withContext P14AcceptedMutation(ids.entryId,ids.conversationId,message.id.toString(),"rk-op-${message.id}")
+        }
         val now = System.currentTimeMillis()
         val text = message.parts.filterIsInstance<UIMessagePart.Text>().joinToString("\n") { it.text }.trim()
         val attachmentRows = productAttachments(message, ids.conversationId, now)
