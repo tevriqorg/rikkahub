@@ -83,7 +83,13 @@ internal class P14ProductRepository(
     suspend fun directoryPage(offset:Int,limit:Int=20,view:String="chat"):List<P14EntryDirectoryItem> = withContext(Dispatchers.IO) {
         require(offset>=0 && limit in 1..100)
         require(view in setOf("chat","todo","idea","research","execute"))
-        val raw = if(view=="chat") dao.directoryPage(limit,offset) else dao.directoryPageForView(view,limit,offset)
+        var raw = if(view=="chat") dao.directoryPage(limit,offset) else dao.directoryPageForView(view,limit,offset)
+        if(view=="chat" && raw.size < limit && bootstrapPrefs.getBoolean("more",false)) {
+            credentialStore.activeConnection()?.let { connection ->
+                runCatching { bootstrapNextPage(connection) }
+                raw=dao.directoryPage(limit,offset)
+            }
+        }
         raw.map { c ->
             P14EntryDirectoryItem(c.entryId,c.conversationId,dao.entry(c.entryId)?.bodyText.orEmpty(),c.pinned,c.archived)
         }
@@ -107,6 +113,7 @@ internal class P14ProductRepository(
     fun attachments(conversationId:String,limit:Int=50):Flow<List<P14ProductAttachmentEntity>> = dao.observeAttachmentsPaged(conversationId,limit)
     suspend fun entry(entryId: String) = dao.entry(entryId)
     suspend fun conversation(conversationId: String) = dao.conversation(conversationId)
+    suspend fun conversationForId(conversationId:String) = dao.conversation(conversationId)
     suspend fun conversationForExternal(externalSessionId: String) = dao.conversationByExternalSession(externalSessionId)
     suspend fun message(messageId: String) = dao.message(messageId)
 
@@ -221,7 +228,7 @@ internal class P14ProductRepository(
             dao.upsertObservation(P14ObservationEntity(id,"LOCATION",latitude,longitude,accuracyM,System.currentTimeMillis(),
                 profileId=profileId,profileVersion=profileVersion,
                 sourceDeviceId=credentialStore.deviceId(),permissionState=permissionState,
-                policyMode="significant-change",policyMinDistanceM=profile.locationMinDistanceMeters(),
+                policyMode="significant-change",policyMinDistanceM=profile.locationMinDistanceMeters().toDouble(),
                 retentionDays=profile.retentionDays()))
             dao.insertObservationOutbox(P14ObservationOutboxEntity("obs-op-$id",id))
         }
@@ -240,6 +247,12 @@ internal class P14ProductRepository(
 
     suspend fun replay(connection: P14RuntimeConnection): Long {
         var cursor = dao.syncState(SYNC_SCOPE)?.lastSyncSeq ?: 0L
+        if (cursor == 0L && dao.pendingOutbox().isEmpty()) {
+            // New device: bound first Entry index and establish a consistent replay watermark.
+            // Older objects remain server-authoritative and are fetched lazily by Entry ID.
+            runCatching { bootstrapFirstPage(connection) }
+            cursor = dao.syncState(SYNC_SCOPE)?.lastSyncSeq ?: 0L
+        }
         while (true) {
             val url = connection.baseUrl.toHttpUrl().newBuilder()
                 .addPathSegments("sync/events")
@@ -250,6 +263,83 @@ internal class P14ProductRepository(
             cursor = applyEvents(replay.events)
             if (!replay.has_more) return cursor
         }
+    }
+
+    private val bootstrapPrefs get() = appContext.getSharedPreferences("p14-entry-bootstrap",Context.MODE_PRIVATE)
+
+    private suspend fun bootstrapFirstPage(connection:P14RuntimeConnection) {
+        val url=connection.baseUrl.toHttpUrl().newBuilder().addPathSegments("bootstrap/entries")
+            .addQueryParameter("limit","50").build()
+        val root=json.parseToJsonElement(get(connection,url.toString())).jsonObject
+        val watermark=root["watermark"]?.jsonPrimitive?.longOrNull ?: error("Bootstrap watermark absent")
+        val items=root["items"]?.jsonArray ?: error("Bootstrap list absent")
+        // The watermark is committed in the very same DB transaction as the index seed.
+        database.withTransaction {
+            for(raw in items) seedBootstrapEntry(raw.jsonObject)
+            dao.upsertSyncState(P14ProductSyncStateEntity(SYNC_SCOPE,watermark))
+        }
+        check(bootstrapPrefs.edit()
+            .putString("snapshot",root["snapshot_at"]?.jsonPrimitive?.contentOrNull)
+            .putString("before_time",root["next_before_created_at"]?.jsonPrimitive?.contentOrNull)
+            .putString("before_id",root["next_before_entry_id"]?.jsonPrimitive?.contentOrNull)
+            .putBoolean("more",root["has_more"]?.jsonPrimitive?.contentOrNull=="true").commit())
+    }
+
+    private suspend fun seedBootstrapEntry(item:JsonObject) {
+        val entryId=item.requiredString("entry_id")
+        val convoId=item.requiredString("conversation_id")
+        val created=item.epochMs("created_at",Instant.now().toString())
+        val previous=dao.entry(entryId)
+        if(previous==null) dao.upsertEntry(P14EntryEntity(entryId,item.stringOrEmpty("body_text"),created))
+        if(dao.conversation(convoId)==null)
+            dao.upsertConversation(P14ProductConversationEntity(convoId,entryId,null,null,created))
+    }
+
+    /** Keyset paging of older server-authoritative Entries; no historical event flood. */
+    private suspend fun bootstrapNextPage(connection:P14RuntimeConnection):Boolean {
+        val before=bootstrapPrefs.getString("before_time",null) ?: return false
+        val beforeId=bootstrapPrefs.getString("before_id",null) ?: return false
+        val anchor=bootstrapPrefs.getString("snapshot",null) ?: return false
+        val url=connection.baseUrl.toHttpUrl().newBuilder().addPathSegments("bootstrap/entries")
+            .addQueryParameter("limit","50").addQueryParameter("snapshot_at",anchor)
+            .addQueryParameter("before_created_at",before).addQueryParameter("before_entry_id",beforeId).build()
+        val root=json.parseToJsonElement(get(connection,url.toString())).jsonObject
+        val entries=root["items"]?.jsonArray ?: return false
+        database.withTransaction { for(item in entries) seedBootstrapEntry(item.jsonObject) }
+        bootstrapPrefs.edit().putString("before_time",root["next_before_created_at"]?.jsonPrimitive?.contentOrNull)
+            .putString("before_id",root["next_before_entry_id"]?.jsonPrimitive?.contentOrNull)
+            .putBoolean("more",root["has_more"]?.jsonPrimitive?.contentOrNull=="true").apply()
+        return entries.isNotEmpty()
+    }
+
+    /** Lazily materialize a single Entry's messages, without changing the authoritative cursor. */
+    suspend fun loadEntryHistory(entryId:String,offset:Int=0,limit:Int=50):Int = withContext(Dispatchers.IO) {
+        val connection=credentialStore.activeConnection() ?: return@withContext 0
+        val url=connection.baseUrl.toHttpUrl().newBuilder()
+            .addPathSegments("bootstrap/entries/$entryId/messages")
+            .addQueryParameter("offset",offset.toString()).addQueryParameter("limit",limit.coerceIn(1,100).toString()).build()
+        val root=json.parseToJsonElement(get(connection,url.toString())).jsonObject
+        val items=root["items"]?.jsonArray ?: return@withContext 0
+        database.withTransaction {
+            for(raw in items) {
+                val item=raw.jsonObject
+                val mid=item.requiredString("message_id")
+                if(dao.message(mid)!=null) continue
+                val convoId=item.requiredString("conversation_id")
+                val time=item.epochMs("created_at",Instant.now().toString())
+                dao.upsertMessage(P14ProductMessageEntity(mid,convoId,item.stringOrEmpty("role"),
+                    item.stringOrEmpty("body_text"),deliveryState="SYNCED",createdAtEpochMs=time))
+                item["attachments"]?.jsonArray?.forEach { a ->
+                    val att=a.jsonObject
+                    val rid=att.requiredString("attachment_id")
+                    dao.upsertAttachment(P14ProductAttachmentEntity("remote:$rid",rid,mid,convoId,
+                        att.stringOrEmpty("kind"),att.stringOrEmpty("mime_type"),att.stringOrEmpty("file_name"),"",
+                        att["byte_size"]?.jsonPrimitive?.longOrNull,
+                        att["duration_ms"]?.jsonPrimitive?.longOrNull,"SYNCED",time))
+                }
+            }
+        }
+        items.size
     }
 
     suspend fun applyLiveEvents(eventsJson: String): Long {

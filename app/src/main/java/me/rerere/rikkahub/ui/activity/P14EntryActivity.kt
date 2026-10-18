@@ -236,6 +236,11 @@ private fun P14EntryScreen(
             directoryHasMore = page.size==20
         }
     }
+    LaunchedEffect(conversationId,historyLimit) {
+        val id=conversationId ?: return@LaunchedEffect
+        val entryId=product.conversationForId(id)?.entryId ?: return@LaunchedEffect
+        runCatching { product.loadEntryHistory(entryId,0,historyLimit) }
+    }
     val productConversation = if (conversationId != null) product.conversationFlow(conversationId!!).collectAsState(initial = null).value else null
     val entry = if (productConversation != null) product.entryFlow(productConversation.entryId).collectAsState(initial = null).value else null
     var historyLimit by remember(conversationId) { mutableIntStateOf(50) }
