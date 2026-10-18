@@ -101,6 +101,7 @@ private fun P14EntryScreen(
     var notification by remember { mutableStateOf<P14NotificationEntity?>(null) }
     var interaction by remember { mutableStateOf<P14InteractionEntity?>(null) }
     var input by remember { mutableStateOf("") }
+    var status by remember { mutableStateOf<String?>(null) }
     val profileStore=remember(context) { P14ProfileStore(context) }
     var profileOpen by remember { mutableStateOf(false) }
     var profileYaml by remember { mutableStateOf(profileStore.exportProfile()) }
@@ -134,7 +135,6 @@ private fun P14EntryScreen(
     var directoryPage by remember { mutableStateOf(0) }
     var directory by remember { mutableStateOf<List<P14EntryDirectoryItem>>(emptyList()) }
     var directoryHasMore by remember { mutableStateOf(false) }
-    var status by remember { mutableStateOf<String?>(null) }
     var refreshContext by remember { mutableIntStateOf(0) }
 
     LaunchedEffect(initialConversationId, externalSessionId) {
