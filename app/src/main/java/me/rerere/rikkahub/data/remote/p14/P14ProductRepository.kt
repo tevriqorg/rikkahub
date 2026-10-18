@@ -36,6 +36,8 @@ import java.net.URLConnection
 import java.util.UUID
 import kotlin.uuid.Uuid
 
+internal data class P14EntryDirectoryItem(val entryId:String, val conversationId:String, val bodyText:String, val pinned:Boolean, val archived:Boolean)
+
 internal data class P14AcceptedMutation(
     val entryId: String,
     val conversationId: String,
@@ -74,6 +76,12 @@ internal class P14ProductRepository(
     private val credentialStore = P14RuntimeCredentialStore(appContext)
 
     val entries: Flow<List<P14EntryEntity>> = dao.observeEntries()
+    suspend fun directoryPage(offset:Int,limit:Int=20):List<P14EntryDirectoryItem> = withContext(Dispatchers.IO) {
+        require(offset>=0 && limit in 1..100)
+        dao.directoryPage(limit,offset).map { c ->
+            P14EntryDirectoryItem(c.entryId,c.conversationId,dao.entry(c.entryId)?.bodyText.orEmpty(),c.pinned,c.archived)
+        }
+    }
     val pendingOutboxCount: Flow<Int> = dao.observePendingOutboxCount()
     fun entryFlow(entryId: String): Flow<P14EntryEntity?> = dao.observeEntry(entryId)
     fun messages(conversationId: String): Flow<List<P14ProductMessageEntity>> = dao.observeMessages(conversationId)
@@ -375,7 +383,7 @@ internal class P14ProductRepository(
             when (part) {
                 is UIMessagePart.Image -> { locator = part.url; kind = "IMAGE"; name = Uri.parse(locator).lastPathSegment ?: "image"; mime = appContext.contentResolver.getType(Uri.parse(locator)) ?: URLConnection.guessContentTypeFromName(name) ?: "image/jpeg" }
                 is UIMessagePart.Video -> { locator = part.url; kind = "VIDEO"; name = Uri.parse(locator).lastPathSegment ?: "video"; mime = appContext.contentResolver.getType(Uri.parse(locator)) ?: URLConnection.guessContentTypeFromName(name) ?: "video/mp4" }
-                is UIMessagePart.Audio -> { locator = part.url; kind = "AUDIO"; name = Uri.parse(locator).lastPathSegment ?: "audio"; mime = appContext.contentResolver.getType(Uri.parse(locator)) ?: URLConnection.guessContentTypeFromName(name) ?: "audio/mpeg" }
+                is UIMessagePart.Audio -> { locator = part.url; kind = if (part.metadata?.get("p14_media_role")?.jsonPrimitive?.contentOrNull == "voice_message") "VOICE" else "AUDIO"; name = Uri.parse(locator).lastPathSegment ?: "audio"; mime = appContext.contentResolver.getType(Uri.parse(locator)) ?: URLConnection.guessContentTypeFromName(name) ?: "audio/mpeg" }
                 is UIMessagePart.Document -> { locator = part.url; kind = "FILE"; name = part.fileName.ifBlank { Uri.parse(locator).lastPathSegment ?: "file" }; mime = part.mime.ifBlank { "application/octet-stream" } }
                 else -> return@mapIndexedNotNull null
             }
