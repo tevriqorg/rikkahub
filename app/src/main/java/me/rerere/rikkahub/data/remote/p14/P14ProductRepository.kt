@@ -278,16 +278,18 @@ internal class P14ProductRepository(
         val root=json.parseToJsonElement(get(connection,url.toString())).jsonObject
         val watermark=root["watermark"]?.jsonPrimitive?.longOrNull ?: error("Bootstrap watermark absent")
         val items=root["items"]?.jsonArray ?: error("Bootstrap list absent")
-        // The watermark is committed in the very same DB transaction as the index seed.
-        database.withTransaction {
-            for(raw in items) seedBootstrapEntry(raw.jsonObject)
-            dao.upsertSyncState(P14ProductSyncStateEntity(SYNC_SCOPE,watermark))
-        }
+        // Save the older-page locator FIRST. A crash between Room commit and prefs
+        // write would strand all older Entries behind a committed replay watermark.
+        // If Room later fails, its cursor remains zero and bootstrap can safely retry.
         check(bootstrapPrefs.edit()
             .putString("snapshot",root["snapshot_at"]?.jsonPrimitive?.contentOrNull)
             .putString("before_time",root["next_before_created_at"]?.jsonPrimitive?.contentOrNull)
             .putString("before_id",root["next_before_entry_id"]?.jsonPrimitive?.contentOrNull)
             .putBoolean("more",root["has_more"]?.jsonPrimitive?.contentOrNull=="true").commit())
+        database.withTransaction {
+            for(raw in items) seedBootstrapEntry(raw.jsonObject)
+            dao.upsertSyncState(P14ProductSyncStateEntity(SYNC_SCOPE,watermark))
+        }
     }
 
     private suspend fun seedBootstrapEntry(item:JsonObject) {
