@@ -37,6 +37,8 @@ data class P14ProductConversationEntity(
     val pinned: Boolean = false,
     val archived: Boolean = false,
     @ColumnInfo(name = "state_revision") val stateRevision: Int = 0,
+    @ColumnInfo(name = "assistant_id") val assistantId: String? = null,
+    @ColumnInfo(name = "model_id") val modelId: String? = null,
 )
 
 @Entity(
@@ -110,6 +112,8 @@ interface P14ProductDao {
     @Query("SELECT * FROM p14_conversations WHERE conversation_id=:conversationId LIMIT 1") suspend fun conversation(conversationId: String): P14ProductConversationEntity?
     @Query("SELECT * FROM p14_conversations WHERE conversation_id=:conversationId LIMIT 1") fun observeConversation(conversationId: String): Flow<P14ProductConversationEntity?>
     @Query("SELECT * FROM p14_conversations WHERE external_session_id=:externalSessionId LIMIT 1") suspend fun conversationByExternalSession(externalSessionId: String): P14ProductConversationEntity?
+    @Query("SELECT * FROM p14_conversations WHERE local_conversation_id=:localId LIMIT 1") suspend fun conversationByLocalId(localId: String): P14ProductConversationEntity?
+    @Query("SELECT * FROM p14_conversations WHERE local_conversation_id IS NOT NULL ORDER BY created_at_epoch_ms DESC") suspend fun localConversations(): List<P14ProductConversationEntity>
     @Query("SELECT * FROM p14_messages WHERE message_id=:messageId LIMIT 1") suspend fun message(messageId: String): P14ProductMessageEntity?
     @Query("SELECT * FROM p14_messages WHERE conversation_id=:conversationId ORDER BY created_at_epoch_ms ASC, message_id ASC") fun observeMessages(conversationId: String): Flow<List<P14ProductMessageEntity>>
     @Query("SELECT * FROM p14_messages WHERE conversation_id=:conversationId ORDER BY created_at_epoch_ms ASC, message_id ASC") suspend fun listMessages(conversationId: String): List<P14ProductMessageEntity>
@@ -138,7 +142,7 @@ interface P14ProductDao {
         P14ChatOutboxEntity::class,
         P14ProductSyncStateEntity::class,
     ],
-    version = 2,
+    version = 3,
     exportSchema = false,
 )
 abstract class P14ProductDatabase : RoomDatabase() {
@@ -165,13 +169,20 @@ abstract class P14ProductDatabase : RoomDatabase() {
             }
         }
 
+        internal val MIGRATION_2_3 = object : Migration(2, 3) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE `p14_conversations` ADD COLUMN `assistant_id` TEXT")
+                db.execSQL("ALTER TABLE `p14_conversations` ADD COLUMN `model_id` TEXT")
+            }
+        }
+
         @Volatile private var instance: P14ProductDatabase? = null
         fun get(context: Context): P14ProductDatabase = instance ?: synchronized(this) {
             instance ?: Room.databaseBuilder(
                 context.applicationContext,
                 P14ProductDatabase::class.java,
                 "rikkahub-p14-product.db",
-            ).addMigrations(MIGRATION_1_2).build().also { instance = it }
+            ).addMigrations(MIGRATION_1_2, MIGRATION_2_3).build().also { instance = it }
         }
     }
 }

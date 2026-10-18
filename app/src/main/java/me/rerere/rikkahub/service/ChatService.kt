@@ -67,6 +67,8 @@ import me.rerere.rikkahub.data.remote.p14.P14RemoteAttachmentTransformer
 import me.rerere.rikkahub.data.remote.p14.P14RemoteControlClient
 import me.rerere.rikkahub.data.remote.p14.P14RuntimeAccess
 import me.rerere.rikkahub.data.remote.p14.P14ProductRepository
+import me.rerere.rikkahub.data.remote.p14.P14ChatRecovery
+import me.rerere.rikkahub.data.remote.p14.P14ProductDatabase
 import me.rerere.rikkahub.data.remote.p14.P14RemoteWork
 import me.rerere.rikkahub.data.remote.p14.P14EffectiveManifest
 import me.rerere.rikkahub.data.remote.p14.P14RemoteRepository
@@ -343,6 +345,9 @@ class ChatService(
 
     // 引入会话配置之前创建的会话没有固定配置，加载时按助手当前的值补上，之后不再随助手变化。
     private suspend fun loadConversation(conversationId: Uuid): Conversation? {
+        // Close the crash window between P14 Room acceptance and RikkaHub chat save.
+        P14ChatRecovery(P14ProductDatabase.get(context).dao(), conversationRepo, settingsStore)
+            .restoreOne(conversationId)
         val conversation = conversationRepo.getConversationById(conversationId) ?: return null
         // settingsFlow 在启动初期还是占位值，固定配置必须基于真实设置
         val bound = conversation.bindConfig(settingsStore.awaitLoaded())
@@ -494,6 +499,8 @@ class ChatService(
                         externalSessionId = conversationId.toString(),
                         localConversationId = conversationId.toString(),
                         message = userMessage,
+                        assistantId = currentConversation.assistantId.toString(),
+                        modelId = requireNotNull(selectedModel).id.toString(),
                     )
                     if (queued.replyToMessageId != null) {
                         val configured = selectedModel?.findProvider(settings.providers) as? ProviderSetting.OpenAI

@@ -88,6 +88,8 @@ internal class P14ProductRepository(
         externalSessionId: String,
         localConversationId: String,
         message: UIMessage,
+        assistantId: String,
+        modelId: String,
     ): P14AcceptedMutation = withContext(Dispatchers.IO) {
         require(message.role == MessageRole.USER) { "P14 local acceptance only accepts user messages" }
         val ids = compatIds(externalSessionId)
@@ -108,9 +110,13 @@ internal class P14ProductRepository(
         database.withTransaction {
             if (existing == null) {
                 dao.upsertEntry(P14EntryEntity(ids.entryId, text, now))
-                dao.upsertConversation(P14ProductConversationEntity(ids.conversationId, ids.entryId, externalSessionId, localConversationId, now))
-            } else if (existing.localConversationId == null) {
-                dao.upsertConversation(existing.copy(localConversationId = localConversationId))
+                dao.upsertConversation(P14ProductConversationEntity(ids.conversationId, ids.entryId, externalSessionId, localConversationId, now, assistantId = assistantId, modelId = modelId))
+            } else if (existing.localConversationId == null || existing.assistantId == null || existing.modelId == null) {
+                dao.upsertConversation(existing.copy(
+                    localConversationId = existing.localConversationId ?: localConversationId,
+                    assistantId = existing.assistantId ?: assistantId,
+                    modelId = existing.modelId ?: modelId,
+                ))
             }
             dao.upsertMessage(
                 P14ProductMessageEntity(
@@ -237,6 +243,11 @@ internal class P14ProductRepository(
                     existing?.externalSessionId ?: "remote:$id",
                     existing?.localConversationId,
                     existing?.createdAtEpochMs ?: item.epochMs("created_at", event.occurred_at),
+                    pinned = existing?.pinned ?: false,
+                    archived = existing?.archived ?: false,
+                    stateRevision = existing?.stateRevision ?: 0,
+                    assistantId = existing?.assistantId,
+                    modelId = existing?.modelId,
                 )
             )
         }
