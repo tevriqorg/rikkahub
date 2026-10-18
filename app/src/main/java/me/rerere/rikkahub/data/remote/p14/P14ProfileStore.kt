@@ -17,6 +17,7 @@ internal class P14ProfileStore(private val context:Context) {
         val section=capture[kind] as? Map<*,*>
         return section?.get("enabled") == true
     }
+    fun effectiveCapabilities():List<P14EffectiveCapability> = P14CapabilityRegistry.resolve(exportProfile(),P14CapabilityRegistry.granted(context))
     fun locationEnabled():Boolean = readLocationPolicy(exportProfile()).first
     fun retentionDays():Int = readLocationPolicy(exportProfile()).second
     fun locationMinDistanceMeters():Float {
@@ -27,7 +28,7 @@ internal class P14ProfileStore(private val context:Context) {
     }
 
     fun importProfile(source:String) {
-        P14ProfileContract.validate(source)
+        P14CapabilityRegistry.activation(source,P14CapabilityRegistry.granted(context))
         check(prefs.edit().putString("active_profile",source).commit()) { "Profile activation failed" }
         P14LocationObservationScheduler.configure(context)
     }

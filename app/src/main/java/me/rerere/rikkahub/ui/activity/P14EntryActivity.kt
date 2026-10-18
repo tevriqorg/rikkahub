@@ -305,6 +305,10 @@ private fun P14EntryScreen(
                                     else requestLocation.launch(Manifest.permission.ACCESS_COARSE_LOCATION)
                                 },enabled=locationEnabled) {Text("Record Location")}
                             }
+                            Text("Effective capabilities",style=MaterialTheme.typography.titleSmall)
+                            profileStore.effectiveCapabilities().forEach { capability ->
+                                Text("${capability.id}: ${capability.state} · ${capability.reason}",style=MaterialTheme.typography.labelSmall)
+                            }
                             Text("Location is off by default. No passive background collection; explicit permission and policy required.",style=MaterialTheme.typography.labelSmall)
                         }
                     }
