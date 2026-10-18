@@ -2,6 +2,8 @@ package me.rerere.rikkahub.data.remote.p14
 
 import android.content.Context
 import androidx.room.*
+import androidx.room.migration.Migration
+import androidx.sqlite.db.SupportSQLiteDatabase
 import kotlinx.coroutines.flow.Flow
 
 @Entity(tableName="p14_notifications", indices=[Index("state"),Index("conversation_id")])
@@ -42,6 +44,21 @@ data class P14OperationEntity(
 @Database(entities=[P14NotificationEntity::class,P14InteractionEntity::class,P14OperationEntity::class],version=2,exportSchema=false)
 abstract class P14RemoteDatabase:RoomDatabase(){ abstract fun dao():P14RemoteDao
     companion object { @Volatile private var instance:P14RemoteDatabase?=null
-        fun get(context:Context)=instance?:synchronized(this){instance?:Room.databaseBuilder(context.applicationContext,P14RemoteDatabase::class.java,"rikkahub-p14-remote.db").fallbackToDestructiveMigration().build().also{instance=it}}
+        // Preserve durable notification, interaction, and pending operations on legacy v1 upgrades.
+        // A missing future migration must fail closed, never clear a user's queued response.
+        internal val MIGRATION_1_2 = object : Migration(1, 2) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                // Retain existing tables and rows if a legacy version 1 database is encountered.
+                // Add the fields introduced by v2 only when absent to preserve existing rows.
+                val columns = db.query("PRAGMA table_info(`p14_interactions`)").use { cursor ->
+                    val idx = cursor.getColumnIndexOrThrow("name")
+                    buildSet { while (cursor.moveToNext()) add(cursor.getString(idx)) }
+                }
+                if ("actionable" !in columns) {
+                    db.execSQL("ALTER TABLE `p14_interactions` ADD COLUMN `actionable` INTEGER NOT NULL DEFAULT 0")
+                }
+            }
+        }
+        fun get(context:Context)=instance?:synchronized(this){instance?:Room.databaseBuilder(context.applicationContext,P14RemoteDatabase::class.java,"rikkahub-p14-remote.db").addMigrations(MIGRATION_1_2).build().also{instance=it}}
     }
 }
