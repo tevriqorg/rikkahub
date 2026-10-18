@@ -1,6 +1,19 @@
 package me.rerere.rikkahub.ui.activity
 
 import android.os.Bundle
+import android.content.Intent
+import android.net.Uri
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import java.io.File
+import java.util.UUID
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import me.rerere.ai.core.MessageRole
+import me.rerere.ai.ui.UIMessage
+import me.rerere.ai.ui.UIMessagePart
+import me.rerere.rikkahub.data.datastore.findModelById
+import me.rerere.rikkahub.data.datastore.getCurrentAssistant
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.layout.*
@@ -25,7 +38,10 @@ class P14EntryActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         val http = get<OkHttpClient>()
         val product = P14ProductRepository(applicationContext, http)
-        val remote = P14RemoteRepository(applicationContext, get<SettingsStore>(), http)
+        val settingsStore = get<SettingsStore>()
+        val remote = P14RemoteRepository(applicationContext, settingsStore, http)
+        val sharedText = if (intent.action == Intent.ACTION_SEND && intent.type == "text/plain")
+            intent.getStringExtra(Intent.EXTRA_TEXT) else null
         val notificationId = intent.getStringExtra(EXTRA_NOTIFICATION_ID)
         val interactionResponse = intent.getStringExtra(EXTRA_INTERACTION_RESPONSE)
         if (notificationId != null) lifecycleScope.launch {
@@ -38,6 +54,8 @@ class P14EntryActivity : ComponentActivity() {
                 P14EntryScreen(
                     product = product,
                     remote = remote,
+                    settingsStore = settingsStore,
+                    initialSharedText = sharedText,
                     initialConversationId = intent.getStringExtra(EXTRA_CONVERSATION_ID),
                     externalSessionId = intent.getStringExtra(EXTRA_EXTERNAL_SESSION_ID),
                     notificationId = notificationId,
@@ -60,6 +78,8 @@ class P14EntryActivity : ComponentActivity() {
 private fun P14EntryScreen(
     product: P14ProductRepository,
     remote: P14RemoteRepository,
+    settingsStore: SettingsStore,
+    initialSharedText: String?,
     initialConversationId: String?,
     externalSessionId: String?,
     notificationId: String?,
@@ -72,6 +92,15 @@ private fun P14EntryScreen(
     var notification by remember { mutableStateOf<P14NotificationEntity?>(null) }
     var interaction by remember { mutableStateOf<P14InteractionEntity?>(null) }
     var input by remember { mutableStateOf("") }
+    var captureOpen by remember { mutableStateOf(!initialSharedText.isNullOrBlank()) }
+    var captureText by remember { mutableStateOf(initialSharedText.orEmpty()) }
+    var captureFiles by remember { mutableStateOf<List<Uri>>(emptyList()) }
+    val chooseFiles = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) {
+        captureFiles = (captureFiles + it).distinct()
+    }
+    var directoryPage by remember { mutableStateOf(0) }
+    var directory by remember { mutableStateOf<List<P14EntryDirectoryItem>>(emptyList()) }
+    var directoryHasMore by remember { mutableStateOf(false) }
     var status by remember { mutableStateOf<String?>(null) }
     var refreshContext by remember { mutableIntStateOf(0) }
 
@@ -86,6 +115,13 @@ private fun P14EntryScreen(
         interaction = notificationId?.let { remote.interaction(it) }
     }
 
+    LaunchedEffect(conversationId,directoryPage,refreshContext) {
+        if (conversationId == null) {
+            val page = product.directoryPage(directoryPage*20)
+            if (directoryPage==0) directory=page else directory=(directory+page).distinctBy{it.conversationId}
+            directoryHasMore = page.size==20
+        }
+    }
     val productConversation = if (conversationId != null) product.conversationFlow(conversationId!!).collectAsState(initial = null).value else null
     val entry = if (productConversation != null) product.entryFlow(productConversation.entryId).collectAsState(initial = null).value else null
     val messages = if (conversationId != null) product.messages(conversationId!!).collectAsState(initial = emptyList()).value else emptyList()
@@ -96,7 +132,11 @@ private fun P14EntryScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("P14 Entry") },
+                title = { Text(if (conversationId == null) "P14 Entries" else "P14 Entry") },
+                actions = {
+                    if(conversationId != null) TextButton(onClick={conversationId=null;directoryPage=0;refreshContext++}) { Text("All Entries") }
+                    else TextButton(onClick={captureOpen=true}) { Text("Capture") }
+                },
                 navigationIcon = { TextButton(onClick = onBack) { Text("Back") } },
             )
         },
@@ -129,7 +169,76 @@ private fun P14EntryScreen(
             }
         },
     ) { padding ->
-        LazyColumn(
+        if (conversationId==null) {
+            Column(Modifier.padding(padding).fillMaxSize().padding(12.dp), verticalArrangement=Arrangement.spacedBy(10.dp)) {
+                if(captureOpen) {
+                    ElevatedCard(Modifier.fillMaxWidth()) {
+                        Column(Modifier.padding(12.dp), verticalArrangement=Arrangement.spacedBy(8.dp)) {
+                            Text("Mixed Capture · Save first, process later",style=MaterialTheme.typography.titleMedium)
+                            OutlinedTextField(value=captureText,onValueChange={captureText=it},modifier=Modifier.fillMaxWidth(),label={Text("Text / URL / shared material")})
+                            Row(horizontalArrangement=Arrangement.spacedBy(8.dp)) {
+                                OutlinedButton(onClick={chooseFiles.launch(arrayOf("image/*","audio/*","video/*","application/*"))}) { Text("Add photo/audio/file") }
+                                Text("${captureFiles.size} files")
+                            }
+                            Row(horizontalArrangement=Arrangement.spacedBy(8.dp)) {
+                                Button(enabled=captureText.isNotBlank()||captureFiles.isNotEmpty(),onClick={
+                                    scope.launch {
+                                        status=runCatching {
+                                            val settings=settingsStore.awaitLoaded()
+                                            val model=settings.providers.flatMap{it.models}.firstOrNull{it.modelId=="p14-hermes"}
+                                                ?: error("Set up p14-hermes first")
+                                            val assistant=settings.assistants.firstOrNull{
+                                                settings.findModelById(it.chatModelId ?: settings.chatModelId)?.id==model.id
+                                            } ?: error("Select a P14 assistant before Capture")
+                                            val parts=buildList<UIMessagePart> {
+                                                if(captureText.isNotBlank()) add(UIMessagePart.Text(captureText.trim()))
+                                                captureFiles.forEach { source ->
+                                                    val mime=context.contentResolver.getType(source).orEmpty()
+                                                    val durable=withContext(Dispatchers.IO) {
+                                                        val dir=File(context.filesDir,"p14_capture").apply{mkdirs()}
+                                                        val output=File(dir,UUID.randomUUID().toString())
+                                                        context.contentResolver.openInputStream(source)?.use{input->output.outputStream().use{input.copyTo(it)}}
+                                                            ?: error("Cannot import file")
+                                                        Uri.fromFile(output).toString()
+                                                    }
+                                                    add(when {
+                                                        mime.startsWith("image/")->UIMessagePart.Image(durable)
+                                                        mime.startsWith("audio/")->UIMessagePart.Audio(durable)
+                                                        mime.startsWith("video/")->UIMessagePart.Video(durable)
+                                                        else->UIMessagePart.Document(durable,source.lastPathSegment?:"file",mime.ifBlank{"application/octet-stream"})
+                                                    })
+                                                }
+                                            }
+                                            val localId=kotlin.uuid.Uuid.random()
+                                            val result=product.acceptRikkaMessage(localId.toString(),localId.toString(),UIMessage(role=MessageRole.USER,parts=parts),assistant.id.toString(),model.id.toString())
+                                            P14RemoteWork.enqueue(context)
+                                            conversationId=result.conversationId
+                                            captureOpen=false;captureText="";captureFiles=emptyList()
+                                            "Entry durably saved"
+                                        }.getOrElse{it.message?:"Save failed"}
+                                    }
+                                }) { Text("Save Entry") }
+                                TextButton(onClick={captureOpen=false}) { Text("Cancel") }
+                            }
+                        }
+                    }
+                }
+                status?.let{Text(it,style=MaterialTheme.typography.bodySmall)}
+                Text("Entry history · server-synced and local",style=MaterialTheme.typography.titleMedium)
+                LazyColumn(verticalArrangement=Arrangement.spacedBy(7.dp),modifier=Modifier.weight(1f)) {
+                    items(directory,key={it.conversationId}) { item ->
+                        OutlinedCard(onClick={conversationId=item.conversationId},modifier=Modifier.fillMaxWidth()) {
+                            Column(Modifier.padding(12.dp)) {
+                                Text(item.bodyText.take(150).ifBlank{"Entry ${item.entryId}"})
+                                Text("${if(item.pinned) "Pinned · " else ""}${if(item.archived) "Archived" else "Active"}",style=MaterialTheme.typography.labelSmall)
+                            }
+                        }
+                    }
+                    if(directoryHasMore) item { TextButton(onClick={directoryPage++}){Text("Load more")}}
+                }
+                OutlinedButton(onClick={directoryPage=0;refreshContext++}) {Text("Refresh Entry list")}
+            }
+        } else LazyColumn(
             Modifier.padding(padding).fillMaxSize(),
             contentPadding = PaddingValues(14.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp),
@@ -210,7 +319,7 @@ private fun P14EntryScreen(
                                 OutlinedButton(onClick = {
                                     scope.launch {
                                         status = runCatching { remote.quickActionActive(conversationId!!, actionType) }
-                                            .fold({ "Quick Action accepted: $actionType" }, { it.message ?: "Quick Action failed" })
+                                            .fold({ "Quick Action queued: $actionType" }, { it.message ?: "Quick Action failed" })
                                     }
                                 }) { Text(actionType) }
                             }
