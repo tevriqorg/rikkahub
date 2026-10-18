@@ -91,6 +91,24 @@ data class P14ChatOutboxEntity(
     @ColumnInfo(name = "acked_at_epoch_ms") val ackedAtEpochMs: Long? = null,
 )
 
+@Entity(tableName = "p14_observations", indices = [Index("state"), Index("captured_at_epoch_ms")])
+data class P14ObservationEntity(
+    @PrimaryKey @ColumnInfo(name="observation_id") val observationId:String,
+    val kind:String,
+    val latitude:Double,
+    val longitude:Double,
+    @ColumnInfo(name="accuracy_m") val accuracyM:Double?,
+    @ColumnInfo(name="captured_at_epoch_ms") val capturedAtEpochMs:Long,
+    val state:String="PENDING",
+)
+
+@Entity(tableName="p14_observation_outbox", indices=[Index("state")])
+data class P14ObservationOutboxEntity(
+    @PrimaryKey @ColumnInfo(name="operation_id") val operationId:String,
+    @ColumnInfo(name="observation_id") val observationId:String,
+    val state:String="PENDING",
+)
+
 @Entity(tableName = "p14_product_sync_state")
 data class P14ProductSyncStateEntity(
     @PrimaryKey val scope: String,
@@ -99,6 +117,14 @@ data class P14ProductSyncStateEntity(
 
 @Dao
 interface P14ProductDao {
+    @Upsert suspend fun upsertObservation(item:P14ObservationEntity)
+    @Insert(onConflict = OnConflictStrategy.IGNORE) suspend fun insertObservationOutbox(item:P14ObservationOutboxEntity):Long
+    @Query("SELECT * FROM p14_observations WHERE observation_id=:id LIMIT 1") suspend fun observation(id:String):P14ObservationEntity?
+    @Query("SELECT * FROM p14_observation_outbox WHERE state IN ('PENDING','RETRY','IN_FLIGHT') ORDER BY rowid ASC LIMIT :limit") suspend fun pendingObservationOutbox(limit:Int=25):List<P14ObservationOutboxEntity>
+    @Query("UPDATE p14_observation_outbox SET state=:state WHERE operation_id=:id") suspend fun setObservationOutboxState(id:String,state:String)
+    @Query("UPDATE p14_observations SET state=:state WHERE observation_id=:id") suspend fun setObservationState(id:String,state:String)
+    @Query("DELETE FROM p14_observations WHERE captured_at_epoch_ms < :cutoff AND state='SYNCED'") suspend fun purgeSyncedObservations(cutoff:Long)
+    @Query("SELECT * FROM p14_observations ORDER BY captured_at_epoch_ms DESC LIMIT :limit") suspend fun recentObservations(limit:Int=20):List<P14ObservationEntity>
     @Upsert suspend fun upsertEntry(item: P14EntryEntity)
     @Upsert suspend fun upsertConversation(item: P14ProductConversationEntity)
     @Upsert suspend fun upsertMessage(item: P14ProductMessageEntity)
@@ -142,8 +168,10 @@ interface P14ProductDao {
         P14ProductAttachmentEntity::class,
         P14ChatOutboxEntity::class,
         P14ProductSyncStateEntity::class,
+        P14ObservationEntity::class,
+        P14ObservationOutboxEntity::class,
     ],
-    version = 3,
+    version = 4,
     exportSchema = false,
 )
 abstract class P14ProductDatabase : RoomDatabase() {
@@ -177,13 +205,23 @@ abstract class P14ProductDatabase : RoomDatabase() {
             }
         }
 
+        internal val MIGRATION_3_4 = object : Migration(3, 4) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("CREATE TABLE IF NOT EXISTS `p14_observations` (`observation_id` TEXT NOT NULL, `kind` TEXT NOT NULL, `latitude` REAL NOT NULL, `longitude` REAL NOT NULL, `accuracy_m` REAL, `captured_at_epoch_ms` INTEGER NOT NULL, `state` TEXT NOT NULL, PRIMARY KEY(`observation_id`))")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_p14_observations_state` ON `p14_observations` (`state`)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_p14_observations_captured_at_epoch_ms` ON `p14_observations` (`captured_at_epoch_ms`)")
+                db.execSQL("CREATE TABLE IF NOT EXISTS `p14_observation_outbox` (`operation_id` TEXT NOT NULL, `observation_id` TEXT NOT NULL, `state` TEXT NOT NULL, PRIMARY KEY(`operation_id`))")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_p14_observation_outbox_state` ON `p14_observation_outbox` (`state`)")
+            }
+        }
+
         @Volatile private var instance: P14ProductDatabase? = null
         fun get(context: Context): P14ProductDatabase = instance ?: synchronized(this) {
             instance ?: Room.databaseBuilder(
                 context.applicationContext,
                 P14ProductDatabase::class.java,
                 "rikkahub-p14-product.db",
-            ).addMigrations(MIGRATION_1_2, MIGRATION_2_3).build().also { instance = it }
+            ).addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4).build().also { instance = it }
         }
     }
 }

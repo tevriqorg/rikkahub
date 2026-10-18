@@ -32,6 +32,7 @@ import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import java.security.MessageDigest
 import java.time.OffsetDateTime
+import java.time.Instant
 import java.net.URLConnection
 import java.util.UUID
 import kotlin.uuid.Uuid
@@ -179,9 +180,24 @@ internal class P14ProductRepository(
         replay(connection)
         P14DurableAttachmentUploader(appContext, http).uploadPending(connection, manifest)
         flush(connection, manifest)
+        flushObservations(connection)
         replay(connection)
         true
     }
+
+    /** Explicit policy-gated Location Observation: never a user Entry or Inbox Notification. */
+    suspend fun acceptLocationObservation(latitude:Double,longitude:Double,accuracyM:Double?):String = withContext(Dispatchers.IO) {
+        require(P14ProfileStore(appContext).locationEnabled()) { "Location Observation is disabled by Profile" }
+        require(latitude in -90.0..90.0 && longitude in -180.0..180.0)
+        val id=UUID.randomUUID().toString()
+        database.withTransaction {
+            dao.upsertObservation(P14ObservationEntity(id,"LOCATION",latitude,longitude,accuracyM,System.currentTimeMillis()))
+            dao.insertObservationOutbox(P14ObservationOutboxEntity("obs-op-$id",id))
+        }
+        id
+    }
+
+    suspend fun recentObservations():List<P14ObservationEntity> = dao.recentObservations()
 
     suspend fun currentCursor(): Long = dao.syncState(SYNC_SCOPE)?.lastSyncSeq ?: 0L
 
@@ -225,6 +241,7 @@ internal class P14ProductRepository(
                 "conversation.message.edited" -> applyMessageEdited(event)
                 "conversation.message.deleted" -> applyMessageDeleted(event)
                 "conversation.state.updated" -> applyConversationState(event)
+                "observation.created" -> applyObservation(event)
                 else -> Unit // forward-compatible: unknown durable events still advance the cursor
             }
             event.caused_by_operation_id?.let { dao.ackByOperationId(it, System.currentTimeMillis()) }
@@ -330,6 +347,42 @@ internal class P14ProductRepository(
             archived=p["archived"]?.jsonPrimitive?.contentOrNull?.toBooleanStrictOrNull() ?: existing.archived,
             stateRevision=p["revision"]?.jsonPrimitive?.intOrNull ?: existing.stateRevision,
         ))
+    }
+
+    private suspend fun applyObservation(event:P14SyncEventDto) {
+        val p=event.payload
+        val id=p.requiredString("observation_id")
+        val old=dao.observation(id)
+        val lat=p["latitude"]?.jsonPrimitive?.contentOrNull?.toDoubleOrNull() ?: return
+        val long=p["longitude"]?.jsonPrimitive?.contentOrNull?.toDoubleOrNull() ?: return
+        dao.upsertObservation(P14ObservationEntity(id,"LOCATION",lat,long,
+            p["accuracy_m"]?.jsonPrimitive?.contentOrNull?.toDoubleOrNull(),
+            old?.capturedAtEpochMs ?: p.epochMs("captured_at",event.occurred_at),"SYNCED"))
+    }
+
+    private suspend fun flushObservations(connection:P14RuntimeConnection) {
+        for (operation in dao.pendingObservationOutbox()) {
+            val observation=dao.observation(operation.observationId) ?: continue
+            dao.setObservationOutboxState(operation.operationId,"IN_FLIGHT")
+            try {
+                val body=buildJsonObject {
+                    put("client_operation_id",operation.operationId)
+                    put("observation_id",observation.observationId)
+                    put("latitude",observation.latitude)
+                    put("longitude",observation.longitude)
+                    observation.accuracyM?.let{put("accuracy_m",it)}
+                    put("captured_at",Instant.ofEpochMilli(observation.capturedAtEpochMs).toString())
+                }
+                post(connection,"observations/location",body.toString())
+                dao.setObservationOutboxState(operation.operationId,"ACKED")
+                dao.setObservationState(observation.observationId,"SYNCED")
+            } catch (error:Exception) {
+                dao.setObservationOutboxState(operation.operationId,"RETRY")
+                throw error
+            }
+        }
+        val days=P14ProfileStore(appContext).retentionDays()
+        dao.purgeSyncedObservations(System.currentTimeMillis()-days*86_400_000L)
     }
 
     private suspend fun flush(connection: P14RuntimeConnection, manifest: P14EffectiveManifest) {
