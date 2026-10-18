@@ -3,6 +3,11 @@ package me.rerere.rikkahub.ui.activity
 import android.os.Bundle
 import android.content.Intent
 import android.net.Uri
+import android.Manifest
+import android.content.Context
+import android.content.pm.PackageManager
+import android.location.LocationManager
+import androidx.core.content.ContextCompat
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import java.io.File
@@ -92,6 +97,29 @@ private fun P14EntryScreen(
     var notification by remember { mutableStateOf<P14NotificationEntity?>(null) }
     var interaction by remember { mutableStateOf<P14InteractionEntity?>(null) }
     var input by remember { mutableStateOf("") }
+    val profileStore=remember(context) { P14ProfileStore(context) }
+    var profileOpen by remember { mutableStateOf(false) }
+    var profileYaml by remember { mutableStateOf(profileStore.exportProfile()) }
+    var locationEnabled by remember { mutableStateOf(profileStore.locationEnabled()) }
+    val recordLocation: () -> Unit = {
+        scope.launch {
+            status=runCatching {
+                check(profileStore.locationEnabled()) { "Enable Location in your Profile first" }
+                check(ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_COARSE_LOCATION)==PackageManager.PERMISSION_GRANTED) { "Location permission is required" }
+                val locationManager=context.getSystemService(Context.LOCATION_SERVICE) as LocationManager
+                @Suppress("MissingPermission")
+                val location=locationManager.getLastKnownLocation(LocationManager.NETWORK_PROVIDER)
+                    ?: locationManager.getLastKnownLocation(LocationManager.GPS_PROVIDER)
+                    ?: error("No recent location fix available; open Maps or enable location services first")
+                product.acceptLocationObservation(location.latitude,location.longitude,location.accuracy.toDouble())
+                P14RemoteWork.enqueue(context)
+                "Location saved as Observation (not an Entry)"
+            }.getOrElse{it.message?:"Location capture failed"}
+        }
+    }
+    val requestLocation=rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        if (granted) recordLocation() else status="Location permission denied"
+    }
     var captureOpen by remember { mutableStateOf(!initialSharedText.isNullOrBlank()) }
     var captureText by remember { mutableStateOf(initialSharedText.orEmpty()) }
     var captureFiles by remember { mutableStateOf<List<Uri>>(emptyList()) }
@@ -135,7 +163,10 @@ private fun P14EntryScreen(
                 title = { Text(if (conversationId == null) "P14 Entries" else "P14 Entry") },
                 actions = {
                     if(conversationId != null) TextButton(onClick={conversationId=null;directoryPage=0;refreshContext++}) { Text("All Entries") }
-                    else TextButton(onClick={captureOpen=true}) { Text("Capture") }
+                    else {
+                        TextButton(onClick={profileOpen=!profileOpen;profileYaml=profileStore.exportProfile()}) { Text("Profile") }
+                        TextButton(onClick={captureOpen=true}) { Text("Capture") }
+                    }
                 },
                 navigationIcon = { TextButton(onClick = onBack) { Text("Back") } },
             )
@@ -171,6 +202,22 @@ private fun P14EntryScreen(
     ) { padding ->
         if (conversationId==null) {
             Column(Modifier.padding(padding).fillMaxSize().padding(12.dp), verticalArrangement=Arrangement.spacedBy(10.dp)) {
+                if(profileOpen) {
+                    ElevatedCard(Modifier.fillMaxWidth()) {
+                        Column(Modifier.padding(12.dp), verticalArrangement=Arrangement.spacedBy(8.dp)) {
+                            Text("Profile / Capability (portable YAML; no secrets)",style=MaterialTheme.typography.titleMedium)
+                            OutlinedTextField(value=profileYaml,onValueChange={profileYaml=it},modifier=Modifier.fillMaxWidth(),minLines=4,maxLines=12)
+                            Row(horizontalArrangement=Arrangement.spacedBy(8.dp)) {
+                                Button(onClick={status=runCatching{profileStore.importProfile(profileYaml);locationEnabled=profileStore.locationEnabled();"Profile activated"}.getOrElse{it.message?:"Invalid Profile"}}) {Text("Activate")}
+                                OutlinedButton(onClick={
+                                    if (ContextCompat.checkSelfPermission(context,Manifest.permission.ACCESS_COARSE_LOCATION)==PackageManager.PERMISSION_GRANTED) recordLocation()
+                                    else requestLocation.launch(Manifest.permission.ACCESS_COARSE_LOCATION)
+                                },enabled=locationEnabled) {Text("Record Location")}
+                            }
+                            Text("Location is off by default. No passive background collection; explicit permission and policy required.",style=MaterialTheme.typography.labelSmall)
+                        }
+                    }
+                }
                 if(captureOpen) {
                     ElevatedCard(Modifier.fillMaxWidth()) {
                         Column(Modifier.padding(12.dp), verticalArrangement=Arrangement.spacedBy(8.dp)) {
@@ -191,7 +238,10 @@ private fun P14EntryScreen(
                                                 settings.findModelById(it.chatModelId ?: settings.chatModelId)?.id==model.id
                                             } ?: error("Select a P14 assistant before Capture")
                                             val parts=buildList<UIMessagePart> {
-                                                if(captureText.isNotBlank()) add(UIMessagePart.Text(captureText.trim()))
+                                                if(captureText.isNotBlank()) {
+                                                    check(profileStore.captureEnabled("text")) { "Profile disabled text Capture" }
+                                                    add(UIMessagePart.Text(captureText.trim()))
+                                                }
                                                 captureFiles.forEach { source ->
                                                     val mime=context.contentResolver.getType(source).orEmpty()
                                                     val durable=withContext(Dispatchers.IO) {
@@ -201,6 +251,12 @@ private fun P14EntryScreen(
                                                             ?: error("Cannot import file")
                                                         Uri.fromFile(output).toString()
                                                     }
+                                                    val capability=when {
+                                                        mime.startsWith("image/")->"photo"
+                                                        mime.startsWith("audio/")->"voice"
+                                                        else->"file"
+                                                    }
+                                                    check(profileStore.captureEnabled(capability)) { "Profile disabled $capability Capture" }
                                                     add(when {
                                                         mime.startsWith("image/")->UIMessagePart.Image(durable)
                                                         mime.startsWith("audio/")->UIMessagePart.Audio(durable)
