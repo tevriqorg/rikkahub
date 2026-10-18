@@ -124,6 +124,16 @@ internal class P14RemoteRepository(
         return operationId
     }
 
+    suspend fun queueObservationContextLink(entryId:String,observationId:String):String {
+        require(entryId.isNotBlank() && observationId.isNotBlank())
+        val operationId=Uuid.random().toString()
+        val payload=buildJsonObject { put("client_operation_id",operationId) }.toString()
+        dao.enqueueOperation(P14OperationEntity(operationId,"","LINK_OBSERVATION",payload,
+            conversationId=entryId,actionId=observationId))
+        P14RemoteWork.enqueue(context)
+        return operationId
+    }
+
     suspend fun queueState(notificationId:String,state:String) {
         dao.enqueueOperation(P14OperationEntity(Uuid.random().toString(),notificationId,"STATE",state))
         P14RemoteWork.enqueue(context)
@@ -161,6 +171,11 @@ internal class P14RemoteRepository(
                         val cmd=InteractionCommand(op.operationId,op.payload)
                         post(c,"notifications/${op.notificationId}/interaction-response",json.encodeToString(cmd))
                         fetchInteraction(c,op.notificationId)
+                    }
+                    "LINK_OBSERVATION" -> {
+                        val entryId=requireNotNull(op.conversationId)
+                        val observationId=requireNotNull(op.actionId)
+                        post(c,"entries/$entryId/context/observations/$observationId",op.payload)
                     }
                     "ACTION_DECISION" -> {
                         val actionId=requireNotNull(op.actionId) { "Decision missing Action ID" }

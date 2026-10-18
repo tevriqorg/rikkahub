@@ -259,6 +259,14 @@ private fun P14EntryScreen(
     val messages = if (conversationId != null) product.messages(conversationId!!,historyLimit).collectAsState(initial = emptyList()).value else emptyList()
     val attachments = if (conversationId != null) product.attachments(conversationId!!,historyLimit).collectAsState(initial = emptyList()).value else emptyList()
     val actions = if (conversationId != null) product.actions(conversationId!!).collectAsState(initial=emptyList()).value else emptyList()
+    var nearbyObservations by remember(entry?.entryId,refreshContext) { mutableStateOf<List<P14ObservationEntity>>(emptyList()) }
+    LaunchedEffect(entry?.entryId,refreshContext) {
+        if(entry != null && profileStore.locationEnabled()) {
+            nearbyObservations=product.recentObservations().filter {
+                kotlin.math.abs(it.capturedAtEpochMs-entry.createdAtEpochMs)<=2*60*60*1000L
+            }
+        }
+    }
     val viewMemberships = if (entry != null) product.entryViews(entry.entryId).collectAsState(initial=emptyList()).value else emptyList()
     val canText = "chat" in manifest.enabledViews && "text" in manifest.messageCapabilities
     val upgradeRequired = manifest.compatibility == "UPGRADE_REQUIRED"
@@ -496,6 +504,22 @@ private fun P14EntryScreen(
                 }
             }
             entry?.let { currentEntry ->
+                if(nearbyObservations.isNotEmpty()) item {
+                    ElevatedCard(Modifier.fillMaxWidth()) {
+                        Column(Modifier.padding(12.dp)) {
+                            Text("Nearby context · opt-in Location",style=MaterialTheme.typography.titleSmall)
+                            Text("Context is separate from user-authored Entry")
+                            nearbyObservations.take(3).forEach { observation ->
+                                TextButton(onClick={scope.launch {
+                                    status=runCatching {
+                                        remote.queueObservationContextLink(currentEntry.entryId,observation.observationId)
+                                        "Location Context link queued"
+                                    }.getOrElse{it.message?:"Context link failed"}
+                                }}){Text("Attach location at ${observation.capturedAtEpochMs}")}
+                            }
+                        }
+                    }
+                }
                 item {
                     ElevatedCard(Modifier.fillMaxWidth()) {
                         Column(Modifier.padding(12.dp),verticalArrangement=Arrangement.spacedBy(6.dp)) {
