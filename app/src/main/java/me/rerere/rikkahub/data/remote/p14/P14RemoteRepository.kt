@@ -68,17 +68,21 @@ internal class P14RemoteRepository(
         post(c,"conversations/$conversationId/state",payload)
     }
 
+    /** P14 Quick Action is queued with its stable operation/action identity before any HTTP. */
     suspend fun quickActionActive(conversationId:String,actionType:String):String=withContext(Dispatchers.IO) {
         val c=P14RuntimeCredentialStore(context).activeConnection() ?: error("P14 device is not connected")
         val manifest=manifest(c)
         require(actionType in manifest.quickActionTypes) { "Quick Action is not enabled by the current P14 Manifest" }
-        val id=Uuid.random().toString()
+        val operationId=Uuid.random().toString()
+        val actionId=Uuid.random().toString()
         val payload=buildJsonObject {
-            put("client_operation_id",id); put("action_id",Uuid.random().toString()); put("action_type",actionType)
+            put("client_operation_id",operationId); put("action_id",actionId); put("action_type",actionType)
             put("payload",buildJsonObject {})
         }.toString()
-        post(c,"conversations/$conversationId/quick-actions",payload)
-        id
+        dao.enqueueOperation(P14OperationEntity(operationId,"", "QUICK_ACTION",payload,
+            conversationId=conversationId,actionId=actionId))
+        P14RemoteWork.enqueue(context)
+        operationId
     }
 
     suspend fun queueState(notificationId:String,state:String) {
@@ -119,11 +123,16 @@ internal class P14RemoteRepository(
                         post(c,"notifications/${op.notificationId}/interaction-response",json.encodeToString(cmd))
                         fetchInteraction(c,op.notificationId)
                     }
+                    "QUICK_ACTION" -> {
+                        val conversationId=requireNotNull(op.conversationId) { "Quick Action missing durable conversation" }
+                        // The original serialized payload preserves action_id/client_operation_id on retry.
+                        post(c,"conversations/$conversationId/quick-actions",op.payload)
+                    }
                     else -> error("Unknown P14 operation ${op.type}")
                 }
                 dao.setOperationState(op.operationId,"ACKED")
             } catch(e:P14RemoteHttpException) {
-                if(e.status==409) { runCatching{refresh(c)}; dao.setOperationState(op.operationId,"ACKED") }
+                if(e.status==409 && op.type != "QUICK_ACTION") { runCatching{refresh(c)}; dao.setOperationState(op.operationId,"ACKED") }
                 else dao.setOperationState(op.operationId,"RETRY")
             } catch(_:Throwable) { dao.setOperationState(op.operationId,"RETRY") }
         }

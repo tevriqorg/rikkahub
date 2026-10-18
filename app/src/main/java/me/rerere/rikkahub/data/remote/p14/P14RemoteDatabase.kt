@@ -26,6 +26,8 @@ data class P14OperationEntity(
     @PrimaryKey @ColumnInfo(name="operation_id") val operationId:String,
     @ColumnInfo(name="notification_id") val notificationId:String,
     val type:String,val payload:String,val state:String="PENDING",val attempts:Int=0,
+    @ColumnInfo(name="conversation_id") val conversationId:String?=null,
+    @ColumnInfo(name="action_id") val actionId:String?=null,
 )
 @Dao interface P14RemoteDao {
     @Upsert suspend fun upsertNotifications(items:List<P14NotificationEntity>)
@@ -37,11 +39,11 @@ data class P14OperationEntity(
     @Query("UPDATE p14_interactions SET status='RESPONDED', response=:response WHERE interaction_id=:id AND status='PENDING'") suspend fun markInteractionResponded(id:String,response:String):Int
     @Query("DELETE FROM p14_notifications") suspend fun clearNotifications()
     @Insert(onConflict=OnConflictStrategy.IGNORE) suspend fun enqueueOperation(item:P14OperationEntity)
-    @Query("SELECT * FROM p14_operations WHERE state IN ('PENDING','RETRY') ORDER BY rowid ASC LIMIT :limit") suspend fun pendingOperations(limit:Int=50):List<P14OperationEntity>
+    @Query("SELECT * FROM p14_operations WHERE state IN ('PENDING','RETRY','IN_FLIGHT') ORDER BY rowid ASC LIMIT :limit") suspend fun pendingOperations(limit:Int=50):List<P14OperationEntity>
     @Query("UPDATE p14_operations SET state=:state, attempts=attempts+1 WHERE operation_id=:id") suspend fun setOperationState(id:String,state:String)
 
 }
-@Database(entities=[P14NotificationEntity::class,P14InteractionEntity::class,P14OperationEntity::class],version=2,exportSchema=false)
+@Database(entities=[P14NotificationEntity::class,P14InteractionEntity::class,P14OperationEntity::class],version=3,exportSchema=false)
 abstract class P14RemoteDatabase:RoomDatabase(){ abstract fun dao():P14RemoteDao
     companion object { @Volatile private var instance:P14RemoteDatabase?=null
         // Preserve durable notification, interaction, and pending operations on legacy v1 upgrades.
@@ -59,6 +61,12 @@ abstract class P14RemoteDatabase:RoomDatabase(){ abstract fun dao():P14RemoteDao
                 }
             }
         }
-        fun get(context:Context)=instance?:synchronized(this){instance?:Room.databaseBuilder(context.applicationContext,P14RemoteDatabase::class.java,"rikkahub-p14-remote.db").addMigrations(MIGRATION_1_2).build().also{instance=it}}
+        internal val MIGRATION_2_3 = object : Migration(2, 3) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE `p14_operations` ADD COLUMN `conversation_id` TEXT")
+                db.execSQL("ALTER TABLE `p14_operations` ADD COLUMN `action_id` TEXT")
+            }
+        }
+        fun get(context:Context)=instance?:synchronized(this){instance?:Room.databaseBuilder(context.applicationContext,P14RemoteDatabase::class.java,"rikkahub-p14-remote.db").addMigrations(MIGRATION_1_2,MIGRATION_2_3).build().also{instance=it}}
     }
 }
