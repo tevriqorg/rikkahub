@@ -219,10 +219,6 @@ class ChatService(
     private val p14RemoteControlClient = P14RemoteControlClient(okHttpClient)
     private val p14RuntimeAccess = P14RuntimeAccess(context, settingsStore, okHttpClient)
 
-    suspend fun prepareP14Remote(provider: ProviderSetting.OpenAI) {
-        p14RuntimeAccess.prepare(provider)
-    }
-
     private val sessionManager = ConversationSessionManager(
         scope = appScope,
         createInitialConversation = { id ->

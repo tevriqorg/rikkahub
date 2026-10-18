@@ -44,7 +44,6 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -72,8 +71,6 @@ import me.rerere.rikkahub.data.model.Assistant
 import me.rerere.rikkahub.data.model.AssistantRuntimeMode
 import me.rerere.rikkahub.data.model.Conversation
 import me.rerere.rikkahub.data.repository.WorkspaceRepository
-import me.rerere.rikkahub.data.remote.p14.P14_DEFAULT_SERVER
-import me.rerere.rikkahub.data.remote.p14.p14ConfiguredServerUrl
 import me.rerere.rikkahub.service.ChatError
 import me.rerere.rikkahub.ui.activity.P14InboxActivity
 import me.rerere.rikkahub.ui.components.ai.ChatAttachmentPickerActions
@@ -292,25 +289,6 @@ private fun ChatPageContent(
     val workspaceRepository: WorkspaceRepository = koinInject()
 
     var previewMode by rememberSaveable { mutableStateOf(false) }
-    var showP14Connection by rememberSaveable { mutableStateOf(false) }
-
-    if (showP14Connection) {
-        P14ServerConnectionDialog(
-            initialUrl = setting.p14ConfiguredServerUrl() ?: P14_DEFAULT_SERVER,
-            configured = assistant.runtimeMode == AssistantRuntimeMode.REMOTE && currentChatModel?.modelId == "p14-hermes",
-            onDismiss = { showP14Connection = false },
-            onSave = { url, token, onError ->
-                vm.configureP14Remote(url, token) { result ->
-                    result.onSuccess {
-                        showP14Connection = false
-                        toaster.show("P14 Server 已连接，可以直接聊天", type = ToastType.Success)
-                    }.onFailure { error ->
-                        onError(error.message ?: "连接 P14 Server 失败")
-                    }
-                }
-            },
-        )
-    }
     val hazeState = rememberHazeState()
     var showFilesSheet by remember { mutableStateOf(false) }
     val attachmentPickerActions = rememberChatAttachmentPickerActions(
@@ -355,7 +333,6 @@ private fun ChatPageContent(
                     onClickMenu = {
                         previewMode = !previewMode
                     },
-                    onP14Connection = { showP14Connection = true },
                     onUpdateTitle = {
                         vm.updateTitle(it)
                     }
@@ -610,56 +587,6 @@ private fun ChatFilesPickerSheet(
 }
 
 @Composable
-private fun P14ServerConnectionDialog(
-    initialUrl: String,
-    configured: Boolean,
-    onDismiss: () -> Unit,
-    onSave: (String, String, (String) -> Unit) -> Unit,
-) {
-    var url by rememberSaveable(initialUrl) { mutableStateOf(initialUrl) }
-    var token by rememberSaveable { mutableStateOf("") }
-    var error by rememberSaveable { mutableStateOf<String?>(null) }
-    var saving by rememberSaveable { mutableStateOf(false) }
-
-    AlertDialog(
-        onDismissRequest = { if (!saving) onDismiss() },
-        title = { Text("P14 Server") },
-        text = {
-            Column {
-                Text(if (configured) "已连接。重新保存会替换当前连接。" else "连接 P14 Server，保存后即可直接聊天。")
-                OutlinedTextField(
-                    value = url,
-                    onValueChange = { url = it; error = null },
-                    modifier = Modifier.fillMaxWidth(),
-                    label = { Text("Server URL") },
-                    singleLine = true,
-                )
-                OutlinedTextField(
-                    value = token,
-                    onValueChange = { token = it; error = null },
-                    modifier = Modifier.fillMaxWidth(),
-                    label = { Text("P14 Server token") },
-                    singleLine = true,
-                    visualTransformation = PasswordVisualTransformation(),
-                )
-                error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
-            }
-        },
-        confirmButton = {
-            TextButton(
-                enabled = !saving && url.isNotBlank() && token.isNotBlank(),
-                onClick = {
-                    saving = true
-                    error = null
-                    onSave(url, token) { message -> saving = false; error = message }
-                },
-            ) { Text(if (saving) "连接中…" else "保存") }
-        },
-        dismissButton = { TextButton(enabled = !saving, onClick = onDismiss) { Text("取消") } },
-    )
-}
-
-@Composable
 private fun TopBar(
     settings: Settings,
     assistant: Assistant,
@@ -670,7 +597,6 @@ private fun TopBar(
     previewMode: Boolean,
     onClickMenu: () -> Unit,
     onNewChat: () -> Unit,
-    onP14Connection: () -> Unit,
     onUpdateTitle: (String) -> Unit
 ) {
     val scope = rememberCoroutineScope()
@@ -732,9 +658,7 @@ private fun TopBar(
             }
         },
         actions = {
-            val p14Connected = assistant.runtimeMode == AssistantRuntimeMode.REMOTE && chatModel?.modelId == "p14-hermes"
-            TextButton(onClick = onP14Connection) { Text(if (p14Connected) "Server ✓" else "连接 Server") }
-            if (p14Connected) {
+            if (assistant.runtimeMode == AssistantRuntimeMode.REMOTE && chatModel?.modelId == "p14-hermes") {
                 TextButton(onClick = {
                     context.startActivity(Intent(context, P14InboxActivity::class.java))
                 }) { Text("Inbox") }

@@ -44,8 +44,6 @@ import me.rerere.rikkahub.data.model.getAssistantOf
 import me.rerere.rikkahub.data.model.getChatModelOf
 import me.rerere.rikkahub.data.repository.ConversationRepository
 import me.rerere.rikkahub.data.repository.FavoriteRepository
-import me.rerere.rikkahub.data.remote.p14.P14_ASSISTANT_ID
-import me.rerere.rikkahub.data.remote.p14.withP14QuickSetup
 import me.rerere.rikkahub.service.ChatError
 import me.rerere.rikkahub.service.ChatService
 import me.rerere.rikkahub.ui.hooks.writeStringPreference
@@ -362,37 +360,6 @@ class ChatVM(
             if (conversation.id == _conversationId) {
                 settingsStore.selectAssistant(targetAssistantId)
             }
-        }
-    }
-
-    fun configureP14Remote(
-        serverUrl: String,
-        setupToken: String,
-        onResult: (Result<Unit>) -> Unit,
-    ) {
-        viewModelScope.launch {
-            val result = runCatching {
-                var configuredProvider: me.rerere.ai.provider.ProviderSetting.OpenAI? = null
-                settingsStore.update { settings ->
-                    settings.withP14QuickSetup(serverUrl, setupToken).also { configuredProvider = it.provider }.settings
-                }
-                val provider = checkNotNull(configuredProvider)
-                try {
-                    // Exchange the one-time setup credential immediately so saving the dialog means connected.
-                    chatService.prepareP14Remote(provider)
-                } catch (error: Throwable) {
-                    // Never leave a failed setup credential persisted in ordinary provider settings.
-                    settingsStore.update { settings ->
-                        settings.copy(providers = settings.providers.map { item ->
-                            if (item.id == provider.id && item is me.rerere.ai.provider.ProviderSetting.OpenAI) item.copy(apiKey = "") else item
-                        })
-                    }
-                    throw error
-                }
-                chatService.moveConversationToAssistant(_conversationId, P14_ASSISTANT_ID)
-                settingsStore.selectAssistant(P14_ASSISTANT_ID)
-            }
-            onResult(result)
         }
     }
 
