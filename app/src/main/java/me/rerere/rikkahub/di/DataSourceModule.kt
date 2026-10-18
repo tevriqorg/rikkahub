@@ -240,6 +240,8 @@ val dataSourceModule = module {
             .addInterceptor(AIRequestInterceptor())
             .addInterceptor(HttpLoggingInterceptor().apply {
                 redactHeader("Proxy-Authorization")
+                redactHeader("Authorization")
+                redactHeader("X-API-Key")
                 level = HttpLoggingInterceptor.Level.HEADERS
             })
             .build()
