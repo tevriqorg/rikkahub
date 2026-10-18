@@ -232,6 +232,20 @@ class ChatCompletionsAPI(
         val isOpenRouter = host == "openrouter.ai"
         return buildJsonObject {
             put("model", params.model.modelId)
+            if (params.model.modelId == "p14-hermes") {
+                messages.lastOrNull { it.role == MessageRole.USER }?.let { userMessage ->
+                    put("p14_message_id", userMessage.id.toString())
+                    val reply = userMessage.parts.asSequence()
+                        .mapNotNull { it.metadata?.get("p14_reply") as? JsonObject }
+                        .firstOrNull()
+                    reply?.get("message_id")?.jsonPrimitive?.contentOrNull?.let {
+                        put("p14_reply_to_message_id", it)
+                    }
+                    (reply?.get("quote") as? JsonObject)?.let {
+                        put("p14_quote", it)
+                    }
+                }
+            }
             put(
                 "messages",
                 buildMessages(
@@ -633,6 +647,17 @@ class ChatCompletionsAPI(
             } else {
                 putJsonArray("content") {
                     message.parts.forEach { part ->
+                        val p14AttachmentId = part.metadata
+                            ?.get("p14_attachment_id")
+                            ?.jsonPrimitiveOrNull
+                            ?.contentOrNull
+                        if (p14AttachmentId != null) {
+                            add(buildJsonObject {
+                                put("type", "p14_attachment")
+                                put("attachment_id", p14AttachmentId)
+                            })
+                            return@forEach
+                        }
                         when (part) {
                             is UIMessagePart.Text -> {
                                 add(buildJsonObject {

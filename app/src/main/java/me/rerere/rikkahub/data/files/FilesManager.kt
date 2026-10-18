@@ -144,6 +144,25 @@ class FilesManager(
         return newUris
     }
 
+    fun createChatFileFromFile(
+        source: File,
+        displayName: String,
+        mimeType: String,
+    ): Uri {
+        require(source.isFile) { "Source chat file does not exist" }
+        val dir = context.filesDir.resolve(FileFolders.UPLOAD)
+        if (!dir.exists()) dir.mkdirs()
+        val target = dir.resolve(buildUuidFileName(displayName = displayName, mimeType = mimeType))
+        source.copyTo(target, overwrite = false)
+        trackManagedFile(
+            folder = FileFolders.UPLOAD,
+            file = target,
+            displayName = displayName,
+            mimeType = mimeType,
+        )
+        return target.toUri()
+    }
+
     fun createChatFilesByByteArrays(
         byteArrays: List<ByteArray>,
         displayName: String = "image.png",

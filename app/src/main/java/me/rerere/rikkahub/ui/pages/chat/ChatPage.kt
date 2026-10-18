@@ -1,5 +1,7 @@
 package me.rerere.rikkahub.ui.pages.chat
 
+import android.content.Intent
+
 import android.net.Uri
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Column
@@ -38,6 +40,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.res.stringResource
@@ -65,9 +68,11 @@ import me.rerere.rikkahub.data.datastore.findProvider
 import me.rerere.rikkahub.data.datastore.getSelectedASRProvider
 import me.rerere.rikkahub.data.files.FilesManager
 import me.rerere.rikkahub.data.model.Assistant
+import me.rerere.rikkahub.data.model.AssistantRuntimeMode
 import me.rerere.rikkahub.data.model.Conversation
 import me.rerere.rikkahub.data.repository.WorkspaceRepository
 import me.rerere.rikkahub.service.ChatError
+import me.rerere.rikkahub.ui.activity.P14InboxActivity
 import me.rerere.rikkahub.ui.components.ai.ChatAttachmentPickerActions
 import me.rerere.rikkahub.ui.components.ai.ChatInput
 import me.rerere.rikkahub.ui.components.ai.FilesPicker
@@ -103,6 +108,7 @@ fun ChatPage(id: Uuid, text: String?, files: List<Uri>, nodeId: Uuid? = null) {
     val conversation by vm.conversation.collectAsStateWithLifecycle()
     val loadingJob by vm.conversationJob.collectAsStateWithLifecycle()
     val processingStatus by vm.processingStatus.collectAsStateWithLifecycle()
+    val remoteActivityStatusLines by vm.remoteActivityStatusLines.collectAsStateWithLifecycle()
     val currentChatModel by vm.currentChatModel.collectAsStateWithLifecycle()
     val assistant by vm.assistant.collectAsStateWithLifecycle()
     val errors by vm.errors.collectAsStateWithLifecycle()
@@ -202,6 +208,7 @@ fun ChatPage(id: Uuid, text: String?, files: List<Uri>, nodeId: Uuid? = null) {
                     inputState = inputState,
                     loadingJob = loadingJob,
                     processingStatus = processingStatus,
+                    remoteActivityStatusLines = remoteActivityStatusLines,
                     setting = setting,
                     conversation = conversation,
                     drawerState = drawerState,
@@ -235,6 +242,7 @@ fun ChatPage(id: Uuid, text: String?, files: List<Uri>, nodeId: Uuid? = null) {
                     inputState = inputState,
                     loadingJob = loadingJob,
                     processingStatus = processingStatus,
+                    remoteActivityStatusLines = remoteActivityStatusLines,
                     setting = setting,
                     conversation = conversation,
                     drawerState = drawerState,
@@ -262,6 +270,7 @@ private fun ChatPageContent(
     inputState: ChatInputState,
     loadingJob: Job?,
     processingStatus: String? = null,
+    remoteActivityStatusLines: List<String> = emptyList(),
     setting: Settings,
     bigScreen: Boolean,
     conversation: Conversation,
@@ -285,10 +294,9 @@ private fun ChatPageContent(
     val attachmentPickerActions = rememberChatAttachmentPickerActions(
         inputState = inputState,
         setting = setting,
+        allowAnyDocument = assistant.runtimeMode == AssistantRuntimeMode.REMOTE,
         onAttachmentAdded = { showFilesSheet = false },
     )
-    val allowAudioVideoAttachments =
-        currentChatModel?.findProvider(setting.providers) is ProviderSetting.Google
 
     val completionProviders = remember(assistant.workspaceId, conversation.workspaceCwd, workspaceRepository) {
         assistant.workspaceId?.let { workspaceId ->
@@ -369,7 +377,10 @@ private fun ChatPageContent(
                                 messageId = inputState.editingMessage!!,
                             )
                         } else {
-                            vm.handleMessageSend(inputState.getContents())
+                            vm.handleMessageSend(
+                                content = inputState.getContents(),
+                                replyToMessageId = inputState.replyingToMessageId,
+                            )
                             scope.launch {
                                 delay(100.milliseconds)
                                 chatListState.requestScrollToItem(conversation.currentMessages.size + 5)
@@ -384,7 +395,11 @@ private fun ChatPageContent(
                                 messageId = inputState.editingMessage!!,
                             )
                         } else {
-                            vm.handleMessageSend(content = inputState.getContents(), answer = false)
+                            vm.handleMessageSend(
+                                content = inputState.getContents(),
+                                answer = false,
+                                replyToMessageId = inputState.replyingToMessageId,
+                            )
                             scope.launch {
                                 chatListState.requestScrollToItem(conversation.currentMessages.size + 5)
                             }
@@ -409,6 +424,7 @@ private fun ChatPageContent(
                 state = chatListState,
                 loading = loadingJob != null,
                 processingStatus = processingStatus,
+                remoteActivityStatusLines = remoteActivityStatusLines,
                 previewMode = previewMode,
                 settings = setting,
                 hazeState = hazeState,
@@ -417,6 +433,9 @@ private fun ChatPageContent(
                 onClearAllErrors = onClearAllErrors,
                 onRegenerate = {
                     vm.regenerateAtMessage(it)
+                },
+                onReply = {
+                    inputState.startReply(it)
                 },
                 onEdit = {
                     inputState.editingMessage = it.id
@@ -515,6 +534,7 @@ private fun ChatFilesPickerSheet(
 
     fun dismissAll() {
         showCompressDialog = false
+        attachmentPickerActions.onCancelVoiceMessage()
         onDismiss()
     }
 
@@ -547,6 +567,8 @@ private fun ChatFilesPickerSheet(
             onPickImage = attachmentPickerActions.onPickImage,
             onPickVideo = attachmentPickerActions.onPickVideo,
             onPickAudio = attachmentPickerActions.onPickAudio,
+            onToggleVoiceMessage = attachmentPickerActions.onToggleVoiceMessage,
+            isRecordingVoiceMessage = attachmentPickerActions.isRecordingVoiceMessage,
             onPickFile = attachmentPickerActions.onPickFile,
             onSketch = attachmentPickerActions.onSketch,
             onStartVoiceMode = if (
@@ -579,6 +601,7 @@ private fun TopBar(
 ) {
     val scope = rememberCoroutineScope()
     val toaster = LocalToaster.current
+    val context = LocalContext.current
     val titleState = useEditState<String> {
         onUpdateTitle(it)
     }
@@ -618,7 +641,11 @@ private fun TopBar(
                     )
                     if (chatModel != null && provider != null) {
                         Text(
-                            text = "${assistant.name.ifBlank { stringResource(R.string.assistant_page_default_assistant) }} / ${chatModel.displayName} (${provider.name})",
+                            text = buildString {
+                                append(assistant.name.ifBlank { stringResource(R.string.assistant_page_default_assistant) })
+                                if (assistant.runtimeMode == AssistantRuntimeMode.REMOTE) append(" · REMOTE")
+                                append(" / ${chatModel.displayName} (${provider.name})")
+                            },
                             overflow = TextOverflow.Ellipsis,
                             maxLines = 1,
                             color = LocalContentColor.current.copy(0.65f),
@@ -631,6 +658,11 @@ private fun TopBar(
             }
         },
         actions = {
+            if (assistant.runtimeMode == AssistantRuntimeMode.REMOTE && chatModel?.modelId == "p14-hermes") {
+                TextButton(onClick = {
+                    context.startActivity(Intent(context, P14InboxActivity::class.java))
+                }) { Text("Inbox") }
+            }
             IconButton(
                 onClick = {
                     onClickMenu()

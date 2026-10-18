@@ -60,6 +60,10 @@
     android:usesCleartextTraffic="true"
     tools:targetApi="33">
     <activity
+      android:name=".ui.activity.P14InboxActivity"
+      android:exported="false"
+      android:theme="@style/Theme.Rikkahub" />
+    <activity
       android:name=".ui.activity.SafeModeActivity"
       android:exported="false"
       android:label="@string/title_activity_safe_mode"
@@ -123,6 +127,13 @@
       android:name="com.yalantis.ucrop.UCropActivity"
       android:theme="@style/Theme.AppCompat.Light.NoActionBar" />
 
+    <service
+      android:name=".data.remote.p14.P14UnifiedPushService"
+      android:exported="false">
+      <intent-filter>
+        <action android:name="org.unifiedpush.android.connector.PUSH_EVENT" />
+      </intent-filter>
+    </service>
     <service
       android:name=".service.ChatGenerationForegroundService"
       android:exported="false"

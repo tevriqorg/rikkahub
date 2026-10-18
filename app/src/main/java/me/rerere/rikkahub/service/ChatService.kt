@@ -25,12 +25,16 @@ import kotlinx.coroutines.flow.onCompletion
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
 import me.rerere.ai.core.MessageRole
 import me.rerere.ai.core.ReasoningLevel
 import me.rerere.ai.provider.BuiltInTools
 import me.rerere.ai.provider.Model
 import me.rerere.ai.provider.ModelAbility
 import me.rerere.ai.provider.ProviderManager
+import me.rerere.ai.provider.ProviderSetting
 import me.rerere.ai.provider.TextGenerationParams
 import me.rerere.ai.ui.ToolApprovalState
 import me.rerere.ai.ui.UIMessage
@@ -59,8 +63,12 @@ import me.rerere.rikkahub.data.ai.transformers.TemplateTransformer
 import me.rerere.rikkahub.data.ai.transformers.ThinkTagTransformer
 import me.rerere.rikkahub.data.ai.transformers.TimeReminderTransformer
 import me.rerere.rikkahub.data.ai.transformers.WorkspaceReminderTransformer
+import me.rerere.rikkahub.data.remote.p14.P14RemoteAttachmentTransformer
+import me.rerere.rikkahub.data.remote.p14.P14RemoteControlClient
+import me.rerere.rikkahub.data.remote.p14.P14RuntimeAccess
 import me.rerere.rikkahub.data.event.AppEvent
 import me.rerere.rikkahub.data.event.AppEventBus
+import me.rerere.rikkahub.data.datastore.Settings
 import me.rerere.rikkahub.data.datastore.SettingsStore
 import me.rerere.rikkahub.data.datastore.findModelById
 import me.rerere.rikkahub.data.datastore.findProvider
@@ -70,9 +78,11 @@ import me.rerere.rikkahub.data.files.FilesManager
 import me.rerere.rikkahub.data.model.Conversation
 import me.rerere.rikkahub.data.model.Assistant
 import me.rerere.rikkahub.data.model.AssistantAffectScope
+import me.rerere.rikkahub.data.model.AssistantRuntimeMode
 import me.rerere.rikkahub.data.model.MessageNode
 import me.rerere.rikkahub.data.model.bindConfig
 import me.rerere.rikkahub.data.model.fillModelSnapshots
+import me.rerere.rikkahub.data.model.forGenerationRuntime
 import me.rerere.rikkahub.data.model.getAssistantOf
 import me.rerere.rikkahub.data.model.getChatModelOf
 import me.rerere.rikkahub.data.model.getStoredAssistantOf
@@ -85,6 +95,7 @@ import me.rerere.rikkahub.data.repository.ConversationRepository
 import me.rerere.rikkahub.data.repository.FolderRepository
 import me.rerere.rikkahub.data.repository.MemoryRepository
 import me.rerere.rikkahub.data.repository.WorkspaceRepository
+import okhttp3.OkHttpClient
 import me.rerere.rikkahub.data.repository.memoryId
 import me.rerere.rikkahub.web.BadRequestException
 import me.rerere.rikkahub.web.NotFoundException
@@ -93,6 +104,8 @@ import java.util.Locale
 import kotlin.uuid.Uuid
 
 private const val TAG = "ChatService"
+private const val P14_REPLY_METADATA_KEY = "p14_reply"
+private const val P14_REPLY_QUOTE_LIMIT = 20_000
 
 internal fun backgroundTextGenerationParams(
     model: Model,
@@ -198,9 +211,13 @@ class ChatService(
     private val filesManager: FilesManager,
     private val workspaceRepository: WorkspaceRepository,
     private val folderRepository: FolderRepository,
+    private val okHttpClient: OkHttpClient,
 ) {
     // workspace 系统提示注入 (依赖 workspaceRepository, 故在类内构造)
     private val workspaceReminderTransformer = WorkspaceReminderTransformer(workspaceRepository)
+    private val p14RemoteAttachmentTransformer = P14RemoteAttachmentTransformer(filesManager, okHttpClient)
+    private val p14RemoteControlClient = P14RemoteControlClient(okHttpClient)
+    private val p14RuntimeAccess = P14RuntimeAccess(context, settingsStore, okHttpClient)
 
     private val sessionManager = ConversationSessionManager(
         scope = appScope,
@@ -383,12 +400,17 @@ class ChatService(
         dispatchNextQueuedMessage(conversationId)
     }
 
-    fun sendMessage(conversationId: Uuid, content: List<UIMessagePart>, answer: Boolean = true) {
+    fun sendMessage(
+        conversationId: Uuid,
+        content: List<UIMessagePart>,
+        answer: Boolean = true,
+        replyToMessageId: Uuid? = null,
+    ) {
         if (content.isEmptyInputMessage()) return
         val session = sessionManager.getOrCreate(conversationId)
         synchronized(session) {
             if (session.messageQueue.state.value.messages.isEmpty()) session.messageQueue.resume()
-            session.messageQueue.enqueue(content, answer)
+            session.messageQueue.enqueue(content, answer, replyToMessageId = replyToMessageId)
             dispatchNextQueuedMessage(conversationId)
         }
     }
@@ -440,7 +462,21 @@ class ChatService(
                 val settings = settingsStore.awaitLoaded()
                 val assistant = settings.getAssistantById(currentConversation.assistantId)
                     ?: settings.getCurrentAssistant()
-                val processedContent = preprocessUserInputParts(content, assistant)
+                var processedContent = preprocessUserInputParts(content, assistant)
+                queued.replyToMessageId?.let { targetMessageId ->
+                    val remote = resolveP14RemoteMutationContext(
+                        conversationId, currentConversation, settings
+                    ) ?: error("Reply is currently supported only by P14 Remote")
+                    val target = p14RemoteControlClient.getMessageState(
+                        remote.provider, remote.conversationId, targetMessageId
+                    )
+                    check(!target.deleted) { "Cannot reply to a deleted P14 message" }
+                    processedContent = processedContent.withP14ReplyContext(
+                        targetMessageId = targetMessageId,
+                        sourceRevision = target.revision,
+                        sourceText = target.bodyText,
+                    )
+                }
 
                 // 添加消息到列表
                 val newConversation = currentConversation.copy(
@@ -644,15 +680,25 @@ class ChatService(
         val initialConversation = getConversationFlow(conversationId).value
         // 模型、思考级别、搜索、工具等以会话上固定的配置为准
         val assistant = settings.getAssistantOf(initialConversation)
+        val remoteRuntime = assistant.runtimeMode == AssistantRuntimeMode.REMOTE
+        val generationAssistant = assistant.forGenerationRuntime()
         val model = settings.getChatModelOf(initialConversation)
             ?: throw IllegalStateException("No chat model selected")
+        val generationSettings = if (remoteRuntime && model.modelId == "p14-hermes") {
+            val configured = model.findProvider(settings.providers) as? ProviderSetting.OpenAI
+                ?: error("P14 Remote requires an OpenAI-compatible provider")
+            val runtimeProvider = p14RuntimeAccess.prepare(configured)
+            settings.copy(providers = settings.providers.map { provider ->
+                if (provider.id == configured.id) runtimeProvider else provider
+            })
+        } else settings
 
         val senderName = if (assistant.useAssistantAvatar) {
             assistant.name.ifEmpty { context.getString(R.string.assistant_page_default_assistant) }
         } else {
             model.displayName
         }
-        val useExternalWebSearch = shouldUseExternalWebSearch(assistant, model)
+        val useExternalWebSearch = shouldUseExternalWebSearch(generationAssistant, model)
 
         runCatching {
 
@@ -661,7 +707,7 @@ class ChatService(
 
             // memory tool
             if (!model.abilities.contains(ModelAbility.TOOL)) {
-                if (useExternalWebSearch || mcpManager.getAllAvailableTools(assistant).isNotEmpty()) {
+                if (useExternalWebSearch || mcpManager.getAllAvailableTools(generationAssistant).isNotEmpty()) {
                     addError(
                         IllegalStateException(context.getString(R.string.tools_warning)),
                         conversationId,
@@ -676,10 +722,10 @@ class ChatService(
 
             val tools = try {
                 chatToolFactory.createTools(
-                    settings = settings,
-                    assistant = assistant,
+                    settings = generationSettings,
+                    assistant = generationAssistant,
                     model = model,
-                    workspaceCwd = conversation.workspaceCwd,
+                    workspaceCwd = if (remoteRuntime) null else conversation.workspaceCwd,
                 )
             } catch (error: InvalidMcpServerNamesException) {
                 sessionManager.get(conversationId)?.messageQueue?.pause()
@@ -698,7 +744,7 @@ class ChatService(
             // start generating
             val session = sessionManager.getOrCreate(conversationId)
             generationLoop.generateText(
-                settings = settings,
+                settings = generationSettings,
                 model = model,
                 processingStatus = session.processingStatus,
                 messages = conversation.currentMessages.let {
@@ -708,17 +754,17 @@ class ChatService(
                         it
                     }
                 },
-                assistant = assistant,
+                assistant = generationAssistant,
                 conversationId = conversationId,
-                conversationSystemPrompt = conversation.customSystemPrompt,
-                workspaceCwd = conversation.workspaceCwd,
-                memories = memoryRepository.getFiles(assistant.memoryId),
-                inputTransformers = buildList {
+                conversationSystemPrompt = if (remoteRuntime) null else conversation.customSystemPrompt,
+                workspaceCwd = if (remoteRuntime) null else conversation.workspaceCwd,
+                memories = if (remoteRuntime) emptyList() else memoryRepository.getFiles(assistant.memoryId),
+                inputTransformers = if (remoteRuntime) listOf(p14RemoteAttachmentTransformer) else buildList {
                     addAll(inputTransformers)
                     add(templateTransformer)
                     add(workspaceReminderTransformer)
                 },
-                outputTransformers = outputTransformers,
+                outputTransformers = if (remoteRuntime) emptyList() else outputTransformers,
                 tools = tools,
             ).onCompletion {
                 // 可能被取消了，或者意外结束，兜底更新
@@ -765,13 +811,15 @@ class ChatService(
         }.onSuccess {
             val finalConversation = getConversationFlow(conversationId).value
 
-            sessionManager.launchWithSession(conversationId) {
-                generateTitle(conversationId, finalConversation)
+            if (!remoteRuntime) {
+                sessionManager.launchWithSession(conversationId) {
+                    generateTitle(conversationId, finalConversation)
+                }
+                sessionManager.launchWithSession(conversationId) {
+                    generateSuggestion(conversationId, finalConversation)
+                }
+                if (assistant.enableMemory) memoryConsolidationScheduler.onTurnFinished(finalConversation)
             }
-            sessionManager.launchWithSession(conversationId) {
-                generateSuggestion(conversationId, finalConversation)
-            }
-            if (assistant.enableMemory) memoryConsolidationScheduler.onTurnFinished(finalConversation)
         }
     }
 
@@ -1170,6 +1218,32 @@ class ChatService(
     }
 
     suspend fun toggleConversationPinned(conversationId: Uuid) {
+        val conversation = getConversationFlow(conversationId).value
+        val settings = settingsStore.awaitLoaded()
+        val remote = resolveP14RemoteMutationContext(conversationId, conversation, settings)
+        if (remote != null) {
+            val initial = p14RemoteControlClient.getConversationState(remote.provider, remote.conversationId)
+            val desiredPinned = !initial.pinned
+            val authoritative = try {
+                p14RemoteControlClient.setConversationState(
+                    provider = remote.provider,
+                    conversationId = remote.conversationId,
+                    baseRevision = initial.revision,
+                    pinned = desiredPinned,
+                )
+            } catch (failure: Exception) {
+                val recovered = runCatching {
+                    p14RemoteControlClient.getConversationState(remote.provider, remote.conversationId)
+                }.getOrNull()
+                if (recovered?.pinned == desiredPinned) recovered else throw failure
+            }
+            updateConversationMetadata(
+                conversationId = conversationId,
+                update = { it.copy(isPinned = authoritative.pinned) },
+                persist = { conversationRepo.updatePinStatus(conversationId, authoritative.pinned) },
+            )
+            return
+        }
         updateConversationMetadata(
             conversationId = conversationId,
             update = { it.copy(isPinned = !it.isPinned) },
@@ -1335,42 +1409,71 @@ class ChatService(
         if (parts.isEmptyInputMessage()) return
 
         val currentConversation = getConversationFlow(conversationId).value
+        val original = currentConversation.messageNodes
+            .flatMap { it.messages }
+            .firstOrNull { it.id == messageId }
+            ?: return
         val settings = settingsStore.awaitLoaded()
         val assistant = settings.getAssistantById(currentConversation.assistantId)
             ?: settings.getCurrentAssistant()
         val processedParts = preprocessUserInputParts(parts, assistant)
-        var edited = false
+        val remote = resolveP14RemoteMutationContext(conversationId, currentConversation, settings)
 
-        val updatedNodes = currentConversation.messageNodes.map { node ->
-            if (!node.messages.any { it.id == messageId }) {
-                return@map node
+        if (remote != null) {
+            check(original.role == MessageRole.USER) { "P14 Remote can edit only your own messages" }
+            check(!original.isContextCheckpoint) { "P14 Remote cannot edit a local context checkpoint" }
+            check(
+                original.parts.filterNot { it is UIMessagePart.Text } ==
+                    processedParts.filterNot { it is UIMessagePart.Text }
+            ) { "P14 Remote message edit currently supports text changes only" }
+            val text = processedParts.filterIsInstance<UIMessagePart.Text>()
+                .joinToString("\n") { it.text }.trim()
+            check(text.isNotBlank()) { "P14 Remote message edit requires text" }
+
+            val state = p14RemoteControlClient.getMessageState(
+                remote.provider, remote.conversationId, messageId
+            )
+            check(!state.deleted) { "P14 Remote message is already deleted" }
+            if (state.bodyText != text) {
+                p14RemoteControlClient.editMessage(
+                    remote.provider, remote.conversationId, messageId, state.revision, text
+                )
             }
-            edited = true
 
-            val original = node.messages.first { it.id == messageId }
-            if (original.isContextCheckpoint) {
-                // 摘要原地改写：新建分支会丢掉检查点标记，删除摘要时还会露出旧版本。
+            val updated = currentConversation.copy(
+                messageNodes = currentConversation.messageNodes.map { node ->
+                    node.copy(messages = node.messages.map { message ->
+                        if (message.id == messageId) message.copy(parts = processedParts) else message
+                    })
+                }
+            )
+            saveConversation(conversationId, updated)
+            return
+        }
+
+        var edited = false
+        val updatedNodes = currentConversation.messageNodes.map { node ->
+            if (!node.messages.any { it.id == messageId }) return@map node
+            edited = true
+            val localOriginal = node.messages.first { it.id == messageId }
+            if (localOriginal.isContextCheckpoint) {
                 return@map node.copy(
                     messages = node.messages.map { message ->
                         if (message.id == messageId) message.copy(parts = processedParts) else message
                     }
                 )
             }
-
             node.copy(
                 messages = node.messages + UIMessage(
                     role = node.role,
                     parts = processedParts,
-                    // 编辑的是原消息的内容，来源仍是生成它的模型
-                    modelId = original.modelId,
-                    modelSnapshot = original.modelSnapshot,
+                    modelId = localOriginal.modelId,
+                    modelSnapshot = localOriginal.modelSnapshot,
                 ),
                 selectIndex = node.messages.size
             )
         }
-
         if (!edited) return
-
         saveConversation(conversationId, currentConversation.copy(messageNodes = updatedNodes))
     }
 
@@ -1446,15 +1549,30 @@ class ChatService(
         failIfMissing: Boolean = true,
     ) {
         val currentConversation = getConversationFlow(conversationId).value
-        val updatedConversation = buildConversationAfterMessageDelete(currentConversation, messageId)
-
-        if (updatedConversation == null) {
-            if (failIfMissing) {
-                throw NotFoundException("Message not found")
-            }
+        val target = currentConversation.messageNodes
+            .flatMap { it.messages }
+            .firstOrNull { it.id == messageId }
+        if (target == null) {
+            if (failIfMissing) throw NotFoundException("Message not found")
             return
         }
 
+        val settings = settingsStore.awaitLoaded()
+        val remote = resolveP14RemoteMutationContext(conversationId, currentConversation, settings)
+        if (remote != null) {
+            check(target.role == MessageRole.USER) { "P14 Remote can delete only your own messages" }
+            val state = p14RemoteControlClient.getMessageState(
+                remote.provider, remote.conversationId, messageId
+            )
+            if (!state.deleted) {
+                p14RemoteControlClient.deleteMessage(
+                    remote.provider, remote.conversationId, messageId, state.revision
+                )
+            }
+        }
+
+        val updatedConversation = buildConversationAfterMessageDelete(currentConversation, messageId)
+            ?: return
         saveConversation(conversationId, updatedConversation)
     }
 
@@ -1494,6 +1612,79 @@ class ChatService(
         }
 
         return conversation.copy(messageNodes = updatedNodes)
+    }
+
+    private fun List<UIMessagePart>.withP14ReplyContext(
+        targetMessageId: Uuid,
+        sourceRevision: Int,
+        sourceText: String,
+    ): List<UIMessagePart> {
+        val index = indexOfFirst {
+            it is UIMessagePart.Text || it is UIMessagePart.Image || it is UIMessagePart.Video ||
+                it is UIMessagePart.Audio || it is UIMessagePart.Document
+        }
+        check(index >= 0) { "P14 reply requires a user-visible message part" }
+        val quoteText = sourceText.take(P14_REPLY_QUOTE_LIMIT)
+        val part = this[index]
+        val merged = buildJsonObject {
+            part.metadata?.forEach { (key, value) -> put(key, value) }
+            put(P14_REPLY_METADATA_KEY, buildJsonObject {
+                put("message_id", targetMessageId.toString())
+                put("quote", buildJsonObject {
+                    put("text", quoteText)
+                    put("source_revision", sourceRevision)
+                    put("start_char", 0)
+                    put("end_char", quoteText.length)
+                })
+            })
+        }
+        val updated = when (part) {
+            is UIMessagePart.Text -> part.copy(metadata = merged)
+            is UIMessagePart.Image -> part.copy(metadata = merged)
+            is UIMessagePart.Video -> part.copy(metadata = merged)
+            is UIMessagePart.Audio -> part.copy(metadata = merged)
+            is UIMessagePart.Document -> part.copy(metadata = merged)
+            else -> error("Unsupported P14 reply carrier")
+        }
+        return toMutableList().also { it[index] = updated }
+    }
+
+    private data class P14RemoteMutationContext(
+        val provider: ProviderSetting.OpenAI,
+        val conversationId: String,
+    )
+
+    private suspend fun resolveP14RemoteMutationContext(
+        conversationId: Uuid,
+        conversation: Conversation,
+        settings: Settings,
+    ): P14RemoteMutationContext? {
+        val assistant = settings.getAssistantOf(conversation)
+        if (assistant.runtimeMode != AssistantRuntimeMode.REMOTE) return null
+        val model = settings.getChatModelOf(conversation) ?: return null
+        if (model.modelId != "p14-hermes") return null
+        val configured = model.findProvider(settings.providers) as? ProviderSetting.OpenAI
+            ?: error("P14 Remote requires an OpenAI-compatible provider")
+        val provider = p14RuntimeAccess.prepare(configured)
+        val binding = p14RemoteControlClient.resolveSession(provider, conversationId.toString())
+        return P14RemoteMutationContext(provider, binding.conversationId)
+    }
+
+    internal suspend fun getP14RemoteActivityStatusLines(conversationId: Uuid): List<String> {
+        val conversation = getConversationFlow(conversationId).value
+        val settings = settingsStore.awaitLoaded()
+        val remote = resolveP14RemoteMutationContext(conversationId, conversation, settings)
+            ?: return emptyList()
+        val activities = p14RemoteControlClient.listActivities(remote.provider, remote.conversationId)
+        val active = activities.filterNot { it.state in setOf("completed", "failed", "cancelled") }
+        val visible = if (active.isNotEmpty()) active.take(3) else activities.take(1)
+        return visible.map { activity ->
+            buildList {
+                add(activity.state.replaceFirstChar { ch -> ch.uppercase() })
+                activity.phase?.takeIf(String::isNotBlank)?.let(::add)
+                activity.progressPercent?.let { add("$it%") }
+            }.joinToString(" · ")
+        }
     }
 
     private fun UIMessagePart.copyWithForkedFileUrl(): UIMessagePart {

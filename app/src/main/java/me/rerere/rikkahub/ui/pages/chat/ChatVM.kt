@@ -13,9 +13,13 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.google.firebase.analytics.FirebaseAnalytics
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.flatMapLatest
@@ -83,6 +87,9 @@ class ChatVM(
         chatService
             .getProcessingStatusFlow(_conversationId)
 
+    private val _remoteActivityStatusLines = MutableStateFlow<List<String>>(emptyList())
+    val remoteActivityStatusLines: StateFlow<List<String>> = _remoteActivityStatusLines.asStateFlow()
+
     val conversationJobs = chatService
         .getConversationJobs()
         .stateIn(viewModelScope, SharingStarted.Eagerly, emptyMap())
@@ -91,9 +98,15 @@ class ChatVM(
         // 添加对话引用
         chatService.addConversationReference(_conversationId)
 
-        // 初始化对话
+        // 初始化对话；Remote Activity 只在当前 ChatVM 生命周期内做轻量刷新。
         viewModelScope.launch {
             chatService.initializeConversation(_conversationId)
+            while (isActive) {
+                _remoteActivityStatusLines.value = runCatching {
+                    chatService.getP14RemoteActivityStatusLines(_conversationId)
+                }.getOrDefault(emptyList())
+                delay(5_000)
+            }
         }
 
         // 记住对话ID, 方便下次启动恢复
@@ -220,11 +233,15 @@ class ChatVM(
      * @param content 消息内容
      * @param answer 是否触发消息生成，如果为false，则仅添加消息到消息列表中
      */
-    fun handleMessageSend(content: List<UIMessagePart>,answer: Boolean = true) {
+    fun handleMessageSend(
+        content: List<UIMessagePart>,
+        answer: Boolean = true,
+        replyToMessageId: Uuid? = null,
+    ) {
         if (content.isEmptyInputMessage()) return
         analytics.logEvent("ai_send_message", null)
 
-        chatService.sendMessage(_conversationId, content, answer)
+        chatService.sendMessage(_conversationId, content, answer, replyToMessageId)
     }
 
     fun handleMessageEdit(parts: List<UIMessagePart>, messageId: Uuid) {
@@ -232,7 +249,14 @@ class ChatVM(
         analytics.logEvent("ai_edit_message", null)
 
         viewModelScope.launch {
-            chatService.editMessage(_conversationId, messageId, parts)
+            runCatching { chatService.editMessage(_conversationId, messageId, parts) }
+                .onFailure {
+                    chatService.addError(
+                        it,
+                        conversationId = _conversationId,
+                        title = context.getString(R.string.error_title_operation),
+                    )
+                }
         }
     }
 
@@ -256,7 +280,14 @@ class ChatVM(
 
     fun deleteMessage(message: UIMessage) {
         viewModelScope.launch {
-            chatService.deleteMessage(_conversationId, message)
+            runCatching { chatService.deleteMessage(_conversationId, message) }
+                .onFailure {
+                    chatService.addError(
+                        it,
+                        conversationId = _conversationId,
+                        title = context.getString(R.string.error_title_operation),
+                    )
+                }
         }
     }
 

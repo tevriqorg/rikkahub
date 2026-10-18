@@ -41,6 +41,7 @@ import me.rerere.ai.provider.ModelType
 import me.rerere.rikkahub.R
 import me.rerere.rikkahub.data.db.entity.WorkspaceEntity
 import me.rerere.rikkahub.data.model.Assistant
+import me.rerere.rikkahub.data.model.AssistantRuntimeMode
 import me.rerere.rikkahub.ui.components.ai.ModelField
 import me.rerere.rikkahub.ui.components.ai.ModelListSheet
 import me.rerere.rikkahub.ui.components.ai.ReasoningButton
@@ -181,6 +182,18 @@ internal fun AssistantBasicContent(
                     },
                 )
             }
+            switchItem(
+                checked = assistant.runtimeMode == AssistantRuntimeMode.REMOTE,
+                onCheckedChange = { enabled ->
+                    onUpdate(
+                        assistant.copy(
+                            runtimeMode = if (enabled) AssistantRuntimeMode.REMOTE else AssistantRuntimeMode.NATIVE
+                        )
+                    )
+                },
+                supportingContent = { Text(stringResource(R.string.assistant_page_remote_runtime_desc)) },
+                headlineContent = { Text(stringResource(R.string.assistant_page_remote_runtime)) },
+            )
             formItem(
                 headlineContent = { Text(stringResource(R.string.assistant_page_workspace)) },
                 supportingContent = { Text(stringResource(R.string.assistant_page_workspace_desc)) },

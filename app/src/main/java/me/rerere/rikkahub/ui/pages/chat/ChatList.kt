@@ -124,6 +124,7 @@ fun ChatList(
     state: LazyListState,
     loading: Boolean,
     processingStatus: String? = null,
+    remoteActivityStatusLines: List<String> = emptyList(),
     previewMode: Boolean,
     settings: Settings,
     hazeState: HazeState,
@@ -131,6 +132,7 @@ fun ChatList(
     onDismissError: (Uuid) -> Unit = {},
     onClearAllErrors: () -> Unit = {},
     onRegenerate: (UIMessage) -> Unit = {},
+    onReply: (UIMessage) -> Unit = {},
     onEdit: (UIMessage) -> Unit = {},
     onForkMessage: (UIMessage) -> Unit = {},
     onDelete: (UIMessage) -> Unit = {},
@@ -167,12 +169,14 @@ fun ChatList(
                 state = state,
                 loading = loading,
                 processingStatus = processingStatus,
+                remoteActivityStatusLines = remoteActivityStatusLines,
                 settings = settings,
                 hazeState = hazeState,
                 errors = errors,
                 onDismissError = onDismissError,
                 onClearAllErrors = onClearAllErrors,
                 onRegenerate = onRegenerate,
+                onReply = onReply,
                 onEdit = onEdit,
                 onForkMessage = onForkMessage,
                 onDelete = onDelete,
@@ -216,12 +220,14 @@ private fun ChatListNormal(
     state: LazyListState,
     loading: Boolean,
     processingStatus: String? = null,
+    remoteActivityStatusLines: List<String> = emptyList(),
     settings: Settings,
     hazeState: HazeState,
     errors: List<ChatError>,
     onDismissError: (Uuid) -> Unit,
     onClearAllErrors: () -> Unit,
     onRegenerate: (UIMessage) -> Unit,
+    onReply: (UIMessage) -> Unit,
     onEdit: (UIMessage) -> Unit,
     onForkMessage: (UIMessage) -> Unit,
     onDelete: (UIMessage) -> Unit,
@@ -377,6 +383,9 @@ private fun ChatListNormal(
                             onRegenerate = {
                                 onRegenerate(node.currentMessage)
                             },
+                            onReply = {
+                                onReply(node.currentMessage)
+                            },
                             onEdit = {
                                 onEdit(node.currentMessage)
                             },
@@ -437,6 +446,28 @@ private fun ChatListNormal(
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
                         }
+                    }
+                }
+            }
+
+            if (remoteActivityStatusLines.isNotEmpty()) {
+                itemsIndexed(
+                    remoteActivityStatusLines,
+                    key = { index, _ -> "RemoteActivity-$index" },
+                ) { _, line ->
+                    Surface(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 8.dp, vertical = 2.dp),
+                        shape = RoundedCornerShape(12.dp),
+                        color = MaterialTheme.colorScheme.surfaceContainerLow,
+                    ) {
+                        Text(
+                            text = "${stringResource(R.string.p14_remote_activity)} · $line",
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
                     }
                 }
             }

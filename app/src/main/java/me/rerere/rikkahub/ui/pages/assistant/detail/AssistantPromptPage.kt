@@ -345,6 +345,7 @@ private fun AssistantPromptContent(
                                     node = message.toMessageNode(),
                                     onFork = {},
                                     onRegenerate = {},
+                                    onReply = {},
                                     onEdit = {},
                                     onShare = {},
                                     onDelete = {},
