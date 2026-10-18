@@ -268,6 +268,7 @@ internal class P14ProductRepository(
                 "observation.created" -> applyObservation(event)
                 "conversation.quick_action.created" -> applyActionCreated(event)
                 "conversation.action.result" -> applyActionResult(event)
+                "conversation.action.decision" -> applyActionDecision(event)
                 "entry.view.updated" -> applyViewUpdated(event)
                 else -> Unit // forward-compatible: unknown durable events still advance the cursor
             }
@@ -386,6 +387,13 @@ internal class P14ProductRepository(
         dao.upsertAction(P14ActionEntity(id,p.requiredString("conversation_id"),p.stringOrEmpty("action_type"),
             existing?.status ?: "accepted",existing?.resultText,existing?.destinationRef,
             existing?.createdAtEpochMs ?: p.epochMs("created_at",event.occurred_at)))
+    }
+
+    private suspend fun applyActionDecision(event:P14SyncEventDto) {
+        val p=event.payload
+        val id=p.requiredString("action_id")
+        val old=dao.action(id) ?: return
+        dao.upsertAction(old.copy(status=p.stringOrEmpty("status")))
     }
 
     private suspend fun applyActionResult(event:P14SyncEventDto) {

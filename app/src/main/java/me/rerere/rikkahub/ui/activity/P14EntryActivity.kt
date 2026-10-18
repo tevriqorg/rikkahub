@@ -208,6 +208,8 @@ private fun P14EntryScreen(
         onDispose { runCatching { activeRecorder?.stop() };runCatching { activeRecorder?.release() };recordingFile?.takeIf{activeRecorder!=null}?.delete() }
     }
     var selectedView by remember { mutableStateOf("chat") }
+    var supplementActionId by remember { mutableStateOf<String?>(null) }
+    var supplementInput by remember { mutableStateOf("") }
     val chooseFiles = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
         uris.forEach { importMaterial(it) }
     }
@@ -488,6 +490,30 @@ private fun P14EntryScreen(
                         Text("Actions / Results",style=MaterialTheme.typography.titleMedium)
                         actions.forEach { action ->
                             Text("${action.actionType} · ${action.status}",style=MaterialTheme.typography.titleSmall)
+                            if(action.status in setOf("accepted","needs_reassessment")) {
+                                Row(horizontalArrangement=Arrangement.spacedBy(4.dp)) {
+                                    listOf("confirm" to "Confirm","supplement" to "Supplement","skip" to "Skip","cancel" to "Cancel")
+                                        .forEach { (decision,label) ->
+                                            TextButton(onClick={
+                                                if(decision=="supplement") supplementActionId=action.actionId
+                                                else scope.launch { status=runCatching {
+                                                    remote.queueActionDecision(action.actionId,decision)
+                                                    "Decision queued · ${action.actionId}"
+                                                }.getOrElse{it.message?:"Decision failed"} }
+                                            },contentPadding=PaddingValues(horizontal=2.dp)) { Text(label) }
+                                        }
+                                }
+                                if(supplementActionId==action.actionId) {
+                                    OutlinedTextField(value=supplementInput,onValueChange={supplementInput=it},label={Text("Additional context")})
+                                    Button(enabled=supplementInput.isNotBlank(),onClick={scope.launch {
+                                        status=runCatching {
+                                            remote.queueActionDecision(action.actionId,"supplement",supplementInput)
+                                            supplementActionId=null;supplementInput=""
+                                            "Context queued"
+                                        }.getOrElse{it.message?:"Save failed"}
+                                    }}) { Text("Submit supplement") }
+                                }
+                            }
                             action.resultText?.let{Text(it)}
                             action.destinationRef?.let{Text("Destination: $it",style=MaterialTheme.typography.labelSmall)}
                         }

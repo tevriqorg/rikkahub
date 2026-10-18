@@ -85,6 +85,21 @@ internal class P14RemoteRepository(
         operationId
     }
 
+    /** Offline-first Action Card decision; user approval does not itself execute tools. */
+    suspend fun queueActionDecision(actionId:String,decision:String,supplementText:String?=null):String {
+        require(decision in setOf("confirm","supplement","skip","cancel"))
+        require((decision=="supplement") == !supplementText.isNullOrBlank())
+        val operationId=Uuid.random().toString()
+        val payload=buildJsonObject {
+            put("client_operation_id",operationId)
+            put("decision",decision)
+            if(decision=="supplement") put("supplement_text",supplementText!!.trim())
+        }.toString()
+        dao.enqueueOperation(P14OperationEntity(operationId,"","ACTION_DECISION",payload,actionId=actionId))
+        P14RemoteWork.enqueue(context)
+        return operationId
+    }
+
     suspend fun queueState(notificationId:String,state:String) {
         dao.enqueueOperation(P14OperationEntity(Uuid.random().toString(),notificationId,"STATE",state))
         P14RemoteWork.enqueue(context)
@@ -122,6 +137,10 @@ internal class P14RemoteRepository(
                         val cmd=InteractionCommand(op.operationId,op.payload)
                         post(c,"notifications/${op.notificationId}/interaction-response",json.encodeToString(cmd))
                         fetchInteraction(c,op.notificationId)
+                    }
+                    "ACTION_DECISION" -> {
+                        val actionId=requireNotNull(op.actionId) { "Decision missing Action ID" }
+                        post(c,"actions/$actionId/decision",op.payload)
                     }
                     "QUICK_ACTION" -> {
                         val conversationId=requireNotNull(op.conversationId) { "Quick Action missing durable conversation" }
