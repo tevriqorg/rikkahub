@@ -2,6 +2,11 @@ name: P14 Debug APK
 
 on:
   workflow_dispatch:
+    inputs:
+      server_sha:
+        description: 'Optional exact P14 Server recovery SHA; empty builds Android'
+        type: string
+        default: ''
   push:
     branches:
       - p14/remote
@@ -11,6 +16,7 @@ permissions:
 
 jobs:
   build-debug:
+    if: ${{ inputs.server_sha == '' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -77,3 +83,76 @@ jobs:
           name: rikkahub-p14-ci-${{ github.sha }}
           path: app/build/outputs/apk/debug/*.apk
           if-no-files-found: error
+
+  build-p14-server:
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.server_sha != '' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: p14
+          POSTGRES_PASSWORD: ci-only-password
+          POSTGRES_DB: p14_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U p14 -d p14_test"
+          --health-interval 5s --health-timeout 5s --health-retries 12
+    env:
+      SOURCE_SHA: ${{ inputs.server_sha }}
+      P14_TEST_DATABASE_URL: postgresql+psycopg://p14:ci-only-password@127.0.0.1:5432/p14_test
+    steps:
+      - name: Validate immutable source identity
+        run: |
+          [[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]
+      - uses: actions/checkout@v4
+        with:
+          repository: tevriqorg/P14-Entry
+          ref: ${{ inputs.server_sha }}
+          token: ${{ secrets.P14_SOURCE_READ_TOKEN }}
+          persist-credentials: false
+          sparse-checkout: |
+            server
+            scripts/check_p14r3_recovery.py
+            requirements/P14R3_RECOVERY_MATRIX.json
+            PROJECT.md
+            HANDOFF.md
+            AGENTS.md
+          sparse-checkout-cone-mode: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Confirm checked-out source
+        run: test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+      - name: Install and test Server against PostgreSQL 17
+        run: |
+          python -m pip install -e './server[test]'
+          pytest server/tests --junitxml=/tmp/p14-tests.xml
+      - name: Build and export immutable Server image
+        run: |
+          mkdir -p /tmp/p14-delivery
+          docker build --label org.opencontainers.image.revision="$SOURCE_SHA" --label org.opencontainers.image.source=https://github.com/tevriqorg/P14-Entry -t "p14-server:$SOURCE_SHA" server
+          docker save "p14-server:$SOURCE_SHA" | gzip -1 > /tmp/p14-delivery/p14-server-image.tar.gz
+          docker image inspect "p14-server:$SOURCE_SHA" --format '{{json .Id}}' > /tmp/p14-delivery/image-id.json
+          cp /tmp/p14-tests.xml /tmp/p14-delivery/
+          python - <<'PY'
+          import json,os,subprocess
+          from pathlib import Path
+          target=Path('/tmp/p14-delivery')
+          data={'source_repository':'tevriqorg/P14-Entry','source_sha':os.environ['SOURCE_SHA'],'build_repository':os.environ['GITHUB_REPOSITORY'],'build_sha':os.environ['GITHUB_SHA'],'run_id':os.environ['GITHUB_RUN_ID'],'run_attempt':os.environ['GITHUB_RUN_ATTEMPT'],'image_id':json.loads((target/'image-id.json').read_text())}
+          (target/'provenance.json').write_text(json.dumps(data,indent=2)+'\n')
+          PY
+          cd /tmp/p14-delivery
+          sha256sum p14-server-image.tar.gz provenance.json p14-tests.xml image-id.json > SHA256SUMS
+      - name: Upload verified Server delivery
+        uses: actions/upload-artifact@v4
+        with:
+          name: p14-server-${{ inputs.server_sha }}
+          path: /tmp/p14-delivery/*
+          retention-days: 7
+          if-no-files-found: error
+      - name: Remove private checkout
+        if: always()
+        run: rm -rf "$GITHUB_WORKSPACE/server" "$GITHUB_WORKSPACE/.git"
