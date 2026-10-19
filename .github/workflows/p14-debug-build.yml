@@ -115,6 +115,7 @@ jobs:
           persist-credentials: false
           sparse-checkout: |
             server
+            hermes-plugin/p14
             scripts/check_p14r3_recovery.py
             requirements/P14R3_RECOVERY_MATRIX.json
             PROJECT.md
@@ -155,4 +156,4 @@ jobs:
           if-no-files-found: error
       - name: Remove private checkout
         if: always()
-        run: rm -rf "$GITHUB_WORKSPACE/server" "$GITHUB_WORKSPACE/.git"
+        run: rm -rf "$GITHUB_WORKSPACE/server" "$GITHUB_WORKSPACE/hermes-plugin" "$GITHUB_WORKSPACE/.git"
