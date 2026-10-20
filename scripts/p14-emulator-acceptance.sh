@@ -2,10 +2,23 @@
 set -euo pipefail
 mkdir -p evidence
 export PATH="$ANDROID_HOME/platform-tools:$ANDROID_HOME/emulator:$PATH"
+mkdir -p "$ANDROID_AVD_HOME" "$ANDROID_USER_HOME"
+adb start-server
+ldd "$ANDROID_HOME/emulator/qemu/linux-x86_64/qemu-system-x86_64" > evidence/emulator-runtime-libraries.txt
+if grep -q 'not found' evidence/emulator-runtime-libraries.txt; then cat evidence/emulator-runtime-libraries.txt; exit 1; fi
+for name in A B; do
+  echo no | avdmanager create avd -n "p14$name" -k 'system-images;android-35;google_apis;x86_64' --path "$ANDROID_AVD_HOME/p14$name.avd" --force
+done
+avdmanager list avd > evidence/avd-manager-list.txt
+emulator -list-avds > evidence/registered-avds.txt
+grep -qx p14A evidence/registered-avds.txt
+grep -qx p14B evidence/registered-avds.txt
 for item in A:5554 B:5556; do
   name="${item%:*}"; port="${item#*:}"
-  echo no | avdmanager create avd -n "p14$name" -k 'system-images;android-35;google_apis;x86_64' --force
   emulator -avd "p14$name" -port "$port" -no-window -no-audio -no-boot-anim -no-snapshot -gpu swiftshader_indirect -memory 1536 -cores 2 > "evidence/emulator-$name-boot.log" 2>&1 &
+  process=$!
+  sleep 1
+  if ! kill -0 "$process" 2>/dev/null; then tail -80 "evidence/emulator-$name-boot.log"; exit 1; fi
 done
 for serial in emulator-5554 emulator-5556; do
   timeout 300 adb -s "$serial" wait-for-device

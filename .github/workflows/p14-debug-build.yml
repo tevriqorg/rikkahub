@@ -307,6 +307,8 @@ jobs:
         with:
           packages: platform-tools
           log-accepted-android-sdk-licenses: false
+      - name: Install emulator runtime dependency
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libpulse0
       - name: Enable KVM
         run: |
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
@@ -328,6 +330,10 @@ jobs:
           P14_TASK4_SYNTHETIC=1 P14_TEST_DATABASE_URL=postgresql+psycopg://p14:synthetic-ci-only@127.0.0.1:5432/p14_task4 python3 synthetic-server/server/acceptance/task4_fixture.py serve > evidence/server.log 2>&1 &
           echo $! > "$RUNNER_TEMP/p14-server.pid"
       - name: Run two-emulator acceptance
+        env:
+          ANDROID_USER_HOME: ${{ runner.temp }}/p14-android-user
+          ANDROID_EMULATOR_HOME: ${{ runner.temp }}/p14-android-user
+          ANDROID_AVD_HOME: ${{ runner.temp }}/p14-android-user/avd
         run: bash scripts/p14-emulator-acceptance.sh
       - name: Synthetic PostgreSQL concurrency, binary recovery and scale acceptance
         if: always() && steps.backend.outcome == 'success'
