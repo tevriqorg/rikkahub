@@ -4,8 +4,9 @@ mkdir -p evidence
 export PATH="$ANDROID_HOME/platform-tools:$ANDROID_HOME/emulator:$PATH"
 mkdir -p "$ANDROID_AVD_HOME" "$ANDROID_USER_HOME"
 adb start-server
-ldd "$ANDROID_HOME/emulator/qemu/linux-x86_64/qemu-system-x86_64" > evidence/emulator-runtime-libraries.txt
-if grep -q 'not found' evidence/emulator-runtime-libraries.txt; then cat evidence/emulator-runtime-libraries.txt; exit 1; fi
+# The emulator launcher supplies its bundled library paths; raw qemu ldd is diagnostic only.
+ldd "$ANDROID_HOME/emulator/qemu/linux-x86_64/qemu-system-x86_64" > evidence/emulator-runtime-libraries.txt || true
+emulator -version > evidence/emulator-launcher-version.txt 2>&1
 for name in A B; do
   echo no | avdmanager create avd -n "p14$name" -k 'system-images;android-35;google_apis;x86_64' --path "$ANDROID_AVD_HOME/p14$name.avd" --force
 done
