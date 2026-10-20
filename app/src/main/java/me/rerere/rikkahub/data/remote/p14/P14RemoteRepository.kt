@@ -190,10 +190,11 @@ internal class P14RemoteRepository(
                 }
                 dao.setOperationState(op.operationId,"ACKED")
             } catch(e:P14RemoteHttpException) {
-                if(e.status==409 && op.type in setOf("ACTION_DECISION","LINK_OBSERVATION")) {
-                    // A competing device may already have made a different decision.
+                if(e.status==409 && op.type in setOf("ACTION_DECISION","LINK_OBSERVATION","INTERACTION")) {
+                    // A competing device or an expired Interaction can reject this operation.
                     // Never misreport that conflicting decision as ACKED.
                     dao.setOperationState(op.operationId,"CONFLICT")
+                    if(op.type=="INTERACTION") runCatching { refresh(c) }
                 } else if(e.status==409 && op.type != "QUICK_ACTION") {
                     runCatching{refresh(c)}; dao.setOperationState(op.operationId,"ACKED")
                 } else dao.setOperationState(op.operationId,"RETRY")

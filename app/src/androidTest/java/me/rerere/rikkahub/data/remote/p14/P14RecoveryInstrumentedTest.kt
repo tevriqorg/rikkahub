@@ -32,6 +32,7 @@ import me.rerere.rikkahub.data.repository.ConversationRepository
 import me.rerere.rikkahub.ui.activity.P14EntryActivity
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.Response
 import okhttp3.Protocol
 import okhttp3.MediaType.Companion.toMediaType
@@ -719,4 +720,94 @@ class P14RecoveryInstrumentedTest {
         }
         evidence("deviceAVerify PASS: A→B→A converged same conversation, deduped replay, durable cursor=$cursor")
     }
+    /** Revoke this real emulator credential; retain its encrypted local copy to test rejection. */
+    @Test fun selfRevoke():Unit = runBlocking {
+        val store=P14RuntimeCredentialStore(context)
+        val runtime=requireNotNull(store.activeConnection())
+        require(args.getString("p14BaseUrl")=="http://10.0.2.2:8014/v1" && runtime.baseUrl=="http://10.0.2.2:8014/v1")
+        val repository=product()
+        assertTrue(repository.replayActive())
+        val conversation=repository.directoryPage(0,100).single { it.bodyText=="task4-device-A" }
+        val cursor=repository.currentCursor()
+        assertFalse(repository.messages(conversation.conversationId).first().any { it.bodyText==AFTER_REVOKE_TEXT })
+        val request=Request.Builder().url(runtime.baseUrl+"/devices/"+store.deviceId()+"/revoke")
+            .header("Authorization","Bearer "+runtime.bearerToken)
+            .post("".toRequestBody("application/json".toMediaType())).build()
+        http.newCall(request).execute().use { response ->
+            assertEquals(200,response.code)
+            val body=Json.parseToJsonElement(requireNotNull(response.body).string()).jsonObject
+            assertEquals(store.deviceId(),body["device_id"]?.jsonPrimitive?.content)
+            assertEquals("false",body["active"]?.jsonPrimitive?.content)
+        }
+        // Do not clear credentials or edit active-provider prefs: test the actual revoked bearer.
+        assertNotNull(store.activeConnection())
+        assertRevokedCall("product replay") { repository.replayActive() }
+        assertRevokedCall("durable Inbox refresh") { remote().refreshActive() }
+        assertEquals(cursor,repository.currentCursor())
+        assertTrue(context.getSharedPreferences("task4-evidence",Context.MODE_PRIVATE).edit()
+            .putLong("revoked-A-cursor",cursor)
+            .putString("revoked-A-conversation",conversation.conversationId)
+            .putString("revoked-A-device",store.deviceId()).commit())
+        evidence("selfRevoke PASS: actual emulator device self-revoked via authenticated Server route; existing encrypted credential retained and native replay/Inbox refused")
+    }
+
+    /** Run on the other emulator after A's revoke; creates new protected state with B's key. */
+    @Test fun writeAfterOtherDeviceRevoke():Unit = runBlocking {
+        val runtime=requireNotNull(P14RuntimeCredentialStore(context).activeConnection())
+        require(args.getString("p14BaseUrl")=="http://10.0.2.2:8014/v1" && runtime.baseUrl=="http://10.0.2.2:8014/v1")
+        http.newCall(Request.Builder().url(runtime.baseUrl+"/models")
+            .header("Authorization","Bearer "+runtime.bearerToken).build()).execute().use { response ->
+            assertEquals(200,response.code)
+            assertTrue(requireNotNull(response.body).string().contains("p14-hermes"))
+        }
+        val repository=product()
+        val entry=repository.directoryPage(0,100).single { it.bodyText=="task4-device-A" }
+        val before=repository.currentCursor()
+        val accepted=repository.acceptEntryContinuation(entry.conversationId,AFTER_REVOKE_TEXT)
+        assertTrue(repository.syncAndFlushActive())
+        assertFalse(P14ProductDatabase.get(context).dao().pendingOutbox().any { it.messageId==accepted.messageId })
+        assertTrue(repository.currentCursor()>before)
+        assertTrue(repository.messages(entry.conversationId).first().any { it.messageId==accepted.messageId && it.bodyText==AFTER_REVOKE_TEXT })
+        assertTrue(remote().refreshActive())
+        evidence("writeAfterOtherDeviceRevoke PASS: actual B model discovery, protected message commit/replay and Inbox remain healthy after A revoke")
+    }
+
+    /** Run on A after an external force-stop, after B has committed its new message. */
+    @Test fun verifyRevokedDeviceCannotRecoverNewState():Unit = runBlocking {
+        val store=P14RuntimeCredentialStore(context)
+        val runtime=requireNotNull(store.activeConnection())
+        require(args.getString("p14BaseUrl")=="http://10.0.2.2:8014/v1" && runtime.baseUrl=="http://10.0.2.2:8014/v1")
+        val prefs=context.getSharedPreferences("task4-evidence",Context.MODE_PRIVATE)
+        val conversationId=requireNotNull(prefs.getString("revoked-A-conversation",null))
+        val cursor=prefs.getLong("revoked-A-cursor",-1L)
+        assertTrue(cursor>0)
+        assertEquals(prefs.getString("revoked-A-device",null),store.deviceId())
+        assertRevokedCall("product replay after restart") { product().replayActive() }
+        assertRevokedCall("Inbox refresh after restart") { remote().refreshActive() }
+        val attachment=requireNotNull(args.getString("p14MediaAttachmentId"))
+        for(path in listOf("models","remote-manifest","sync/events","notifications",
+            "bootstrap/entries?limit=1","attachments/"+attachment+"/content")) {
+            http.newCall(Request.Builder().url(runtime.baseUrl+"/"+path)
+                .header("Authorization","Bearer "+runtime.bearerToken).build()).execute().use { response ->
+                assertEquals("Revoked device must be refused for "+path,401,response.code)
+            }
+        }
+        assertEquals(cursor,product().currentCursor())
+        assertFalse("Revoked A must not receive B's new protected message",
+            product().messages(conversationId).first().any { it.bodyText==AFTER_REVOKE_TEXT })
+        assertNotNull("Cached accepted user data must remain available locally",
+            P14ProductDatabase.get(context).dao().conversation(conversationId))
+        evidence("verifyRevokedDeviceCannotRecoverNewState PASS: retained credential denied on native replay/Inbox/models/Manifest/media after process restart; cursor unchanged, B's post-revoke message absent, cached local data preserved")
+    }
+
+    private suspend fun assertRevokedCall(label:String,action:suspend ()->Any?) {
+        val error=runCatching { action() }.exceptionOrNull()
+        assertTrue(label+" must reject with HTTP 401",error is P14RemoteHttpException && error.status==401)
+    }
+
+    private companion object {
+        const val AFTER_REVOKE_TEXT="task4-B-new-protected-state-after-A-revoke"
+    }
+
+
 }

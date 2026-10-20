@@ -46,6 +46,9 @@ curl -fsS http://127.0.0.1:8014/healthz
 P14_TASK4_SYNTHETIC=1 python3 synthetic-server/server/acceptance/task4_fixture.py seed > evidence/fixture.json
 P14_TASK4_SYNTHETIC=1 python3 synthetic-server/server/acceptance/task4_fixture.py scale --count 1200 > evidence/early-scale-seed.json
 test_run=0
+realtime_run="r${GITHUB_RUN_ID}a${GITHUB_RUN_ATTEMPT}"
+race_at=0
+race_choice=allow
 instrument() {
   local serial="$1" method="$2" klass="${3:-P14RecoveryInstrumentedTest}"
   test_run=$((test_run + 1))
@@ -68,6 +71,7 @@ instrument() {
     -e p14ActionSupplement "$(python3 -c 'import json; print(json.load(open("evidence/fixture.json"))["actions"]["supplement"])')" \
     -e p14ActionSkip "$(python3 -c 'import json; print(json.load(open("evidence/fixture.json"))["actions"]["skip"])')" \
     -e p14ActionCancel "$(python3 -c 'import json; print(json.load(open("evidence/fixture.json"))["actions"]["cancel"])')" \
+    -e p14RealtimeRunId "$realtime_run" -e p14RaceAtEpochMs "$race_at" -e p14RaceChoice "$race_choice" \
     "${setup[@]}" \
     me.rerere.rikkahub.debug.test/androidx.test.runner.AndroidJUnitRunner | tee "$report" || return 1
   grep -Eq 'OK \([1-9][0-9]* test' "$report" || return 1
@@ -198,6 +202,58 @@ adb -s "$A" shell pm grant me.rerere.rikkahub.debug android.permission.ACCESS_CO
 instrument "$A" observationPolicy
 instrument "$B" scaleDirectoryPaging
 adb -s "$B" exec-out run-as me.rerere.rikkahub.debug cat files/task4-directory-scale-metrics.json > evidence/directory-scale-metrics.json
+instrument "$A" replyAndQuoteThroughNativeOutbox P14ChannelAcceptanceInstrumentedTest
+network_probe "$B" online-before-quick-action
+adb -s "$B" shell svc wifi disable
+adb -s "$B" shell svc data disable
+network_probe "$B" offline
+instrument "$B" seedQuickActionOffline P14ChannelAcceptanceInstrumentedTest
+adb -s "$B" shell am force-stop me.rerere.rikkahub.debug
+adb -s "$B" shell svc wifi enable
+adb -s "$B" shell svc data enable
+network_probe "$B" online-after-quick-action
+instrument "$B" verifyQuickActionAfterRestart P14ChannelAcceptanceInstrumentedTest
+instrument "$B" consumeProducerResultAndTypedViews P14ChannelAcceptanceInstrumentedTest
+# Independent live Runtime delivery and two-installation Interaction arbitration.
+wait_marker() {
+  local serial="$1" marker="$2" expected="$3" value=""
+  for attempt in $(seq 1 120); do
+    value="$(adb -s "$serial" exec-out run-as me.rerere.rikkahub.debug cat "files/$marker" 2>/dev/null || true)"
+    if [ "$value" = "$expected" ]; then return 0; fi
+    sleep 0.5
+  done
+  echo "Timed out waiting for synthetic marker $marker"; return 1
+}
+adb -s "$A" shell run-as me.rerere.rikkahub.debug rm -f files/task4-live-ready
+instrument "$A" liveObserve P14RealtimeInteractionInstrumentedTest > evidence/live-observe-driver.txt 2>&1 &
+live_driver=$!
+wait_marker "$A" task4-live-ready "$realtime_run"
+instrument "$B" liveContinue P14RealtimeInteractionInstrumentedTest
+wait "$live_driver"
+instrument "$A" racePrepare P14RealtimeInteractionInstrumentedTest
+instrument "$B" racePrepare P14RealtimeInteractionInstrumentedTest
+race_at="$(python3 -c 'import time;print(int(time.time()*1000)+45000)')"
+race_choice=allow instrument "$A" raceRespond P14RealtimeInteractionInstrumentedTest > evidence/race-A-driver.txt 2>&1 &
+race_A=$!
+race_choice=deny instrument "$B" raceRespond P14RealtimeInteractionInstrumentedTest > evidence/race-B-driver.txt 2>&1 &
+race_B=$!
+wait_marker "$A" task4-race-waiting "$realtime_run"
+wait_marker "$B" task4-race-waiting "$realtime_run"
+python3 - "$race_at" <<'PY_RACE'
+import sys,time
+assert int(time.time()*1000) < int(sys.argv[1]), "Both Android operations must queue before the common release time"
+PY_RACE
+wait "$race_A"
+wait "$race_B"
+instrument "$A" raceVerify P14RealtimeInteractionInstrumentedTest
+instrument "$B" raceVerify P14RealtimeInteractionInstrumentedTest
+instrument "$A" expiryAndDirectNotificationAction P14RealtimeInteractionInstrumentedTest
+python3 scripts/p14-interaction-evidence.py "$realtime_run"
+# Revocation runs last: retain A's actual encrypted credential to prove Server rejection.
+instrument "$A" selfRevoke
+instrument "$B" writeAfterOtherDeviceRevoke
+adb -s "$A" shell am force-stop me.rerere.rikkahub.debug
+instrument "$A" verifyRevokedDeviceCannotRecoverNewState
 for serial in "$A" "$B"; do
   adb -s "$serial" shell am start -a android.intent.action.MAIN -c android.intent.category.LAUNCHER -p me.rerere.rikkahub.debug
   adb -s "$serial" shell uiautomator dump /sdcard/task4-ui.xml
