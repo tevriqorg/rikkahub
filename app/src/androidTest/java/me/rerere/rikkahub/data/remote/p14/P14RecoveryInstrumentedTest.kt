@@ -52,6 +52,7 @@ class P14RecoveryInstrumentedTest {
     @Test fun localContracts() = runBlocking {
         // Real on-device Room open/reopen and migration validation, not a Python SQLite stand-in.
         remoteMigrationPreservesPending()
+        productMigrationPreservesObservation()
         val draftStore = P14CaptureDraftStore(context)
         val source = File(context.cacheDir, "task4-source.txt").apply { writeText("synthetic-owned-copy") }
         val material = draftStore.import(Uri.fromFile(source))
@@ -108,6 +109,40 @@ class P14RecoveryInstrumentedTest {
         context.deleteDatabase(name)
     }
 
+    private suspend fun productMigrationPreservesObservation() {
+        val name = "task4-product-v5.db"
+        context.deleteDatabase(name)
+        // Build all unaffected tables with Room, then reconstruct the documented legacy v5
+        // Observation table. This exercises the actual Room schema validator after upgrade.
+        Room.databaseBuilder(context, P14ProductDatabase::class.java, name).build().let { db ->
+            try { db.dao().upsertEntry(P14EntryEntity("preserved-entry", "keep-original", 1)) }
+            finally { db.close() }
+        }
+        context.openOrCreateDatabase(name, Context.MODE_PRIVATE, null).use { db ->
+            db.execSQL("DROP TABLE p14_observations")
+            db.execSQL("CREATE TABLE p14_observations (observation_id TEXT NOT NULL PRIMARY KEY,kind TEXT NOT NULL,latitude REAL NOT NULL,longitude REAL NOT NULL,accuracy_m REAL,captured_at_epoch_ms INTEGER NOT NULL,state TEXT NOT NULL)")
+            db.execSQL("CREATE INDEX index_p14_observations_state ON p14_observations(state)")
+            db.execSQL("CREATE INDEX index_p14_observations_captured_at_epoch_ms ON p14_observations(captured_at_epoch_ms)")
+            db.execSQL("INSERT INTO p14_observations VALUES ('preserved-observation','LOCATION',35.0,139.0,20.0,1,'PENDING')")
+            db.execSQL("INSERT INTO p14_observation_outbox VALUES ('preserved-obs-op','preserved-observation','IN_FLIGHT')")
+            db.version = 5
+        }
+        repeat(2) {
+            val db = Room.databaseBuilder(context, P14ProductDatabase::class.java, name)
+                .addMigrations(P14ProductDatabase.MIGRATION_5_6).build()
+            try {
+                assertEquals("keep-original", db.dao().entry("preserved-entry")?.bodyText)
+                val observation = requireNotNull(db.dao().observation("preserved-observation"))
+                assertEquals("legacy-unattributed", observation.profileId)
+                assertEquals("unknown", observation.sourceDeviceId)
+                assertEquals(35.0, observation.latitude, 0.0)
+                assertEquals("preserved-obs-op", db.dao().pendingObservationOutbox().single().operationId)
+                assertEquals("IN_FLIGHT", db.dao().pendingObservationOutbox().single().state)
+            } finally { db.close() }
+        }
+        context.deleteDatabase(name)
+    }
+
     private fun manifestCacheContracts() {
         val connection = P14RuntimeConnection("http://127.0.0.1:9/v1", "synthetic-only", "manifest-test")
         val prefs = context.getSharedPreferences("p14-manifest", Context.MODE_PRIVATE)
@@ -128,6 +163,10 @@ class P14RecoveryInstrumentedTest {
         dao.upsertInteraction(P14InteractionEntity("task4-os-interaction", "task4-context", notification.notificationId, "Choose", """[{"id":"yes","label":"Yes"}]""", "PENDING", null, true))
         P14SystemNotifications.project(context, dao, listOf(notification))
         val nm = context.getSystemService(NotificationManager::class.java)
+        val deadline = android.os.SystemClock.elapsedRealtime() + 3000
+        while (nm.activeNotifications.none { it.id == notification.notificationId.hashCode() } && android.os.SystemClock.elapsedRealtime() < deadline) {
+            Thread.sleep(50)
+        }
         val posted = nm.activeNotifications.single { it.id == notification.notificationId.hashCode() }.notification
         assertNotNull(posted.contentIntent)
         assertTrue(posted.contentIntent.isImmutable)
