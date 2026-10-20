@@ -25,13 +25,24 @@ for attempt in $(seq 1 60); do
 done
 curl -fsS http://127.0.0.1:8014/healthz
 P14_TASK4_SYNTHETIC=1 python3 synthetic-server/server/acceptance/task4_fixture.py seed > evidence/fixture.json
+test_run=0
 instrument() {
   local serial="$1" method="$2" klass="${3:-P14RecoveryInstrumentedTest}"
-  local report="evidence/$serial-$method.txt"
+  test_run=$((test_run + 1))
+  local report="evidence/$serial-$method-$test_run.txt"
+  local setup=()
+  if [ "$serial" = emulator-5554 ]; then setup=(-e p14SetupToken task4-setup-synthetic-only); fi
   timeout 240 adb -s "$serial" shell am instrument -w -r \
     -e class "me.rerere.rikkahub.data.remote.p14.$klass#$method" \
     -e p14BaseUrl http://10.0.2.2:8014/v1 -e p14OwnerToken task4-owner-synthetic-only \
     -e p14NotificationId "$(python3 -c 'import json; print(json.load(open("evidence/fixture.json"))["notification_id"])')" \
+    -e p14MediaEntryId "$(python3 -c 'import json; print(json.load(open("evidence/fixture.json"))["entry_id"])')" \
+    -e p14MediaConversationId "$(python3 -c 'import json; print(json.load(open("evidence/fixture.json"))["media_conversation_id"])')" \
+    -e p14MediaMessageId "$(python3 -c 'import json; print(json.load(open("evidence/fixture.json"))["media_message_id"])')" \
+    -e p14MediaAttachmentId "$(python3 -c 'import json; print(json.load(open("evidence/fixture.json"))["media_attachment_id"])')" \
+    -e p14MediaSha256 "$(python3 -c 'import json; print(json.load(open("evidence/fixture.json"))["media_sha256"])')" \
+    -e p14MediaByteSize "$(python3 -c 'import json; print(json.load(open("evidence/fixture.json"))["media_byte_size"])')" \
+    "${setup[@]}" \
     me.rerere.rikkahub.debug.test/androidx.test.runner.AndroidJUnitRunner | tee "$report"
   grep -Eq 'OK \([1-9][0-9]* test' "$report"
   ! grep -Eq 'FAILURES!!!|INSTRUMENTATION_FAILED|Process crashed' "$report"
@@ -63,6 +74,9 @@ instrument "$A" uploaderMediaContract
 adb -s "$A" exec-out run-as me.rerere.rikkahub.debug cat files/task4-remote-contracts.json > evidence/task4-remote-contracts.json
 P14_TASK4_SYNTHETIC=1 python3 synthetic-server/server/acceptance/task4_media_contract.py --input evidence/task4-remote-contracts.json > evidence/media-contract-validation.json
 instrument "$B" deviceBContinue
+instrument "$B" materializeRemoteMedia
+adb -s "$B" shell am force-stop me.rerere.rikkahub.debug
+instrument "$B" verifyRemoteMedia
 instrument "$B" deviceBMutations
 instrument "$B" seedInteractionOffline
 adb -s "$B" shell am force-stop me.rerere.rikkahub.debug

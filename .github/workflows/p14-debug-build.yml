@@ -280,6 +280,8 @@ jobs:
         with:
           distribution: temurin
           java-version: '21'
+      - name: Install Android SDK command line tools
+        uses: android-actions/setup-android@v3
       - name: Enable KVM
         run: |
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
@@ -320,6 +322,9 @@ jobs:
           done
           adb version > evidence/adb-version.txt
           "$ANDROID_HOME/emulator/emulator" -version > evidence/emulator-version.txt 2>&1
+      - name: Summarize instrumentation and audit diagnostic credential leakage
+        if: always()
+        run: python3 scripts/p14-emulator-report.py
       - uses: actions/upload-artifact@v4
         if: always()
         with:
