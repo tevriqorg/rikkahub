@@ -12,10 +12,15 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import me.rerere.ai.core.MessageRole
+import me.rerere.ai.provider.Model
 import me.rerere.ai.provider.ProviderSetting
 import me.rerere.ai.ui.UIMessage
 import me.rerere.ai.ui.UIMessagePart
 import me.rerere.rikkahub.data.datastore.SettingsStore
+import me.rerere.rikkahub.data.model.Assistant
+import me.rerere.rikkahub.data.model.AssistantRuntimeMode
+import me.rerere.rikkahub.data.repository.ConversationRepository
+import me.rerere.rikkahub.ui.activity.P14EntryActivity
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import org.junit.Assert.*
@@ -44,8 +49,8 @@ class P14RecoveryInstrumentedTest {
     private val multiMessageId = Uuid.parse("ae800002-0000-4000-8000-000000000001")
     private fun offlineMessage() = UIMessage(localMessageId, MessageRole.USER, listOf(
         UIMessagePart.Text("task4-offline-accepted"),
-        UIMessagePart.Audio(Uri.fromFile(File(context.filesDir, "task4-voice.m4a")).toString(), buildJsonObject {
-            put("p14_media_role", "voice_message"); put("p14_mime_type", "audio/mp4"); put("p14_duration_ms", 1200)
+        UIMessagePart.Audio(Uri.fromFile(File(context.filesDir, "task4-voice.wav")).toString(), buildJsonObject {
+            put("p14_media_role", "voice_message"); put("p14_mime_type", "audio/wav"); put("p14_duration_ms", 100)
         }),
     ))
 
@@ -174,13 +179,30 @@ class P14RecoveryInstrumentedTest {
         assertEquals("Yes", posted.actions.single().title.toString())
         assertEquals(android.app.Notification.VISIBILITY_PRIVATE, posted.visibility)
         assertNotNull(posted.publicVersion)
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        val monitor = instrumentation.addMonitor(P14EntryActivity::class.java.name, null, false)
+        try {
+            posted.contentIntent.send()
+            val opened = requireNotNull(monitor.waitForActivityWithTimeout(8000)) { "Notification did not open Entry Activity" }
+            assertEquals(notification.conversationId, opened.intent.getStringExtra(P14EntryActivity.EXTRA_CONVERSATION_ID))
+            assertEquals(notification.notificationId, opened.intent.getStringExtra(P14EntryActivity.EXTRA_NOTIFICATION_ID))
+            instrumentation.runOnMainSync { opened.finish() }
+        } finally { instrumentation.removeMonitor(monitor) }
         P14SystemNotifications.project(context, dao, listOf(notification.copy(state = "RESOLVED")))
         assertFalse(nm.activeNotifications.any { it.id == notification.notificationId.hashCode() })
     }
 
     @Test fun seedOffline() = runBlocking {
         assertNull("Offline phase must precede device pairing", P14RuntimeCredentialStore(context).activeConnection())
-        File(context.filesDir, "task4-voice.m4a").writeBytes(byteArrayOf(0, 1, 2, 3, 4))
+        val pcm = java.nio.ByteBuffer.allocate(1644).order(java.nio.ByteOrder.LITTLE_ENDIAN)
+        pcm.put("RIFF".toByteArray()).putInt(1636).put("WAVEfmt ".toByteArray()).putInt(16)
+            .putShort(1.toShort()).putShort(1.toShort()).putInt(8000).putInt(16000)
+            .putShort(2.toShort()).putShort(16.toShort()).put("data".toByteArray()).putInt(1600)
+        File(context.filesDir, "task4-voice.wav").writeBytes(pcm.array())
+        val model = Model(id = Uuid.parse("ae800001-0000-4000-8000-000000000004"), modelId = "p14-hermes", displayName = "P14 synthetic offline")
+        val assistant = Assistant(id = Uuid.parse("ae800001-0000-4000-8000-000000000003"), chatModelId = model.id, name = "P14 synthetic offline", runtimeMode = AssistantRuntimeMode.REMOTE)
+        val provider = ProviderSetting.OpenAI(id = Uuid.parse("ae800001-0000-4000-8000-000000000005"), name = "P14 synthetic offline", models = listOf(model), apiKey = "", baseUrl = "http://127.0.0.1:9/v1")
+        settings().update { it.copy(providers = it.providers.filterNot { p -> p.id == provider.id } + provider, assistants = it.assistants.filterNot { a -> a.id == assistant.id } + assistant) }
         val accepted = product().acceptRikkaMessage("task4-offline", "ae800001-0000-4000-8000-000000000002", offlineMessage(), "ae800001-0000-4000-8000-000000000003", "ae800001-0000-4000-8000-000000000004")
         context.getSharedPreferences("task4-evidence", Context.MODE_PRIVATE).edit().putString("offline-conversation", accepted.conversationId).commit()
         val dao = P14ProductDatabase.get(context).dao()
@@ -198,15 +220,24 @@ class P14RecoveryInstrumentedTest {
         assertEquals("task4-offline-accepted", dao.message(localMessageId.toString())?.bodyText)
         val voice = dao.attachmentsForMessage(localMessageId.toString()).single()
         assertEquals("VOICE", voice.kind)
-        assertEquals("audio/mp4", voice.mimeType)
-        assertEquals(1200L, voice.durationMs)
-        assertEquals(5L, File(requireNotNull(Uri.parse(voice.localLocator).path)).length())
+        assertEquals("audio/wav", voice.mimeType)
+        assertEquals(100L, voice.durationMs)
+        assertEquals(1644L, File(requireNotNull(Uri.parse(voice.localLocator).path)).length())
         assertTrue(recoverP14AttachmentPart(voice) is UIMessagePart.Audio)
         assertEquals("IN_FLIGHT", dao.pendingOutbox().single { it.messageId == localMessageId.toString() }.state)
         repository.acceptRikkaMessage("task4-offline", "ae800001-0000-4000-8000-000000000002", offlineMessage(), "ae800001-0000-4000-8000-000000000003", "ae800001-0000-4000-8000-000000000004")
         assertEquals(1, dao.listMessages(id).size)
         assertEquals(1, dao.pendingOutbox().count { it.messageId == localMessageId.toString() })
         assertEquals("task4-persisted-draft", P14CaptureDraftStore(context).read().text)
+        val conversations: ConversationRepository = GlobalContext.get().get()
+        val recovery = P14ChatRecovery(dao, conversations, settings())
+        recovery.restoreAll()
+        val visibleId = Uuid.parse("ae800001-0000-4000-8000-000000000002")
+        val visible = requireNotNull(conversations.getConversationById(visibleId))
+        assertEquals("ae800001-0000-4000-8000-000000000003", visible.assistantId.toString())
+        assertEquals(1, visible.messageNodes.flatMap { it.messages }.count { it.id == localMessageId })
+        recovery.restoreAll()
+        assertEquals(visible, conversations.getConversationById(visibleId))
         evidence("verifyOffline PASS after external force-stop: no duplicate accepted mutation, IN_FLIGHT retry eligible, VOICE source and draft retained")
     }
 
