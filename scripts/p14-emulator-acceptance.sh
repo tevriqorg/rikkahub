@@ -143,7 +143,11 @@ instrument "$A" captureAndProfileUi P14RecoveryUiInstrumentedTest || ui_failed=1
 instrument "$A" sharedTextUsesDurableComposer P14RecoveryUiInstrumentedTest || ui_failed=1
 adb -s "$A" shell svc wifi enable
 adb -s "$A" shell svc data enable
-network_probe "$A" online-restored
+for attempt in $(seq 1 15); do
+  if network_probe "$A" online-restored; then break; fi
+  sleep 2
+done
+grep -Eq 'HTTP/1\.[01] 200' "evidence/$A-network-online-restored.txt"
 instrument "$A" deviceASeed
 instrument "$A" uploaderMediaContract
 adb -s "$A" exec-out run-as me.rerere.rikkahub.debug cat files/task4-remote-contracts.json > evidence/task4-remote-contracts.json
