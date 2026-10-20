@@ -284,7 +284,7 @@ jobs:
           [[ "$APK_SHA" =~ ^[0-9a-f]{40}$ ]]
           test "$(cat evidence/android-source-sha.txt)" = "$APK_SHA"
           git fetch origin "$APK_SHA" --depth=1
-          git diff --exit-code "$APK_SHA" "$GITHUB_SHA" -- app ai common document highlight material3 ui search speech web workspace oauth mediagen
+          git diff --exit-code "$APK_SHA" "$GITHUB_SHA" -- app ai common document highlight material3 ui search speech web workspace oauth mediagen gradle build.gradle.kts settings.gradle.kts gradle.properties
       - uses: actions/checkout@v4
         with:
           repository: tevriqorg/P14-Entry
@@ -302,6 +302,9 @@ jobs:
           java-version: '21'
       - name: Install Android SDK command line tools
         uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
+          log-accepted-android-sdk-licenses: false
       - name: Enable KVM
         run: |
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
