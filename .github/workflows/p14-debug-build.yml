@@ -3,6 +3,14 @@ name: P14 Debug APK
 on:
   workflow_dispatch:
     inputs:
+      apk_run:
+        description: Optional successful build artifact run ID for orchestration-only retries
+        type: string
+        default: ''
+      apk_sha:
+        description: Exact Android SHA of the reused build (required with apk_run)
+        type: string
+        default: ''
       emulator_acceptance:
         description: Run Task 4 synthetic emulator acceptance
         type: boolean
@@ -17,6 +25,7 @@ on:
 
 permissions:
   contents: read
+  actions: read
 
 jobs:
   build-debug:
@@ -172,7 +181,7 @@ jobs:
         run: rm -rf "$GITHUB_WORKSPACE/server" "$GITHUB_WORKSPACE/hermes-plugin" "$GITHUB_WORKSPACE/.git"
 
   build-emulator:
-    if: ${{ github.event_name == 'workflow_dispatch' && inputs.emulator_acceptance }}
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.emulator_acceptance && inputs.apk_run == '' }}
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
@@ -242,6 +251,7 @@ jobs:
           if-no-files-found: warn
 
   emulator-acceptance:
+    if: ${{ always() && inputs.emulator_acceptance && (needs.build-emulator.result == 'success' || inputs.apk_run != '') }}
     needs: build-emulator
     runs-on: ubuntu-latest
     timeout-minutes: 45
@@ -263,8 +273,18 @@ jobs:
           persist-credentials: false
       - uses: actions/download-artifact@v4
         with:
-          name: p14-emulator-build-${{ github.sha }}
+          name: p14-emulator-build-${{ inputs.apk_sha || github.sha }}
+          run-id: ${{ inputs.apk_run || github.run_id }}
+          github-token: ${{ github.token }}
           path: .
+      - name: Validate APK provenance and unchanged product sources
+        env:
+          APK_SHA: ${{ inputs.apk_sha || github.sha }}
+        run: |
+          [[ "$APK_SHA" =~ ^[0-9a-f]{40}$ ]]
+          test "$(cat evidence/android-source-sha.txt)" = "$APK_SHA"
+          git fetch origin "$APK_SHA" --depth=1
+          git diff --exit-code "$APK_SHA" "$GITHUB_SHA" -- app ai common document highlight material3 ui search speech web workspace oauth mediagen
       - uses: actions/checkout@v4
         with:
           repository: tevriqorg/P14-Entry

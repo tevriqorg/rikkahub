@@ -42,6 +42,10 @@ instrument() {
     -e p14MediaAttachmentId "$(python3 -c 'import json; print(json.load(open("evidence/fixture.json"))["media_attachment_id"])')" \
     -e p14MediaSha256 "$(python3 -c 'import json; print(json.load(open("evidence/fixture.json"))["media_sha256"])')" \
     -e p14MediaByteSize "$(python3 -c 'import json; print(json.load(open("evidence/fixture.json"))["media_byte_size"])')" \
+    -e p14ActionConfirm "$(python3 -c 'import json; print(json.load(open("evidence/fixture.json"))["actions"]["confirm"])')" \
+    -e p14ActionSupplement "$(python3 -c 'import json; print(json.load(open("evidence/fixture.json"))["actions"]["supplement"])')" \
+    -e p14ActionSkip "$(python3 -c 'import json; print(json.load(open("evidence/fixture.json"))["actions"]["skip"])')" \
+    -e p14ActionCancel "$(python3 -c 'import json; print(json.load(open("evidence/fixture.json"))["actions"]["cancel"])')" \
     "${setup[@]}" \
     me.rerere.rikkahub.debug.test/androidx.test.runner.AndroidJUnitRunner | tee "$report"
   grep -Eq 'OK \([1-9][0-9]* test' "$report"
@@ -52,6 +56,7 @@ B=emulator-5556
 instrument "$A" localContracts
 adb -s "$A" shell svc wifi disable
 adb -s "$A" shell svc data disable
+adb -s "$A" shell dumpsys connectivity > evidence/offline-network-state.txt
 instrument "$A" seedOffline
 adb -s "$A" shell am force-stop me.rerere.rikkahub.debug
 adb -s "$A" shell monkey -p me.rerere.rikkahub.debug -c android.intent.category.LAUNCHER 1
@@ -78,6 +83,8 @@ instrument "$B" materializeRemoteMedia
 adb -s "$B" shell am force-stop me.rerere.rikkahub.debug
 instrument "$B" verifyRemoteMedia
 instrument "$B" deviceBMutations
+instrument "$B" actionDecisionsAndQuickAction
+instrument "$A" competingDeviceActionConflict
 instrument "$B" seedInteractionOffline
 adb -s "$B" shell am force-stop me.rerere.rikkahub.debug
 instrument "$B" verifyInteractionRecovery
@@ -95,7 +102,7 @@ import json,os,platform
 from pathlib import Path
 p=Path('evidence')
 (p/'run-provenance.json').write_text(json.dumps({
- 'repository':os.environ['GITHUB_REPOSITORY'],'android_sha':os.environ['GITHUB_SHA'],
+ 'repository':os.environ['GITHUB_REPOSITORY'],'android_sha':(p/'android-source-sha.txt').read_text().strip(),'workflow_sha':os.environ['GITHUB_SHA'],
  'run_id':os.environ['GITHUB_RUN_ID'],'run_attempt':os.environ['GITHUB_RUN_ATTEMPT'],
  'server_sha':(p/'server-source-sha.txt').read_text().strip(),
  'emulator_api':35,'abi':'x86_64','devices':['emulator-5554','emulator-5556'],
