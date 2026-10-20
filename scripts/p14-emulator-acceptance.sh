@@ -255,9 +255,9 @@ instrument "$B" writeAfterOtherDeviceRevoke
 adb -s "$A" shell am force-stop me.rerere.rikkahub.debug
 instrument "$A" verifyRevokedDeviceCannotRecoverNewState
 for serial in "$A" "$B"; do
-  adb -s "$serial" shell am start -a android.intent.action.MAIN -c android.intent.category.LAUNCHER -p me.rerere.rikkahub.debug
-  adb -s "$serial" shell uiautomator dump /sdcard/task4-ui.xml
-  adb -s "$serial" pull /sdcard/task4-ui.xml "evidence/$serial-ui.xml"
+  timeout 15 adb -s "$serial" shell am start -n me.rerere.rikkahub.debug/me.rerere.rikkahub.ui.activity.P14EntryActivity
+  timeout 15 adb -s "$serial" shell uiautomator dump /sdcard/task4-ui.xml || true
+  timeout 15 adb -s "$serial" pull /sdcard/task4-ui.xml "evidence/$serial-ui.xml" || true
 done
 python3 - <<'PY'
 import json,os,platform

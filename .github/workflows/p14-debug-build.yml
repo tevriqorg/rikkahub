@@ -348,6 +348,9 @@ jobs:
         run: |
           for serial in emulator-5554 emulator-5556; do
             timeout 15 adb -s "$serial" logcat -d > "evidence/$serial-logcat.txt" 2>&1 || true
+            for tree in task4-notification-systemui-tree.txt task4-direct-systemui-tree.txt; do
+              timeout 15 adb -s "$serial" exec-out run-as me.rerere.rikkahub.debug cat "files/$tree" > "evidence/$serial-$tree" 2>/dev/null || true
+            done
             timeout 15 adb -s "$serial" shell screencap -p /sdcard/task4.png || true
             timeout 15 adb -s "$serial" pull /sdcard/task4.png "evidence/$serial.png" || true
             timeout 15 adb -s "$serial" shell getprop > "evidence/$serial-properties.txt" 2>&1 || true

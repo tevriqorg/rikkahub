@@ -1,6 +1,7 @@
 package me.rerere.rikkahub.data.remote.p14
 
 import android.accessibilityservice.AccessibilityService
+import android.accessibilityservice.AccessibilityServiceInfo
 import android.app.NotificationManager
 import android.os.SystemClock
 import android.view.accessibility.AccessibilityNodeInfo
@@ -213,6 +214,35 @@ class P14RealtimeInteractionInstrumentedTest {
         return result
     }
 
+    private fun systemUiNodes(automation: android.app.UiAutomation): List<AccessibilityNodeInfo> {
+        val roots = automation.windows.mapNotNull { it.root }.toMutableList()
+        automation.rootInActiveWindow?.let { roots.add(it) }
+        return roots.filter { it.packageName?.toString() == "com.android.systemui" }
+            .distinctBy { it.windowId }.flatMap { accessibilitySubtree(it) }.take(1200)
+    }
+
+    private fun saveDirectSystemUiFailure(automation: android.app.UiAutomation) {
+        val nodes = systemUiNodes(automation)
+        val bounds = android.graphics.Rect()
+        val dump = buildString {
+            appendLine("Synthetic task4 direct SystemUI nodes=${nodes.size}; run=${runId()}")
+            nodes.forEach { node ->
+                node.getBoundsInScreen(bounds)
+                // Preserve target labels and generic expansion hints, never unrelated notification text.
+                fun safe(value: CharSequence?): String {
+                    val text = value?.toString().orEmpty()
+                    return if (text.contains("Task4", ignoreCase = true) ||
+                        text.equals("Expand", ignoreCase = true) || text.equals("Collapse", ignoreCase = true))
+                        text.take(180).replace('\n', ' ') else if (text.isBlank()) "" else "<non-target>"
+                }
+                appendLine("window=${node.windowId} class=${node.className} id=${node.viewIdResourceName} " +
+                    "bounds=$bounds clickable=${node.isClickable} text=${safe(node.text)} " +
+                    "description=${safe(node.contentDescription)} actions=${node.actionList.map { it.id }}")
+            }
+        }
+        marker("task4-direct-systemui-tree.txt", dump.take(180000))
+    }
+
     /** A only: stale client expiry rejection, then actual SystemUI option click on independent fixture. */
     @Test fun expiryAndDirectNotificationAction(): Unit = runBlocking {
         val expires = Instant.now().plusSeconds(12)
@@ -234,45 +264,59 @@ class P14RealtimeInteractionInstrumentedTest {
         val instrumentation = InstrumentationRegistry.getInstrumentation()
         val manager = context.getSystemService(NotificationManager::class.java)
         withTimeout(10000) { while (manager.activeNotifications.none { it.id == direct.hashCode() }) delay(100) }
-        assertTrue(instrumentation.uiAutomation.performGlobalAction(AccessibilityService.GLOBAL_ACTION_NOTIFICATIONS))
+        val automation = instrumentation.uiAutomation
+        val serviceInfo = automation.serviceInfo
+        val previousFlags = serviceInfo.flags
+        serviceInfo.flags = previousFlags or AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS or
+            AccessibilityServiceInfo.FLAG_REPORT_VIEW_IDS or AccessibilityServiceInfo.FLAG_INCLUDE_NOT_IMPORTANT_VIEWS
+        automation.serviceInfo = serviceInfo
+        assertTrue(automation.performGlobalAction(AccessibilityService.GLOBAL_ACTION_NOTIFICATIONS))
         val label = "Task4 direct allow ${runId()}"
         var clicked = false
         var expanded = false
         val deadline = SystemClock.elapsedRealtime() + 12000
-        while (!clicked && SystemClock.elapsedRealtime() < deadline) {
-            val root = instrumentation.uiAutomation.rootInActiveWindow
-            val nodes = accessibilitySubtree(root)
-            // Some SystemUI versions uppercase action text; identity remains exact apart from case.
-            val option = nodes.firstOrNull { it.text?.toString()?.equals(label, ignoreCase = true) == true }
-            if (option != null) {
-                var target: AccessibilityNodeInfo? = option
-                repeat(5) {
-                    if (!clicked) clicked = target?.performAction(AccessibilityNodeInfo.ACTION_CLICK) == true
-                    target = target?.parent
-                }
-            } else if (!expanded) {
-                val title = "Task4 ${runId()} direct"
-                var ancestor = nodes.firstOrNull { it.text?.toString() == title }?.parent
-                var level = 0
-                while (!expanded && ancestor != null && level++ < 6) {
-                    val subtree = accessibilitySubtree(ancestor)
-                    // Never climb into a container covering other notifications or the whole shade.
-                    if (subtree.any { node ->
-                        node.viewIdResourceName?.endsWith("/title") == true &&
-                            !node.text.isNullOrBlank() && node.text.toString() != title
-                    }) break
-                    expanded = if (ancestor.actionList.any { it.id == AccessibilityNodeInfo.ACTION_EXPAND }) {
-                        ancestor.performAction(AccessibilityNodeInfo.ACTION_EXPAND)
-                    } else {
-                        subtree.firstOrNull { it.viewIdResourceName?.endsWith("/expand_button") == true }
-                            ?.performAction(AccessibilityNodeInfo.ACTION_CLICK) == true
+        try {
+            while (!clicked && SystemClock.elapsedRealtime() < deadline) {
+                val nodes = systemUiNodes(automation)
+                // Some SystemUI versions uppercase action text; identity remains exact apart from case.
+                val option = nodes.firstOrNull { it.text?.toString()?.equals(label, ignoreCase = true) == true }
+                if (option != null) {
+                    var target: AccessibilityNodeInfo? = option
+                    repeat(5) {
+                        if (!clicked) clicked = target?.performAction(AccessibilityNodeInfo.ACTION_CLICK) == true
+                        target = target?.parent
                     }
-                    ancestor = ancestor.parent
+                } else if (!expanded) {
+                    val title = "Task4 ${runId()} direct"
+                    var ancestor = nodes.firstOrNull { it.text?.toString() == title }?.parent
+                    var level = 0
+                    while (!expanded && ancestor != null && level++ < 6) {
+                        val subtree = accessibilitySubtree(ancestor)
+                        // Never climb into a container covering other notifications or the whole shade.
+                        if (subtree.any { node ->
+                            node.viewIdResourceName?.endsWith("/title") == true &&
+                                !node.text.isNullOrBlank() && node.text.toString() != title
+                        }) break
+                        expanded = if (ancestor.actionList.any { it.id == AccessibilityNodeInfo.ACTION_EXPAND }) {
+                            ancestor.performAction(AccessibilityNodeInfo.ACTION_EXPAND)
+                        } else {
+                            subtree.firstOrNull { it.viewIdResourceName?.endsWith("/expand_button") == true }
+                                ?.performAction(AccessibilityNodeInfo.ACTION_CLICK) == true
+                        }
+                        ancestor = ancestor.parent
+                    }
                 }
+                if (!clicked) delay(100)
             }
-            if (!clicked) delay(100)
+            assertTrue("Actual SystemUI option must be clicked", clicked)
+        } catch (failure: Throwable) {
+            runCatching { saveDirectSystemUiFailure(automation) }
+            throw failure
+        } finally {
+            val restore = automation.serviceInfo
+            restore.flags = previousFlags
+            automation.serviceInfo = restore
         }
-        assertTrue("Actual SystemUI option must be clicked", clicked)
         assertEquals("ACKED", settled(direct).second)
         val authoritative = api("interactions/${id("direct-interaction")}")
         assertEquals("RESPONDED", authoritative["status"]?.jsonPrimitive?.content)

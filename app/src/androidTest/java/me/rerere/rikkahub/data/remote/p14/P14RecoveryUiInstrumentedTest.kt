@@ -4,6 +4,8 @@ import android.content.Intent
 import android.content.Context
 import android.app.NotificationManager
 import android.accessibilityservice.AccessibilityService
+import android.accessibilityservice.AccessibilityServiceInfo
+import java.io.File
 import android.os.SystemClock
 import android.view.accessibility.AccessibilityNodeInfo
 import kotlinx.coroutines.runBlocking
@@ -190,13 +192,18 @@ class P14RecoveryUiInstrumentedTest {
         assertTrue("Real durable notification must be projected",manager.activeNotifications.any { it.id==notificationId.hashCode() })
         val monitor=instrumentation.addMonitor(P14EntryActivity::class.java.name,null,false)
         var activity:P14EntryActivity?=null
+        val originalAutomationFlags=instrumentation.uiAutomation.serviceInfo.flags
         try {
-            assertTrue("SystemUI notification shade must open",instrumentation.uiAutomation.performGlobalAction(AccessibilityService.GLOBAL_ACTION_NOTIFICATIONS))
+            val automation=instrumentation.uiAutomation
+            automation.serviceInfo=automation.serviceInfo.apply {
+                flags=flags or AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS or
+                    AccessibilityServiceInfo.FLAG_REPORT_VIEW_IDS or AccessibilityServiceInfo.FLAG_INCLUDE_NOT_IMPORTANT_VIEWS
+            }
+            assertTrue("SystemUI notification shade must open",automation.performGlobalAction(AccessibilityService.GLOBAL_ACTION_NOTIFICATIONS))
             var clicked=false
             val clickDeadline=SystemClock.elapsedRealtime()+10000
             while(!clicked && SystemClock.elapsedRealtime()<clickDeadline) {
-                val root=instrumentation.uiAutomation.rootInActiveWindow
-                val matches=root?.findAccessibilityNodeInfosByText(notification.title).orEmpty()
+                val matches=systemUiRoots().flatMap { it.findAccessibilityNodeInfosByText(notification.title).orEmpty() }
                 for(node in matches) {
                     if(node.text?.toString()!=notification.title) continue
                     var target:AccessibilityNodeInfo?=node
@@ -208,6 +215,7 @@ class P14RecoveryUiInstrumentedTest {
                 }
                 if(!clicked) SystemClock.sleep(100)
             }
+            if(!clicked) saveSystemUiTree("task4-notification-systemui-tree.txt")
             assertTrue("Actual notification title must be clicked in SystemUI",clicked)
             activity=monitor.waitForActivityWithTimeout(15000) as? P14EntryActivity
             assertNotNull("Notification must open actual Entry Activity",activity)
@@ -222,7 +230,25 @@ class P14RecoveryUiInstrumentedTest {
         } finally {
             activity?.let { opened -> instrumentation.runOnMainSync { opened.finish() } }
             instrumentation.removeMonitor(monitor)
+            instrumentation.uiAutomation.serviceInfo=instrumentation.uiAutomation.serviceInfo.apply { flags=originalAutomationFlags }
         }
+    }
+
+    private fun systemUiRoots():List<AccessibilityNodeInfo> {
+        val automation=InstrumentationRegistry.getInstrumentation().uiAutomation
+        return (automation.windows.mapNotNull { it.root }+listOfNotNull(automation.rootInActiveWindow))
+            .filter { it.packageName?.toString()=="com.android.systemui" }
+    }
+    private fun saveSystemUiTree(name:String) {
+        val lines=mutableListOf<String>()
+        val queue=java.util.ArrayDeque<AccessibilityNodeInfo>()
+        systemUiRoots().forEach { queue.add(it) }
+        while(queue.isNotEmpty() && lines.size<600) {
+            val node=queue.removeFirst()
+            lines.add("id=${node.viewIdResourceName} class=${node.className} clickable=${node.isClickable} text=${node.text?.take(160)} desc=${node.contentDescription?.take(160)}")
+            for(i in 0 until node.childCount) node.getChild(i)?.let { queue.add(it) }
+        }
+        File(context.filesDir,name).writeText(lines.joinToString("\n"))
     }
 
     private fun awaitEntryBody(text:String) {
