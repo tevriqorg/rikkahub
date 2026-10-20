@@ -25,6 +25,7 @@ for attempt in $(seq 1 60); do
 done
 curl -fsS http://127.0.0.1:8014/healthz
 P14_TASK4_SYNTHETIC=1 python3 synthetic-server/server/acceptance/task4_fixture.py seed > evidence/fixture.json
+P14_TASK4_SYNTHETIC=1 python3 synthetic-server/server/acceptance/task4_fixture.py scale --count 1200 > evidence/early-scale-seed.json
 test_run=0
 instrument() {
   local serial="$1" method="$2" klass="${3:-P14RecoveryInstrumentedTest}"
@@ -79,6 +80,28 @@ instrument "$A" uploaderMediaContract
 adb -s "$A" exec-out run-as me.rerere.rikkahub.debug cat files/task4-remote-contracts.json > evidence/task4-remote-contracts.json
 P14_TASK4_SYNTHETIC=1 python3 synthetic-server/server/acceptance/task4_media_contract.py --input evidence/task4-remote-contracts.json > evidence/media-contract-validation.json
 instrument "$B" deviceBContinue
+# Capture only a task-owned synthetic database after a real process stop; publish counts, not the DB.
+adb -s "$B" shell am force-stop me.rerere.rikkahub.debug
+snapshot="$RUNNER_TEMP/p14-bootstrap-snapshot.db"
+adb -s "$B" exec-out run-as me.rerere.rikkahub.debug cat databases/rikkahub-p14-product.db > "$snapshot"
+if adb -s "$B" shell run-as me.rerere.rikkahub.debug test -f databases/rikkahub-p14-product.db-wal; then
+  adb -s "$B" exec-out run-as me.rerere.rikkahub.debug cat databases/rikkahub-p14-product.db-wal > "$snapshot-wal"
+fi
+python3 - "$snapshot" <<'PY'
+import json,sqlite3,sys
+from pathlib import Path
+with sqlite3.connect(sys.argv[1]) as db:
+    entries=db.execute('SELECT COUNT(*) FROM p14_entries').fetchone()[0]
+    cursor=db.execute('SELECT MAX(last_sync_seq) FROM p14_product_sync_state').fetchone()[0]
+assert 1 <= entries <= 150, f'Cold device eagerly restored {entries} entries from 1200+ history'
+assert cursor > 0
+Path('evidence/large-history-android-bootstrap.json').write_text(json.dumps({
+    'server_synthetic_historical_entries':1200,'device_B_local_entries_after_cold_sync_and_one_older_page':entries,
+    'device_B_durable_cursor':cursor,'bounded_bootstrap':True,
+    'process_stopped_before_snapshot':True,'mid_transaction_kill_verified':False},indent=2)+'\n')
+PY
+rm -f "$snapshot" "$snapshot-wal" "$snapshot-shm"
+
 instrument "$B" materializeRemoteMedia
 adb -s "$B" shell am force-stop me.rerere.rikkahub.debug
 instrument "$B" verifyRemoteMedia
