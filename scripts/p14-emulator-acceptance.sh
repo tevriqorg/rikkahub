@@ -45,6 +45,12 @@ instrument "$A" seedOffline
 adb -s "$A" shell am force-stop me.rerere.rikkahub.debug
 adb -s "$A" shell monkey -p me.rerere.rikkahub.debug -c android.intent.category.LAUNCHER 1
 instrument "$A" verifyOffline
+# Android must reject a different certificate without deleting the existing synthetic data.
+if adb -s "$A" install -r evidence/apks/incompatible-ci.apk > evidence/incompatible-signature-install.txt 2>&1; then
+  echo "Unexpected incompatible signature install success"; exit 1
+fi
+grep -q INSTALL_FAILED_UPDATE_INCOMPATIBLE evidence/incompatible-signature-install.txt
+instrument "$A" verifyOffline
 # Reinstallation with the same certificate must preserve the synthetic Room records.
 adb -s "$A" install -r evidence/apks/app.apk
 instrument "$A" verifyOffline
@@ -53,9 +59,18 @@ instrument "$A" sharedTextUsesDurableComposer P14RecoveryUiInstrumentedTest
 adb -s "$A" shell svc wifi enable
 adb -s "$A" shell svc data enable
 instrument "$A" deviceASeed
+instrument "$A" uploaderMediaContract
+adb -s "$A" exec-out run-as me.rerere.rikkahub.debug cat files/task4-remote-contracts.json > evidence/task4-remote-contracts.json
+P14_TASK4_SYNTHETIC=1 python3 synthetic-server/server/acceptance/task4_media_contract.py --input evidence/task4-remote-contracts.json > evidence/media-contract-validation.json
 instrument "$B" deviceBContinue
+instrument "$B" deviceBMutations
+instrument "$B" seedInteractionOffline
+adb -s "$B" shell am force-stop me.rerere.rikkahub.debug
+instrument "$B" verifyInteractionRecovery
 adb -s "$A" shell am force-stop me.rerere.rikkahub.debug
 instrument "$A" deviceAVerify
+adb -s "$A" shell pm grant me.rerere.rikkahub.debug android.permission.ACCESS_COARSE_LOCATION
+instrument "$A" observationPolicy
 for serial in "$A" "$B"; do
   adb -s "$serial" shell am start -a android.intent.action.MAIN -c android.intent.category.LAUNCHER -p me.rerere.rikkahub.debug
   adb -s "$serial" shell uiautomator dump /sdcard/task4-ui.xml

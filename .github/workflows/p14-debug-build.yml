@@ -221,6 +221,7 @@ jobs:
           trap 'rm -rf "$RUNNER_TEMP/p14-signing"' EXIT
           printf '%s' "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/p14-signing/fixed.p12"
           printf '%s' "$STORE_PASSWORD" > "$RUNNER_TEMP/p14-signing/password"
+          cp app/build/outputs/apk/debug/app-x86_64-debug.apk evidence/apks/incompatible-ci.apk
           signer="$(find "$ANDROID_HOME/build-tools" -name apksigner | sort -V | tail -1)"
           "$signer" sign --ks "$RUNNER_TEMP/p14-signing/fixed.p12" --ks-key-alias p14-fixed-recovery --ks-pass "file:$RUNNER_TEMP/p14-signing/password" --out evidence/apks/app.apk app/build/outputs/apk/debug/app-x86_64-debug.apk
           testapk="$(find app/build/outputs/apk/androidTest -name '*.apk' | head -1)"
@@ -263,7 +264,7 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           name: p14-emulator-build-${{ github.sha }}
-          path: evidence
+          path: .
       - uses: actions/checkout@v4
         with:
           repository: tevriqorg/P14-Entry
@@ -294,6 +295,7 @@ jobs:
           test "$(git -C synthetic-server rev-parse HEAD)" = "$SERVER_SHA"
           printf '%s\n' "$SERVER_SHA" > evidence/server-source-sha.txt
           python -m pip install -e './synthetic-server/server[test]'
+          P14_TEST_DATABASE_URL=postgresql+psycopg://p14:synthetic-ci-only@127.0.0.1:5432/p14_task4 pytest synthetic-server/server/tests --junitxml=evidence/server-tests.xml
           yes | sdkmanager --licenses >/dev/null || true
           sdkmanager 'platform-tools' 'emulator' 'system-images;android-35;google_apis;x86_64'
           P14_TASK4_SYNTHETIC=1 P14_TEST_DATABASE_URL=postgresql+psycopg://p14:synthetic-ci-only@127.0.0.1:5432/p14_task4 python3 synthetic-server/server/acceptance/task4_fixture.py serve > evidence/server.log 2>&1 &
