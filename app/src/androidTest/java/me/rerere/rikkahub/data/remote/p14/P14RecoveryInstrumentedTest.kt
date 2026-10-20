@@ -233,6 +233,42 @@ class P14RecoveryInstrumentedTest {
         assertFalse("Resolved notification must disappear within bounded OS cancellation time", nm.activeNotifications.any { it.id == notification.notificationId.hashCode() })
     }
 
+    @Test fun networkOnline():Unit = verifyNetworkReachability(false)
+    @Test fun networkOffline():Unit = verifyNetworkReachability(true)
+
+    private fun verifyNetworkReachability(offline:Boolean) {
+        val base=requireNotNull(args.getString("p14BaseUrl"))
+        require(base.startsWith("http://10.0.2.2:8014/")) { "Synthetic emulator endpoint only" }
+        val health=base.substringBefore("/v1")+"/healthz"
+        val probe=OkHttpClient.Builder().retryOnConnectionFailure(false)
+            .connectTimeout(3,java.util.concurrent.TimeUnit.SECONDS)
+            .readTimeout(3,java.util.concurrent.TimeUnit.SECONDS)
+            .callTimeout(3,java.util.concurrent.TimeUnit.SECONDS).build()
+        val deadline=android.os.SystemClock.elapsedRealtime()+30000
+        var attempts=0
+        try {
+            while(true) {
+                attempts++
+                try {
+                    probe.newCall(Request.Builder().url(health).build()).execute().use { response ->
+                        assertFalse("No HTTP response may be received while offline; got ${response.code}",offline)
+                        assertEquals(200,response.code)
+                        assertTrue(requireNotNull(response.body).string().contains("p14-server"))
+                    }
+                    evidence("networkOnline PASS: app UID reached actual synthetic Server health; attempts=$attempts")
+                    return
+                } catch(failure:java.io.IOException) {
+                    if(offline) {
+                        evidence("networkOffline PASS: app UID cannot reach same synthetic Server endpoint; ${failure.javaClass.simpleName}")
+                        return
+                    }
+                    if(android.os.SystemClock.elapsedRealtime()>=deadline) throw failure
+                    android.os.SystemClock.sleep(500)
+                }
+            }
+        } finally { probe.dispatcher.executorService.shutdown();probe.connectionPool.evictAll() }
+    }
+
     @Test fun seedOffline() = runBlocking {
         assertNull("Offline phase must precede device pairing", P14RuntimeCredentialStore(context).activeConnection())
         val pcm = java.nio.ByteBuffer.allocate(1644).order(java.nio.ByteOrder.LITTLE_ENDIAN)

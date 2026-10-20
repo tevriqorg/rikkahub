@@ -503,7 +503,7 @@ private fun P14EntryScreen(
                 ElevatedCard(Modifier.fillMaxWidth()) {
                     Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                         Text("Entry", style = MaterialTheme.typography.titleMedium)
-                        Text(entry?.bodyText ?: "Waiting for authoritative Entry replay…")
+                        Text(entry?.bodyText ?: "Waiting for authoritative Entry replay…", modifier=Modifier.testTag("p14-entry-body"))
                         Text(
                             "Manifest: ${manifest.compatibility} · ${manifest.source}",
                             style = MaterialTheme.typography.labelSmall,

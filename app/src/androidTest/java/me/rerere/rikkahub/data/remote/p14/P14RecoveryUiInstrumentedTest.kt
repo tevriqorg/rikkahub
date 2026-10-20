@@ -13,7 +13,11 @@ import org.koin.core.context.GlobalContext
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
+import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertTextEquals
+import androidx.compose.ui.test.hasTestTag
+import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createEmptyComposeRule
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onAllNodesWithText
@@ -63,8 +67,108 @@ class P14RecoveryUiInstrumentedTest {
         }
     }
 
+    /** Exercise the actual Save Entry button while no runtime credential/network is available. */
+    @Test fun saveCaptureOfflineFromUi():Unit = runBlocking {
+        assertNull(P14RuntimeCredentialStore(context).activeConnection())
+        val database=P14ProductDatabase.get(context)
+        val dao=database.dao()
+        val prefs=context.getSharedPreferences("task4-evidence",Context.MODE_PRIVATE)
+        val originalConversation=requireNotNull(prefs.getString("offline-conversation",null))
+        val originalMessages=dao.listMessages(originalConversation)
+        val originalVoice=dao.attachmentsForMessage("ae800001-0000-4000-8000-000000000001")
+        val text="task4-ui-saved-"+java.util.UUID.randomUUID()
+        val intent=Intent(context,P14EntryActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        ActivityScenario.launch<P14EntryActivity>(intent).use {
+            compose.onNodeWithText("Capture").performClick()
+            compose.onNodeWithText("Text / URL / shared material").performScrollTo().performTextReplacement(text)
+            val draft=P14CaptureDraftStore(context).read()
+            assertEquals(text,draft.text)
+            assertTrue("This test preserves the existing owned synthetic file",draft.materials.isNotEmpty())
+            val materialHashes=draft.materials.map { row -> captureFileHash(row.locator) }.sorted()
+            assertNull("Save must create a new accepted message",dao.message(draft.messageId))
+            compose.onNodeWithText("Save Entry").performScrollTo().assertIsEnabled().performClick()
+            val conversation=kotlinx.coroutines.withTimeout(15000) {
+                var saved=dao.conversationByExternalSession(draft.draftId)
+                while(saved==null) {
+                    kotlinx.coroutines.delay(50)
+                    saved=dao.conversationByExternalSession(draft.draftId)
+                }
+                requireNotNull(saved)
+            }
+            assertEquals(text,requireNotNull(dao.entry(conversation.entryId)).bodyText)
+            val message=requireNotNull(dao.message(draft.messageId))
+            assertEquals(conversation.conversationId,message.conversationId)
+            assertEquals(text,message.bodyText)
+            assertEquals("LOCAL_PENDING",message.deliveryState)
+            val pending=dao.pendingOutbox().single { row -> row.messageId==draft.messageId }
+            assertEquals(conversation.entryId,pending.entryId)
+            assertEquals(conversation.conversationId,pending.conversationId)
+            assertEquals("PENDING",pending.state)
+            val materials=dao.attachmentsForMessage(draft.messageId)
+            assertEquals(draft.materials.size,materials.size)
+            assertEquals(materialHashes,materials.map { row -> captureFileHash(row.localLocator) }.sorted())
+            materials.forEach { row ->
+                val file=java.io.File(requireNotNull(android.net.Uri.parse(row.localLocator).path))
+                assertTrue("Accepted Capture source must be a durable nonempty file",file.isFile && file.length()>0)
+            }
+            awaitEntryBody(text)
+            assertEquals("",P14CaptureDraftStore(context).read().text)
+            assertNull(P14RuntimeCredentialStore(context).activeConnection())
+            assertEquals(originalMessages,dao.listMessages(originalConversation))
+            assertEquals(originalVoice,dao.attachmentsForMessage("ae800001-0000-4000-8000-000000000001"))
+            assertTrue(prefs.edit().putString("ui-saved-entry",conversation.entryId)
+                .putString("ui-saved-conversation",conversation.conversationId)
+                .putString("ui-saved-message",draft.messageId).putString("ui-saved-operation",pending.clientOperationId)
+                .putString("ui-saved-text",text).putInt("ui-saved-materials",materials.size)
+                .putString("ui-saved-material-hashes",materialHashes.joinToString(",")).commit())
+            android.util.Log.i("P14_TASK4","saveCaptureOfflineFromUi PASS: actual Save Entry button durably accepted mixed text/file, visible Entry and pending Outbox without credentials; original offline voice unchanged")
+        }
+    }
+
+    /** The external script force-stops the application between these two methods. */
+    @Test fun verifyUiSavedCapture():Unit = runBlocking {
+        assertNull(P14RuntimeCredentialStore(context).activeConnection())
+        val prefs=context.getSharedPreferences("task4-evidence",Context.MODE_PRIVATE)
+        val entryId=requireNotNull(prefs.getString("ui-saved-entry",null))
+        val conversationId=requireNotNull(prefs.getString("ui-saved-conversation",null))
+        val messageId=requireNotNull(prefs.getString("ui-saved-message",null))
+        val operationId=requireNotNull(prefs.getString("ui-saved-operation",null))
+        val text=requireNotNull(prefs.getString("ui-saved-text",null))
+        val dao=P14ProductDatabase.get(context).dao()
+        assertEquals(text,requireNotNull(dao.entry(entryId)).bodyText)
+        assertEquals(entryId,requireNotNull(dao.conversation(conversationId)).entryId)
+        assertEquals(text,requireNotNull(dao.message(messageId)).bodyText)
+        assertEquals("LOCAL_PENDING",requireNotNull(dao.message(messageId)).deliveryState)
+        val pending=dao.pendingOutbox().single { row -> row.clientOperationId==operationId }
+        assertEquals(messageId,pending.messageId)
+        assertEquals("PENDING",pending.state)
+        assertEquals(1,dao.listMessages(conversationId).count { row -> row.messageId==messageId })
+        val materials=dao.attachmentsForMessage(messageId)
+        assertEquals(prefs.getInt("ui-saved-materials",-1),materials.size)
+        assertEquals(requireNotNull(prefs.getString("ui-saved-material-hashes",null)).split(","),
+            materials.map { row -> captureFileHash(row.localLocator) }.sorted())
+        materials.forEach { row ->
+            val file=java.io.File(requireNotNull(android.net.Uri.parse(row.localLocator).path))
+            assertTrue(file.isFile && file.length()>0)
+        }
+        val intent=Intent(context,P14EntryActivity::class.java)
+            .putExtra(P14EntryActivity.EXTRA_CONVERSATION_ID,conversationId).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        ActivityScenario.launch<P14EntryActivity>(intent).use {
+            awaitEntryBody(text)
+        }
+        assertNull(P14RuntimeCredentialStore(context).activeConnection())
+        android.util.Log.i("P14_TASK4","verifyUiSavedCapture PASS after external force-stop: actual UI-saved Entry, message, file and stable pending operation survived and reopened visibly; no upload claimed")
+    }
+
+    private fun captureFileHash(locator:String):String {
+        val file=java.io.File(requireNotNull(android.net.Uri.parse(locator).path))
+        assertTrue(file.isFile && file.length()>0)
+        return java.security.MessageDigest.getInstance("SHA-256").digest(file.readBytes())
+            .joinToString("") { byte -> "%02x".format(byte) }
+    }
+
     /** Actual SystemUI notification click; the cold target is not pre-seeded by the test. */
-    @Test fun realNotificationOpensEntry() = runBlocking {
+    @Test fun realNotificationOpensEntry():Unit = runBlocking {
         val instrumentation=InstrumentationRegistry.getInstrumentation()
         val args=InstrumentationRegistry.getArguments()
         val notificationId=requireNotNull(args.getString("p14NotificationId"))
@@ -110,9 +214,7 @@ class P14RecoveryUiInstrumentedTest {
             assertEquals(conversationId,activity!!.intent.getStringExtra(P14EntryActivity.EXTRA_CONVERSATION_ID))
             assertEquals(notificationId,activity!!.intent.getStringExtra(P14EntryActivity.EXTRA_NOTIFICATION_ID))
             val expectedBody="Synthetic task4 fixture; not generated by Hermes"
-            compose.waitUntil(timeoutMillis=20000) { compose.onAllNodesWithText(expectedBody).fetchSemanticsNodes().isNotEmpty() }
-            // The Entry header and its source message legitimately repeat this body.
-            compose.onAllNodesWithText(expectedBody)[0].assertIsDisplayed()
+            awaitEntryBody(expectedBody)
             assertEquals(entryId,requireNotNull(product.conversationForId(conversationId)).entryId)
             assertEquals(cursorBefore,product.currentCursor())
             assertEquals(beforeId,bootstrap.getString("before_id",null))
@@ -121,6 +223,13 @@ class P14RecoveryUiInstrumentedTest {
             activity?.let { opened -> instrumentation.runOnMainSync { opened.finish() } }
             instrumentation.removeMonitor(monitor)
         }
+    }
+
+    private fun awaitEntryBody(text:String) {
+        compose.waitUntil(timeoutMillis=20000) {
+            compose.onAllNodes(hasTestTag("p14-entry-body") and hasText(text)).fetchSemanticsNodes().isNotEmpty()
+        }
+        compose.onNodeWithTag("p14-entry-body").assertTextEquals(text).assertIsDisplayed()
     }
 
 }

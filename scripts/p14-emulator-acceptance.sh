@@ -104,19 +104,10 @@ PY
 }
 
 network_probe() {
-  local serial="$1" mode="$2" result=0 report="evidence/$1-network-$2.txt"
-  adb -s "$serial" get-state | grep -qx device || return 1
-  printf 'GET /healthz HTTP/1.1\r\nHost: 10.0.2.2\r\nConnection: close\r\n\r\n' | timeout 8 adb -s "$serial" shell toybox nc -w 3 10.0.2.2 8014 > "$report" 2>&1 || result=$?
-  printf '\nprobe_exit=%s\n' "$result" >> "$report"
-  adb -s "$serial" get-state | grep -qx device || return 1
-  if [ "$mode" = offline ]; then
-    ! grep -Eq 'HTTP/[0-9.]+ [0-9]{3}' "$report" || return 1
-    test "$result" = 1 || test "$result" = 124
-  else
-    test "$result" = 0 || return 1
-    grep -Eq 'HTTP/1\.[01] 200' "$report"
-  fi
+  local serial="$1" mode="$2"
+  if [ "$mode" = offline ]; then instrument "$serial" networkOffline; else instrument "$serial" networkOnline; fi
 }
+
 A=emulator-5554
 B=emulator-5556
 network_probe "$A" online-before
@@ -145,13 +136,12 @@ instrument "$A" verifyOffline
 ui_failed=0
 instrument "$A" captureAndProfileUi P14RecoveryUiInstrumentedTest || ui_failed=1
 instrument "$A" sharedTextUsesDurableComposer P14RecoveryUiInstrumentedTest || ui_failed=1
+instrument "$A" saveCaptureOfflineFromUi P14RecoveryUiInstrumentedTest || ui_failed=1
+adb -s "$A" shell am force-stop me.rerere.rikkahub.debug
+instrument "$A" verifyUiSavedCapture P14RecoveryUiInstrumentedTest || ui_failed=1
 adb -s "$A" shell svc wifi enable
 adb -s "$A" shell svc data enable
-for attempt in $(seq 1 15); do
-  if network_probe "$A" online-restored; then break; fi
-  sleep 2
-done
-grep -Eq 'HTTP/1\.[01] 200' "evidence/$A-network-online-restored.txt"
+network_probe "$A" online-restored
 instrument "$A" deviceASeed
 instrument "$A" uploaderMediaContract
 adb -s "$A" exec-out run-as me.rerere.rikkahub.debug cat files/task4-remote-contracts.json > evidence/task4-remote-contracts.json
@@ -200,11 +190,7 @@ instrument "$B" seedInteractionOffline
 adb -s "$B" shell am force-stop me.rerere.rikkahub.debug
 adb -s "$B" shell svc wifi enable
 adb -s "$B" shell svc data enable
-for attempt in $(seq 1 15); do
-  if network_probe "$B" online-restored; then break; fi
-  sleep 2
-done
-grep -Eq 'HTTP/1\.[01] 200' "evidence/$B-network-online-restored.txt"
+network_probe "$B" online-restored
 instrument "$B" verifyInteractionRecovery
 adb -s "$A" shell am force-stop me.rerere.rikkahub.debug
 instrument "$A" deviceAVerify
