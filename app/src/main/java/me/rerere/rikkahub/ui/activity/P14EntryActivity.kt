@@ -665,6 +665,17 @@ private fun P14EntryScreen(
                         Text(message.role.uppercase(), style = MaterialTheme.typography.labelSmall)
                         Text(if (message.tombstone) "[deleted]" else message.bodyText)
                         if (count > 0) Text("$count attachment(s)", style = MaterialTheme.typography.labelSmall)
+                        attachments.filter { it.messageId==message.messageId }.forEach { attachment ->
+                            TextButton(onClick={ scope.launch {
+                                status=runCatching {
+                                    val file=withContext(Dispatchers.IO) { product.materializeAttachment(attachment.localAttachmentId) }
+                                    val content=FileProvider.getUriForFile(context,"${context.packageName}.fileprovider",File(requireNotNull(file.path)))
+                                    context.startActivity(Intent(Intent.ACTION_VIEW).setDataAndType(content,attachment.mimeType)
+                                        .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION))
+                                    "Opened ${attachment.fileName}"
+                                }.getOrElse { it.message ?: "Media unavailable; retry when connected" }
+                            } }) { Text("Open ${attachment.kind.lowercase()}: ${attachment.fileName}") }
+                        }
                         Text("${message.deliveryState} · rev ${message.revision}", style = MaterialTheme.typography.labelSmall)
                     }
                 }

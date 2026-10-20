@@ -251,8 +251,8 @@ class P14RecoveryInstrumentedTest {
 
     private suspend fun pair(): P14RuntimeConnection {
         val base = requireNotNull(args.getString("p14BaseUrl"))
-        val token = requireNotNull(args.getString("p14OwnerToken"))
-        require(token == "task4-owner-synthetic-only") { "Synthetic fixture only" }
+        val token = args.getString("p14SetupToken") ?: requireNotNull(args.getString("p14OwnerToken"))
+        require(token in setOf("task4-owner-synthetic-only", "task4-setup-synthetic-only")) { "Synthetic fixture only" }
         require(base.startsWith("http://10.0.2.2:")) { "Emulator fixture only" }
         val provider = ProviderSetting.OpenAI(id = Uuid.parse("ae800003-0000-4000-8000-000000000001"), name = "P14 Task4 synthetic", baseUrl = base, apiKey = token)
         settings().update { it.copy(providers = it.providers.filterNot { p -> p.id == provider.id } + provider) }
@@ -292,6 +292,50 @@ class P14RecoveryInstrumentedTest {
         args.getString("p14NotificationId")?.let { assertNotNull(remote().notification(it)) }
         assertTrue(repository.currentCursor() > 0)
         evidence("deviceBContinue PASS: independent device bootstrap/lazy history, same Entry conversation continuation + durable Inbox; conversation=${entry.conversationId}")
+    }
+
+    @Test fun materializeRemoteMedia() = runBlocking {
+        val entryId=requireNotNull(args.getString("p14MediaEntryId"))
+        val messageId=requireNotNull(args.getString("p14MediaMessageId"))
+        product().loadEntryHistory(entryId)
+        val row=P14ProductDatabase.get(context).dao().attachmentsForMessage(messageId).single {
+            it.remoteAttachmentId==args.getString("p14MediaAttachmentId")
+        }
+        assertEquals("VOICE",row.kind)
+        assertEquals("audio/wav",row.mimeType)
+        val uri=product().materializeAttachment(row.localAttachmentId)
+        verifyMediaFile(uri)
+        context.getSharedPreferences("task4-evidence",Context.MODE_PRIVATE).edit()
+            .putString("remote-media-local-id",row.localAttachmentId).putString("remote-media-locator",uri.toString()).commit()
+        product().loadEntryHistory(entryId)
+        val replayed=requireNotNull(P14ProductDatabase.get(context).dao().attachment(row.localAttachmentId))
+        assertEquals(uri.toString(),replayed.localLocator)
+        assertNotNull(recoverP14AttachmentPart(replayed))
+        evidence("materializeRemoteMedia PASS: second-device authenticated binary download size/hash checked, VOICE identity retained, history refresh retains managed locator; standard Server attachment path, not P20 upload")
+    }
+
+    @Test fun verifyRemoteMedia() = runBlocking {
+        val prefs=context.getSharedPreferences("task4-evidence",Context.MODE_PRIVATE)
+        val id=requireNotNull(prefs.getString("remote-media-local-id",null))
+        val expected=requireNotNull(prefs.getString("remote-media-locator",null))
+        val row=requireNotNull(P14ProductDatabase.get(context).dao().attachment(id))
+        assertEquals(expected,row.localLocator)
+        val uri=product().materializeAttachment(id)
+        assertEquals(expected,uri.toString())
+        verifyMediaFile(uri)
+        val restored=recoverP14AttachmentPart(row)
+        assertTrue(restored is UIMessagePart.Audio)
+        assertEquals("VOICE",durableP14AudioKind(restored as UIMessagePart.Audio))
+        evidence("verifyRemoteMedia PASS after external force-stop: app-owned remote binary and VOICE recovered without old device or reupload")
+    }
+
+    private fun verifyMediaFile(uri:Uri) {
+        val file=File(requireNotNull(uri.path))
+        assertTrue(file.canonicalPath.startsWith(File(context.filesDir,"p14_remote_media").canonicalPath+"/"))
+        assertEquals(requireNotNull(args.getString("p14MediaByteSize")).toLong(),file.length())
+        val digest=java.security.MessageDigest.getInstance("SHA-256")
+        file.inputStream().use { input -> val buffer=ByteArray(8192);while(true) { val n=input.read(buffer);if(n<0) break;digest.update(buffer,0,n) } }
+        assertEquals(args.getString("p14MediaSha256"),digest.digest().joinToString("") { "%02x".format(it) })
     }
 
     @Test fun uploaderMediaContract() = runBlocking {

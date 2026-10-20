@@ -31,6 +31,9 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import java.security.MessageDigest
+import java.io.File
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import java.time.OffsetDateTime
 import java.time.Instant
 import java.net.URLConnection
@@ -372,11 +375,7 @@ internal class P14ProductRepository(
                 }
                 item["attachments"]?.jsonArray?.forEach { a ->
                     val att=a.jsonObject
-                    val rid=att.requiredString("attachment_id")
-                    dao.upsertAttachment(P14ProductAttachmentEntity("remote:$rid",rid,mid,convoId,
-                        att.stringOrEmpty("kind"),att.stringOrEmpty("mime_type"),att.stringOrEmpty("file_name"),"",
-                        att["byte_size"]?.jsonPrimitive?.longOrNull,
-                        att["duration_ms"]?.jsonPrimitive?.longOrNull,"SYNCED",time))
+                    storeRemoteAttachment(att, mid, convoId, time)
                 }
             }
         }
@@ -464,23 +463,85 @@ internal class P14ProductRepository(
         dao.markMessageSynced(messageId)
         item["attachments"]?.jsonArray?.forEachIndexed { index, raw ->
             val a = raw.jsonObject
-            val remoteId = a.requiredString("attachment_id")
-            dao.upsertAttachment(
-                P14ProductAttachmentEntity(
-                    localAttachmentId = "remote:$remoteId",
-                    remoteAttachmentId = remoteId,
-                    messageId = messageId,
-                    conversationId = conversationId,
-                    kind = a.stringOrEmpty("kind").ifBlank { "FILE" },
-                    mimeType = a.stringOrEmpty("mime_type").ifBlank { "application/octet-stream" },
-                    fileName = a.stringOrEmpty("file_name").ifBlank { "attachment" },
-                    localLocator = "",
-                    byteSize = a["byte_size"]?.jsonPrimitive?.longOrNull,
-                    durationMs = a["duration_ms"]?.jsonPrimitive?.longOrNull,
-                    state = "SYNCED",
-                    createdAtEpochMs = (existingMessage?.createdAtEpochMs ?: System.currentTimeMillis()) + index,
-                )
-            )
+            storeRemoteAttachment(a, messageId, conversationId,
+                (existingMessage?.createdAtEpochMs ?: System.currentTimeMillis()) + index)
+        }
+    }
+
+    /** Replay and history refresh must not erase an already materialized original. */
+    private suspend fun storeRemoteAttachment(item:JsonObject,messageId:String,conversationId:String,time:Long) {
+        val remoteId=item.requiredString("attachment_id")
+        val prior=dao.attachmentsForMessage(messageId).firstOrNull { it.remoteAttachmentId==remoteId }
+        dao.upsertAttachment(P14ProductAttachmentEntity(
+            prior?.localAttachmentId ?: "remote:$remoteId",remoteId,messageId,conversationId,
+            item.stringOrEmpty("kind").ifBlank { "FILE" },
+            item.stringOrEmpty("mime_type").ifBlank { "application/octet-stream" },
+            item.stringOrEmpty("file_name").ifBlank { "attachment" },
+            prior?.localLocator.orEmpty(),item["byte_size"]?.jsonPrimitive?.longOrNull,
+            item["duration_ms"]?.jsonPrimitive?.longOrNull,"SYNCED",prior?.createdAtEpochMs ?: time))
+    }
+
+    /** Lazy authenticated binary retrieval; wire content_url is deliberately never trusted.
+     * Metadata stays available while download fails. An incomplete temp file is never a locator.
+     */
+    suspend fun materializeAttachment(localAttachmentId:String):Uri = withContext(Dispatchers.IO) {
+        mediaDownloadMutex.withLock {
+            val attachment=requireNotNull(dao.attachment(localAttachmentId)) { "Attachment metadata unavailable" }
+            attachment.localLocator.takeIf { it.startsWith("file:") }?.let { locator ->
+                val file=Uri.parse(locator).path?.let(::File)
+                if(file?.isFile==true) return@withLock Uri.fromFile(file)
+            }
+            val connection=credentialStore.activeConnection() ?: error("Pair P14 before downloading media")
+            val remoteId=requireNotNull(attachment.remoteAttachmentId) { "Attachment has not reached Server" }
+            val metadataUrl=connection.baseUrl.toHttpUrl().newBuilder().addPathSegment("attachments").addPathSegment(remoteId).build()
+            val mediaHttp=http.newBuilder().followRedirects(false).followSslRedirects(false).build()
+            val metadataRequest=Request.Builder().url(metadataUrl).header("Authorization","Bearer ${connection.bearerToken}").get().build()
+            val metadata=mediaHttp.newCall(metadataRequest).execute().use { response ->
+                if(!response.isSuccessful) throw P14RemoteHttpException(response.code,"Attachment metadata unavailable")
+                json.parseToJsonElement(requireNotNull(response.body).string()).jsonObject
+            }
+            require(metadata.requiredString("attachment_id")==remoteId && metadata.stringOrEmpty("state")=="READY") { "Attachment is not ready" }
+            val expectedSize=requireNotNull(metadata["byte_size"]?.jsonPrimitive?.longOrNull) { "Attachment size unavailable" }
+            require(expectedSize in 0..MAX_DOWNLOAD_BYTES) { "Attachment exceeds download limit" }
+            attachment.byteSize?.let { require(it==expectedSize) { "Attachment size changed" } }
+            val expectedHash=metadata["sha256"]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() }
+            expectedHash?.let { require(it.matches(Regex("[0-9a-fA-F]{64}"))) { "Invalid attachment digest" } }
+            val root=File(appContext.filesDir,"p14_remote_media").apply { mkdirs() }
+            val identity=MessageDigest.getInstance("SHA-256").digest(remoteId.toByteArray()).joinToString("") { "%02x".format(it) }
+            val extension=android.webkit.MimeTypeMap.getSingleton().getExtensionFromMimeType(attachment.mimeType)
+                ?.takeIf { it.length in 1..8 && it.all(Char::isLetterOrDigit) }
+            val destination=File(root,identity+(extension?.let { ".$it" } ?: ".bin"))
+            val temporary=File.createTempFile("download-", ".part",root)
+            try {
+                val contentUrl=metadataUrl.newBuilder().addPathSegment("content").build()
+                val request=Request.Builder().url(contentUrl).header("Authorization","Bearer ${connection.bearerToken}").get().build()
+                mediaHttp.newCall(request).execute().use { response ->
+                    if(!response.isSuccessful) throw P14RemoteHttpException(response.code,"Attachment content unavailable")
+                    val body=requireNotNull(response.body) { "Attachment body missing" }
+                    val announced=body.contentLength()
+                    require(announced<0 || announced==expectedSize) { "Attachment content length changed" }
+                    val digest=MessageDigest.getInstance("SHA-256")
+                    var total=0L
+                    body.byteStream().use { input -> temporary.outputStream().use { output ->
+                        val buffer=ByteArray(64*1024)
+                        while(true) {
+                            val count=input.read(buffer)
+                            if(count<0) break
+                            total+=count
+                            require(total<=expectedSize && total<=MAX_DOWNLOAD_BYTES) { "Attachment stream exceeds size" }
+                            digest.update(buffer,0,count);output.write(buffer,0,count)
+                        }
+                        output.fd.sync()
+                    } }
+                    require(total==expectedSize) { "Attachment stream incomplete" }
+                    val hash=digest.digest().joinToString("") { "%02x".format(it) }
+                    expectedHash?.let { require(hash.equals(it,ignoreCase=true)) { "Attachment digest mismatch" } }
+                }
+                check(temporary.renameTo(destination)) { "Cannot finalize attachment download" }
+                val locator=Uri.fromFile(destination)
+                dao.setAttachmentLocalLocator(localAttachmentId,locator.toString())
+                locator
+            } finally { temporary.delete() }
         }
     }
 
@@ -724,6 +785,8 @@ internal class P14ProductRepository(
 
     companion object {
         private const val SYNC_SCOPE = "account"
+        private const val MAX_DOWNLOAD_BYTES=512L*1024*1024
+        private val mediaDownloadMutex=Mutex()
         private val JSON_MEDIA = "application/json; charset=utf-8".toMediaType()
     }
 }

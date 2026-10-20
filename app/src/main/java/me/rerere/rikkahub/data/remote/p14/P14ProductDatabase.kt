@@ -172,6 +172,8 @@ interface P14ProductDao {
     @Upsert suspend fun upsertConversation(item: P14ProductConversationEntity)
     @Upsert suspend fun upsertMessage(item: P14ProductMessageEntity)
     @Upsert suspend fun upsertAttachment(item: P14ProductAttachmentEntity)
+    @Query("SELECT * FROM p14_attachments WHERE local_attachment_id=:id LIMIT 1") suspend fun attachment(id:String):P14ProductAttachmentEntity?
+    @Query("UPDATE p14_attachments SET local_locator=:locator WHERE local_attachment_id=:id") suspend fun setAttachmentLocalLocator(id:String,locator:String)
     @Insert(onConflict = OnConflictStrategy.IGNORE) suspend fun insertOutbox(item: P14ChatOutboxEntity): Long
     @Upsert suspend fun upsertSyncState(item: P14ProductSyncStateEntity)
 
