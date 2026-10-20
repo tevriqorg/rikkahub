@@ -34,6 +34,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.launch
@@ -248,15 +249,15 @@ private fun P14EntryScreen(
     var historyLimit by remember(conversationId) { mutableIntStateOf(50) }
     LaunchedEffect(conversationId,historyLimit) {
         val id=conversationId ?: return@LaunchedEffect
-        val entryId=product.conversationForId(id)?.entryId ?: return@LaunchedEffect
         runCatching {
+            val entryId=product.ensureConversationForId(id)?.entryId ?: error("Entry context is unavailable")
             for (offset in 0 until historyLimit step 100) {
                 val count=minOf(100,historyLimit-offset)
                 val loaded=product.loadEntryHistory(entryId,offset,count)
                 if(loaded<count) break
             }
             product.hydrateEntryState(entryId,id)
-        }
+        }.onFailure { status=it.message ?: "Entry history unavailable" }
     }
     val productConversation = if (conversationId != null) product.conversationFlow(conversationId!!).collectAsState(initial = null).value else null
     val entry = if (productConversation != null) product.entryFlow(productConversation.entryId).collectAsState(initial = null).value else null
@@ -325,8 +326,9 @@ private fun P14EntryScreen(
         },
     ) { padding ->
         if (conversationId==null) {
-            Column(Modifier.padding(padding).fillMaxSize().padding(12.dp), verticalArrangement=Arrangement.spacedBy(10.dp)) {
-                if(profileOpen) {
+            LazyColumn(Modifier.padding(padding).fillMaxSize().testTag("p14-entry-list"),
+                contentPadding=PaddingValues(12.dp), verticalArrangement=Arrangement.spacedBy(10.dp)) {
+                if(profileOpen) item(key="profile-panel") {
                     ElevatedCard(Modifier.fillMaxWidth()) {
                         Column(Modifier.padding(12.dp), verticalArrangement=Arrangement.spacedBy(8.dp)) {
                             Text("Profile / Capability (portable YAML; no secrets)",style=MaterialTheme.typography.titleMedium)
@@ -346,7 +348,7 @@ private fun P14EntryScreen(
                         }
                     }
                 }
-                if(captureOpen) {
+                if(captureOpen) item(key="capture-panel") {
                     ElevatedCard(Modifier.fillMaxWidth()) {
                         Column(Modifier.padding(12.dp), verticalArrangement=Arrangement.spacedBy(8.dp)) {
                             Text("Mixed Capture · Save first, process later",style=MaterialTheme.typography.titleMedium)
@@ -452,45 +454,45 @@ private fun P14EntryScreen(
                         }
                     }
                 }
-                status?.let{Text(it,style=MaterialTheme.typography.bodySmall)}
-                Text("Entry history · server-synced and local",style=MaterialTheme.typography.titleMedium)
-                Row(horizontalArrangement=Arrangement.spacedBy(4.dp),modifier=Modifier.fillMaxWidth()) {
-                    listOf("chat","todo","idea","research","execute").filter{it in manifest.enabledViews}.forEach { view ->
-                        TextButton(onClick={ selectedView=view;directoryPage=0;directory=emptyList() },
-                            contentPadding=PaddingValues(horizontal=4.dp)) {
-                            Text(if (view==selectedView) view.uppercase() else view)
-                        }
-                    }
-                }
-                workError?.let { Text(it,style=MaterialTheme.typography.labelSmall) }
-                LazyColumn(verticalArrangement=Arrangement.spacedBy(7.dp),modifier=Modifier.weight(1f)) {
-                    if(selectedView!="chat") items(workItems,key={it.source+it.sourceId}) { item ->
-                        OutlinedCard(onClick={scope.launch {
-                            val cid=item.conversationId ?: return@launch
-                            product.seedWorkEntry(item.entryId,cid,item.bodyText.orEmpty())
-                            conversationId=cid
-                        }},modifier=Modifier.fillMaxWidth()) {
-                            Column(Modifier.padding(12.dp)) {
-                                Text("${item.kind} · ${item.status}",style=MaterialTheme.typography.titleSmall)
-                                item.phase?.let { Text(it) }
-                                item.progressPercent?.let { Text("$it%") }
-                                item.resultText?.let { Text(it) }
+                status?.let { message -> item(key="status") { Text(message,style=MaterialTheme.typography.bodySmall) } }
+                item(key="history-title") { Text("Entry history · server-synced and local",style=MaterialTheme.typography.titleMedium) }
+                item(key="view-filter") {
+                    Row(horizontalArrangement=Arrangement.spacedBy(4.dp),modifier=Modifier.fillMaxWidth()) {
+                        listOf("chat","todo","idea","research","execute").filter{it in manifest.enabledViews}.forEach { view ->
+                            TextButton(onClick={ selectedView=view;directoryPage=0;directory=emptyList() },
+                                contentPadding=PaddingValues(horizontal=4.dp)) {
+                                Text(if (view==selectedView) view.uppercase() else view)
                             }
                         }
                     }
-                    if(selectedView=="chat") items(directory,key={it.conversationId}) { item ->
-                        OutlinedCard(onClick={conversationId=item.conversationId},modifier=Modifier.fillMaxWidth()) {
-                            Column(Modifier.padding(12.dp)) {
-                                Text(item.bodyText.take(150).ifBlank{"Entry ${item.entryId}"})
-                                Text("${if(item.pinned) "Pinned · " else ""}${if(item.archived) "Archived" else "Active"}",style=MaterialTheme.typography.labelSmall)
-                            }
+                }
+                workError?.let { message -> item(key="work-error") { Text(message,style=MaterialTheme.typography.labelSmall) } }
+                if(selectedView!="chat") items(workItems,key={"work:${it.source}:${it.sourceId}"}) { item ->
+                    OutlinedCard(onClick={scope.launch {
+                        val cid=item.conversationId ?: return@launch
+                        product.seedWorkEntry(item.entryId,cid,item.bodyText.orEmpty())
+                        conversationId=cid
+                    }},modifier=Modifier.fillMaxWidth()) {
+                        Column(Modifier.padding(12.dp)) {
+                            Text("${item.kind} · ${item.status}",style=MaterialTheme.typography.titleSmall)
+                            item.phase?.let { Text(it) }
+                            item.progressPercent?.let { Text("$it%") }
+                            item.resultText?.let { Text(it) }
                         }
                     }
-                    if(directoryHasMore || (selectedView!="chat" && workItems.size >= (directoryPage+1)*20)) item {
-                        TextButton(onClick={directoryPage++}){Text("Load more")}
+                }
+                if(selectedView=="chat") items(directory,key={"conversation:${it.conversationId}"}) { item ->
+                    OutlinedCard(onClick={conversationId=item.conversationId},modifier=Modifier.fillMaxWidth()) {
+                        Column(Modifier.padding(12.dp)) {
+                            Text(item.bodyText.take(150).ifBlank{"Entry ${item.entryId}"})
+                            Text("${if(item.pinned) "Pinned · " else ""}${if(item.archived) "Archived" else "Active"}",style=MaterialTheme.typography.labelSmall)
+                        }
                     }
                 }
-                OutlinedButton(onClick={directoryPage=0;refreshContext++}) {Text("Refresh Entry list")}
+                if(directoryHasMore || (selectedView!="chat" && workItems.size >= (directoryPage+1)*20)) item {
+                    TextButton(onClick={directoryPage++}){Text("Load more")}
+                }
+                item(key="refresh") { OutlinedButton(onClick={directoryPage=0;refreshContext++}) {Text("Refresh Entry list")} }
             }
         } else LazyColumn(
             Modifier.padding(padding).fillMaxSize(),

@@ -28,10 +28,10 @@ for serial in emulator-5554 emulator-5556; do
   adb -s "$serial" shell settings put global window_animation_scale 0
   adb -s "$serial" shell settings put global transition_animation_scale 0
   adb -s "$serial" shell settings put global animator_duration_scale 0
-  adb -s "$serial" install -r evidence/apks/app.apk
-  adb -s "$serial" install -r evidence/apks/test.apk
+  adb -s "$serial" install --no-incremental -r evidence/apks/app.apk
+  adb -s "$serial" install --no-incremental -r evidence/apks/test.apk
   installed_path="$(adb -s "$serial" shell pm path me.rerere.rikkahub.debug | sed -n 's/^package://p' | tr -d '\r')"
-  adb -s "$serial" pull "$installed_path" "$RUNNER_TEMP/$serial-installed.apk"
+  timeout 120 adb -s "$serial" pull "$installed_path" "$RUNNER_TEMP/$serial-installed.apk"
   cmp evidence/apks/app.apk "$RUNNER_TEMP/$serial-installed.apk"
   sha256sum "$RUNNER_TEMP/$serial-installed.apk" > "evidence/$serial-installed-apk-sha256.txt"
   rm -f "$RUNNER_TEMP/$serial-installed.apk"
@@ -114,13 +114,13 @@ adb -s "$A" shell am force-stop me.rerere.rikkahub.debug
 adb -s "$A" shell monkey -p me.rerere.rikkahub.debug -c android.intent.category.LAUNCHER 1
 instrument "$A" verifyOffline
 # Android must reject a different certificate without deleting the existing synthetic data.
-if adb -s "$A" install -r evidence/apks/incompatible-ci.apk > evidence/incompatible-signature-install.txt 2>&1; then
+if adb -s "$A" install --no-incremental -r evidence/apks/incompatible-ci.apk > evidence/incompatible-signature-install.txt 2>&1; then
   echo "Unexpected incompatible signature install success"; exit 1
 fi
 grep -q INSTALL_FAILED_UPDATE_INCOMPATIBLE evidence/incompatible-signature-install.txt
 instrument "$A" verifyOffline
 # Reinstallation with the same certificate must preserve the synthetic Room records.
-adb -s "$A" install -r evidence/apks/app.apk
+adb -s "$A" install --no-incremental -r evidence/apks/app.apk
 instrument "$A" verifyOffline
 ui_failed=0
 instrument "$A" captureAndProfileUi P14RecoveryUiInstrumentedTest || ui_failed=1
@@ -137,6 +137,7 @@ adb -s "$B" exec-out run-as me.rerere.rikkahub.debug cat files/task4-bootstrap-f
 crash_window "$B" olderPageCommitWindow task4-older-page-window-ready OLDER_PAGE_FETCHED_WITHOUT_COMMIT
 instrument "$B" verifyOlderPageWindow
 instrument "$B" deviceBContinue
+instrument "$B" realNotificationOpensEntry P14RecoveryUiInstrumentedTest || ui_failed=1
 # Capture only a task-owned synthetic database after a real process stop; publish counts, not the DB.
 adb -s "$B" shell am force-stop me.rerere.rikkahub.debug
 snapshot="$RUNNER_TEMP/p14-bootstrap-snapshot.db"

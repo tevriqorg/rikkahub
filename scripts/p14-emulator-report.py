@@ -10,6 +10,8 @@ suite = ET.Element("testsuite", name="P14 Task4 emulator instrumentation")
 results = []
 leaks = []
 for path in sorted(root.glob("emulator-*.txt")):
+    if not re.fullmatch(r"emulator-[0-9]+-[A-Za-z][A-Za-z0-9_]*-[0-9]+\.txt", path.name):
+        continue
     text = path.read_text(errors="replace")
     if "INSTRUMENTATION_" not in text and "OK (" not in text:
         continue
@@ -42,3 +44,6 @@ if leaks:
 if not results:
     raise SystemExit("No instrumentation execution evidence found")
 
+
+if any(r["result"] != "PASS" for r in results):
+    raise SystemExit("One or more instrumented tests failed; see JUnit and raw evidence")

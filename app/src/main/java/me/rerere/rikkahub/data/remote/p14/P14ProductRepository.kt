@@ -117,6 +117,20 @@ internal class P14ProductRepository(
     suspend fun entry(entryId: String) = dao.entry(entryId)
     suspend fun conversation(conversationId: String) = dao.conversation(conversationId)
     suspend fun conversationForId(conversationId:String) = dao.conversation(conversationId)
+
+    /** Resolve a cold notification target without advancing the global bootstrap or replay cursor. */
+    suspend fun ensureConversationForId(conversationId:String):P14ProductConversationEntity? = withContext(Dispatchers.IO) {
+        dao.conversation(conversationId)?.let { return@withContext it }
+        val connection=credentialStore.activeConnection() ?: return@withContext null
+        val url=connection.baseUrl.toHttpUrl().newBuilder().addPathSegments("bootstrap/entries")
+            .addQueryParameter("conversation_id",conversationId).addQueryParameter("limit","1").build()
+        val root=json.parseToJsonElement(get(connection,url.toString())).jsonObject
+        val items=root["items"]?.jsonArray ?: error("Entry lookup list absent")
+        val item=items.singleOrNull()?.jsonObject ?: return@withContext null
+        check(item.requiredString("conversation_id")==conversationId) { "Entry lookup target mismatch" }
+        database.withTransaction { seedBootstrapEntry(item) }
+        dao.conversation(conversationId)
+    }
     suspend fun conversationForExternal(externalSessionId: String) = dao.conversationByExternalSession(externalSessionId)
     suspend fun message(messageId: String) = dao.message(messageId)
 
