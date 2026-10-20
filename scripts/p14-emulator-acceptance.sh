@@ -120,7 +120,8 @@ network_probe() {
 A=emulator-5554
 B=emulator-5556
 network_probe "$A" online-before
-instrument "$A" localContracts
+preflight_failed=0
+instrument "$A" localContracts || preflight_failed=1
 adb -s "$A" shell svc wifi disable
 adb -s "$A" shell svc data disable
 adb -s "$A" shell dumpsys connectivity > evidence/offline-network-state.txt
@@ -217,3 +218,4 @@ PY
 
 # Independent paths still execute after a UI failure; the run must retain failure.
 test "$ui_failed" = 0
+test "$preflight_failed" = 0
