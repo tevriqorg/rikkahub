@@ -86,6 +86,8 @@ crash_window() {
     sleep 0.5
   done
   test "$observed" = "$expected"
+  # A marker is valid only while the instrumentation still holds the blocked window.
+  if ! kill -0 "$driver" 2>/dev/null; then cat "evidence/intentional-crashes/$method-driver.txt"; return 1; fi
   pid_before="$(adb -s "$serial" shell pidof me.rerere.rikkahub.debug | tr -d '\r')"
   test -n "$pid_before"
   adb -s "$serial" shell am force-stop me.rerere.rikkahub.debug
@@ -120,8 +122,9 @@ instrument "$A" verifyOffline
 # Reinstallation with the same certificate must preserve the synthetic Room records.
 adb -s "$A" install -r evidence/apks/app.apk
 instrument "$A" verifyOffline
-instrument "$A" captureAndProfileUi P14RecoveryUiInstrumentedTest
-instrument "$A" sharedTextUsesDurableComposer P14RecoveryUiInstrumentedTest
+ui_failed=0
+instrument "$A" captureAndProfileUi P14RecoveryUiInstrumentedTest || ui_failed=1
+instrument "$A" sharedTextUsesDurableComposer P14RecoveryUiInstrumentedTest || ui_failed=1
 adb -s "$A" shell svc wifi enable
 adb -s "$A" shell svc data enable
 instrument "$A" deviceASeed
@@ -189,3 +192,6 @@ p=Path('evidence')
  'hermes_used':False,'host':platform.platform()},indent=2)+'\n')
 PY
 
+
+# Independent paths still execute after a UI failure; the run must retain failure.
+test "$ui_failed" = 0
