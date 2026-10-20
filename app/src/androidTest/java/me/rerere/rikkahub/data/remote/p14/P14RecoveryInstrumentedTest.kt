@@ -255,6 +255,58 @@ class P14RecoveryInstrumentedTest {
         evidence("deviceBContinue PASS: independent device bootstrap/lazy history, same Entry conversation continuation + durable Inbox; conversation=${entry.conversationId}")
     }
 
+    @Test fun deviceBMutations() = runBlocking {
+        val repository = product()
+        val runtime = requireNotNull(P14RuntimeCredentialStore(context).activeConnection())
+        val provider = ProviderSetting.OpenAI(baseUrl = runtime.baseUrl, apiKey = runtime.bearerToken)
+        val control = P14RemoteControlClient(http)
+        val entry = repository.directoryPage(0, 100).single { it.bodyText == "task4-device-A" }
+        val state = control.getConversationState(provider, entry.conversationId)
+        val changed = control.setConversationState(provider, entry.conversationId, state.revision, pinned = true, archived = true)
+        assertTrue(changed.pinned && changed.archived)
+        repository.replayActive()
+        assertTrue(requireNotNull(repository.conversation(entry.conversationId)).pinned)
+        assertTrue(requireNotNull(repository.conversation(entry.conversationId)).archived)
+        val accepted = repository.acceptEntryContinuation(entry.conversationId, "task4-editable")
+        repository.syncAndFlushActive()
+        val mid = Uuid.parse(accepted.messageId)
+        val message = control.getMessageState(provider, entry.conversationId, mid)
+        val revision = control.editMessage(provider, entry.conversationId, mid, message.revision, "task4-edited")
+        assertEquals("task4-edited", control.getMessageState(provider, entry.conversationId, mid).bodyText)
+        control.deleteMessage(provider, entry.conversationId, mid, revision)
+        assertTrue(control.getMessageState(provider, entry.conversationId, mid).deleted)
+        repository.replayActive()
+        assertTrue(requireNotNull(repository.message(mid.toString())).tombstone)
+        for (view in listOf("todo", "idea", "research", "execute")) repository.assignEntryView(entry.entryId, view, true)
+        repository.syncAndFlushActive()
+        for (view in listOf("todo", "idea", "research", "execute")) {
+            assertTrue(repository.directoryPage(0, 100, view).any { it.entryId == entry.entryId && it.conversationId == entry.conversationId })
+        }
+        evidence("deviceBMutations PASS: revisioned Pin/Archive, edit/tombstone, four Views share same Entry/Conversation")
+    }
+
+    @Test fun observationPolicy() = runBlocking {
+        val profile = P14ProfileStore(context)
+        val before = profile.exportProfile()
+        val enabled = before.replace("id: personal-default", "id: task4-location-profile")
+            .replace("location:\n    enabled: false", "location:\n    enabled: true")
+        assertNotEquals(before, enabled)
+        profile.importProfile(enabled)
+        try {
+            assertTrue(profile.locationEnabled())
+            val entryCount = P14ProductDatabase.get(context).dao().observeEntries().first().size
+            val id = product().acceptLocationObservation(35.0, 139.0, 10.0, "foreground")
+            val row = requireNotNull(P14ProductDatabase.get(context).dao().observation(id))
+            assertEquals("task4-location-profile", row.profileId)
+            assertEquals("foreground", row.permissionState)
+            assertEquals(P14RuntimeCredentialStore(context).deviceId(), row.sourceDeviceId)
+            assertEquals(entryCount, P14ProductDatabase.get(context).dao().observeEntries().first().size)
+            product().syncAndFlushActive()
+            assertFalse(P14ProductDatabase.get(context).dao().pendingObservationOutbox().any { it.observationId == id })
+            evidence("observationPolicy PASS: explicit opt-in synthetic coordinates, provenance/Outbox and server commit, separate Entry count unchanged; no GPS sensor/background efficacy claim")
+        } finally { profile.importProfile(before) }
+    }
+
     @Test fun deviceAVerify() = runBlocking {
         val repository = product()
         assertTrue(repository.replayActive())
@@ -267,6 +319,12 @@ class P14RecoveryInstrumentedTest {
         repository.replayActive()
         assertEquals(before, repository.messages(entry.conversationId).first())
         assertTrue(repository.currentCursor() >= cursor)
+        val state = requireNotNull(repository.conversation(entry.conversationId))
+        assertTrue(state.pinned && state.archived)
+        assertTrue(repository.messages(entry.conversationId).first().any { it.tombstone })
+        for (view in listOf("todo", "idea", "research", "execute")) {
+            assertTrue(repository.directoryPage(0, 100, view).any { it.entryId == entry.entryId })
+        }
         evidence("deviceAVerify PASS: A→B→A converged same conversation, deduped replay, durable cursor=$cursor")
     }
 }
