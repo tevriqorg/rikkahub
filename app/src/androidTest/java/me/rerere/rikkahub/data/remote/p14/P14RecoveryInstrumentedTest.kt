@@ -9,6 +9,10 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import me.rerere.ai.core.MessageRole
@@ -23,6 +27,10 @@ import me.rerere.rikkahub.data.repository.ConversationRepository
 import me.rerere.rikkahub.ui.activity.P14EntryActivity
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import okhttp3.Response
+import okhttp3.Protocol
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.ResponseBody.Companion.toResponseBody
 import org.junit.Assert.*
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -284,6 +292,40 @@ class P14RecoveryInstrumentedTest {
         args.getString("p14NotificationId")?.let { assertNotNull(remote().notification(it)) }
         assertTrue(repository.currentCursor() > 0)
         evidence("deviceBContinue PASS: independent device bootstrap/lazy history, same Entry conversation continuation + durable Inbox; conversation=${entry.conversationId}")
+    }
+
+    @Test fun uploaderMediaContract() = runBlocking {
+        val runtime = requireNotNull(P14RuntimeCredentialStore(context).activeConnection())
+        val key = org.bouncycastle.crypto.params.X25519PrivateKeyParameters(java.security.SecureRandom()).generatePublicKey().encoded
+        val encoded = android.util.Base64.encodeToString(key, android.util.Base64.URL_SAFE or android.util.Base64.NO_WRAP or android.util.Base64.NO_PADDING)
+        val captured = mutableListOf<kotlinx.serialization.json.JsonObject>()
+        val intercepted = http.newBuilder().addInterceptor { chain ->
+            val request = chain.request()
+            when {
+                request.url.encodedPath.endsWith("/remote-attachments/capabilities") -> Response.Builder().request(request)
+                    .protocol(Protocol.HTTP_1_1).code(200).message("Synthetic public key only")
+                    .body("""{"recipient_key":{"key":"$encoded"}}""".toResponseBody("application/json".toMediaType())).build()
+                request.url.encodedPath.endsWith("/remote-attachments") -> {
+                    val buffer = okio.Buffer()
+                    requireNotNull(request.body).writeTo(buffer)
+                    synchronized(captured) { captured += Json.parseToJsonElement(buffer.readUtf8()).jsonObject }
+                    Response.Builder().request(request).protocol(Protocol.HTTP_1_1).code(503)
+                        .message("Intentional contract capture boundary")
+                        .body("Synthetic contract capture; no broker upload performed".toResponseBody()).build()
+                }
+                else -> chain.proceed(request)
+            }
+        }.build()
+        val source = P14ProductDatabase.get(context).dao().attachmentsForMessage(localMessageId.toString()).single()
+        for (kind in listOf("VOICE", "AUDIO")) {
+            val result = runCatching { P14DurableAttachmentUploader(context, intercepted).ensureUploaded(runtime, source.copy(kind = kind, state = "PENDING", remoteAttachmentId = null)) }
+            assertEquals(503, (result.exceptionOrNull() as? P14RemoteHttpException)?.status)
+        }
+        assertEquals(2, captured.size)
+        assertEquals("voice_message", captured[0]["media_role"]?.jsonPrimitive?.content)
+        assertFalse(captured[1].containsKey("media_role"))
+        File(context.filesDir, "task4-remote-contracts.json").writeText(JsonArray(captured).toString())
+        evidence("uploaderMediaContract PASS: actual encrypted upload POST bodies captured for VOICE/AUDIO; exported for actual Server Pydantic validation. Synthetic recipient/503 boundary; NOT P20 upload acceptance")
     }
 
     @Test fun seedInteractionOffline() = runBlocking {

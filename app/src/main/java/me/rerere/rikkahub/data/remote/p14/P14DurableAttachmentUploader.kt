@@ -95,8 +95,8 @@ internal class P14DurableAttachmentUploader(
                     put("ciphertext_size", encrypted.size)
                     put("ciphertext_sha256", encrypted.sha256)
                     val mediaRole = when (attachment.kind) {
-                        "VOICE" -> "voice"
-                        "AUDIO" -> "audio"
+                        "VOICE" -> "voice_message"
+                        "AUDIO" -> null
                         else -> null
                     }
                     mediaRole?.let { put("media_role", it) }
