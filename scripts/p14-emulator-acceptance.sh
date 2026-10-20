@@ -103,12 +103,28 @@ Path('evidence/intentional-crashes/'+sys.argv[1]+'.json').write_text(json.dumps(
 PY
 }
 
+network_probe() {
+  local serial="$1" mode="$2" result=0 report="evidence/$1-network-$2.txt"
+  adb -s "$serial" get-state | grep -qx device
+  printf 'GET /healthz HTTP/1.1\r\nHost: 10.0.2.2\r\nConnection: close\r\n\r\n' | timeout 8 adb -s "$serial" shell toybox nc -w 3 10.0.2.2 8014 > "$report" 2>&1 || result=$?
+  printf '\nprobe_exit=%s\n' "$result" >> "$report"
+  adb -s "$serial" get-state | grep -qx device
+  if [ "$mode" = offline ]; then
+    ! grep -Eq 'HTTP/[0-9.]+ [0-9]{3}' "$report"
+    test "$result" = 1 || test "$result" = 124
+  else
+    test "$result" = 0
+    grep -Eq 'HTTP/1\.[01] 200' "$report"
+  fi
+}
 A=emulator-5554
 B=emulator-5556
+network_probe "$A" online-before
 instrument "$A" localContracts
 adb -s "$A" shell svc wifi disable
 adb -s "$A" shell svc data disable
 adb -s "$A" shell dumpsys connectivity > evidence/offline-network-state.txt
+network_probe "$A" offline
 instrument "$A" seedOffline
 adb -s "$A" shell am force-stop me.rerere.rikkahub.debug
 adb -s "$A" shell monkey -p me.rerere.rikkahub.debug -c android.intent.category.LAUNCHER 1
@@ -127,6 +143,7 @@ instrument "$A" captureAndProfileUi P14RecoveryUiInstrumentedTest || ui_failed=1
 instrument "$A" sharedTextUsesDurableComposer P14RecoveryUiInstrumentedTest || ui_failed=1
 adb -s "$A" shell svc wifi enable
 adb -s "$A" shell svc data enable
+network_probe "$A" online-restored
 instrument "$A" deviceASeed
 instrument "$A" uploaderMediaContract
 adb -s "$A" exec-out run-as me.rerere.rikkahub.debug cat files/task4-remote-contracts.json > evidence/task4-remote-contracts.json
