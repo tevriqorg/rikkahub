@@ -9,6 +9,11 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.delay
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.jsonObject
@@ -300,6 +305,122 @@ class P14RecoveryInstrumentedTest {
         assertTrue(repository.syncAndFlushActive())
         assertFalse(P14ProductDatabase.get(context).dao().pendingOutbox().any { it.messageId == multiMessageId.toString() })
         evidence("deviceASeed PASS: normal runtime setup/device credential + model discovery + locally accepted Entry flushed; conversation=${accepted.conversationId}")
+    }
+
+    /** Intentionally interrupted by the external driver after the fsynced marker. */
+    @Test fun bootstrapCommitWindow() {
+        runBlocking {
+            val database=P14ProductDatabase.get(context)
+            database.openHelper.writableDatabase
+            assertEquals(0L,product().currentCursor())
+            assertTrue(database.dao().directoryPage(1,0).isEmpty())
+            val bootstrap=context.getSharedPreferences("p14-entry-bootstrap",Context.MODE_PRIVATE)
+            assertNull(bootstrap.getString("snapshot",null))
+            val lock=android.database.sqlite.SQLiteDatabase.openDatabase(context.getDatabasePath("rikkahub-p14-product.db").path,null,android.database.sqlite.SQLiteDatabase.OPEN_READWRITE)
+            lock.beginTransactionNonExclusive()
+            val scope=CoroutineScope(SupervisorJob()+Dispatchers.IO)
+            try {
+                pair()
+                scope.launch { runCatching { product().replayActive() } }
+                val deadline=android.os.SystemClock.elapsedRealtime()+15000
+                while(bootstrap.getString("snapshot",null)==null && android.os.SystemClock.elapsedRealtime()<deadline) delay(10)
+                assertNotNull("Real bootstrap HTTP must have durably saved pagination before Room",bootstrap.getString("snapshot",null))
+                assertTrue(bootstrap.getBoolean("more",false))
+                assertEquals(0L,lockedCursor(lock))
+                assertEquals(0,lockedEntryCount(lock))
+                writeWindowMarker("task4-bootstrap-window-ready","FIRST_PAGE_PREFS_WITH_CURSOR_ZERO")
+                delay(60000)
+                error("External driver did not force-stop at the verified bootstrap window")
+            } finally { lock.endTransaction();lock.close();scope.coroutineContext[kotlinx.coroutines.Job]?.cancel() }
+        }
+    }
+
+    @Test fun verifyBootstrapWindow() = runBlocking {
+        assertEquals("FIRST_PAGE_PREFS_WITH_CURSOR_ZERO",File(context.filesDir,"task4-bootstrap-window-ready").readText())
+        val start=android.os.SystemClock.elapsedRealtime()
+        pair()
+        product().replayActive()
+        val rows=P14ProductDatabase.get(context).dao().directoryPage(10000,0)
+        assertTrue("Cold recovery must not preload all 1200 fixture Entries",rows.size in 1..50)
+        assertTrue(product().currentCursor()>0)
+        assertTrue(context.getSharedPreferences("p14-entry-bootstrap",Context.MODE_PRIVATE).getBoolean("more",false))
+        File(context.filesDir,"task4-bootstrap-first-page-metrics.json").writeText("""{"rows":${rows.size},"elapsed_ms":${android.os.SystemClock.elapsedRealtime()-start},"cursor":${product().currentCursor()}}""")
+        evidence("verifyBootstrapWindow PASS: external force-stop after actual prefs commit/before Room commit; restart refetched bounded first page, cursor and older-page locator recovered")
+    }
+
+    /** Hold the actual older-page write after its real network response, then external kill. */
+    @Test fun olderPageCommitWindow() {
+        runBlocking {
+            val bootstrap=context.getSharedPreferences("p14-entry-bootstrap",Context.MODE_PRIVATE)
+            val before=requireNotNull(bootstrap.getString("before_id",null))
+            assertTrue(product().currentCursor()>0)
+            val database=P14ProductDatabase.get(context)
+            val baseline=database.dao().directoryPage(10000,0).size
+            assertTrue(baseline in 1..50)
+            val lock=android.database.sqlite.SQLiteDatabase.openDatabase(context.getDatabasePath("rikkahub-p14-product.db").path,null,android.database.sqlite.SQLiteDatabase.OPEN_READWRITE)
+            lock.beginTransactionNonExclusive()
+            val fetched=java.util.concurrent.atomic.AtomicBoolean(false)
+            val fetchHttp=http.newBuilder().addInterceptor { chain ->
+                val response=chain.proceed(chain.request())
+                if(chain.request().url.encodedPath.endsWith("/bootstrap/entries") && chain.request().url.queryParameter("before_entry_id")==before) {
+                    check(response.isSuccessful)
+                    val contentType=response.body?.contentType()
+                    val text=requireNotNull(response.body).string()
+                    check(Json.parseToJsonElement(text).jsonObject["items"]?.toString()!="[]")
+                    fetched.set(true)
+                    response.newBuilder().body(text.toResponseBody(contentType)).build()
+                } else response
+            }.build()
+            val scope=CoroutineScope(SupervisorJob()+Dispatchers.IO)
+            try {
+                scope.launch { runCatching { P14ProductRepository(context,fetchHttp).directoryPage(baseline,50) } }
+                val deadline=android.os.SystemClock.elapsedRealtime()+15000
+                while(!fetched.get() && android.os.SystemClock.elapsedRealtime()<deadline) delay(10)
+                assertTrue("Must receive the real older-page response before kill",fetched.get())
+                assertEquals(before,bootstrap.getString("before_id",null))
+                assertEquals(baseline,lockedEntryCount(lock))
+                context.getSharedPreferences("task4-evidence",Context.MODE_PRIVATE).edit().putString("older-page-before-id",before).putInt("older-page-baseline",baseline).commit()
+                writeWindowMarker("task4-older-page-window-ready","OLDER_PAGE_FETCHED_WITHOUT_COMMIT")
+                delay(60000)
+                error("External driver did not force-stop at verified older-page window")
+            } finally { lock.endTransaction();lock.close();scope.coroutineContext[kotlinx.coroutines.Job]?.cancel() }
+        }
+    }
+
+    @Test fun verifyOlderPageWindow() = runBlocking {
+        assertEquals("OLDER_PAGE_FETCHED_WITHOUT_COMMIT",File(context.filesDir,"task4-older-page-window-ready").readText())
+        val prefs=context.getSharedPreferences("task4-evidence",Context.MODE_PRIVATE)
+        val baseline=prefs.getInt("older-page-baseline",-1)
+        val bootstrap=context.getSharedPreferences("p14-entry-bootstrap",Context.MODE_PRIVATE)
+        assertEquals(prefs.getString("older-page-before-id",null),bootstrap.getString("before_id",null))
+        val recovered=product().directoryPage(baseline,50)
+        assertEquals(50,recovered.size)
+        assertEquals(50,recovered.map { it.entryId }.toSet().size)
+        assertNotEquals(prefs.getString("older-page-before-id",null),bootstrap.getString("before_id",null))
+        assertTrue(P14ProductDatabase.get(context).dao().directoryPage(10000,0).size<=100)
+        evidence("verifyOlderPageWindow PASS: actual older-page response lost before Room commit; restart retried original locator with no missing/duplicate page and bounded cache")
+    }
+
+    @Test fun scaleDirectoryPaging() = runBlocking {
+        val seen=mutableSetOf<String>()
+        var offset=0
+        val start=android.os.SystemClock.elapsedRealtime()
+        repeat(80) {
+            val page=product().directoryPage(offset,100)
+            assertTrue(page.size<=100)
+            page.forEach { item -> assertTrue("Duplicate Entry while paging",seen.add(item.entryId)) }
+            offset+=page.size
+            if(page.isEmpty() && !context.getSharedPreferences("p14-entry-bootstrap",Context.MODE_PRIVATE).getBoolean("more",false)) return@repeat
+        }
+        assertTrue("All pre-seeded 1200 historical Entries must remain discoverable",seen.size>=1200)
+        File(context.filesDir,"task4-directory-scale-metrics.json").writeText("""{"distinct_entries":${seen.size},"elapsed_ms":${android.os.SystemClock.elapsedRealtime()-start}}""")
+        evidence("scaleDirectoryPaging PASS: >=1200 Entries lazily enumerated without duplicate identities; bounded initial-page metrics are recorded separately")
+    }
+
+    private fun lockedCursor(database:android.database.sqlite.SQLiteDatabase):Long = database.rawQuery("SELECT COALESCE(MAX(last_sync_seq),0) FROM p14_product_sync_state",null).use { it.moveToFirst();it.getLong(0) }
+    private fun lockedEntryCount(database:android.database.sqlite.SQLiteDatabase):Int = database.rawQuery("SELECT COUNT(*) FROM p14_conversations",null).use { it.moveToFirst();it.getInt(0) }
+    private fun writeWindowMarker(name:String,value:String) {
+        File(context.filesDir,name).outputStream().use { it.write(value.toByteArray());it.fd.sync() }
     }
 
     @Test fun deviceBContinue() = runBlocking {
