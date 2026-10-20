@@ -16,6 +16,11 @@ for serial in emulator-5554 emulator-5556; do
   adb -s "$serial" shell settings put global animator_duration_scale 0
   adb -s "$serial" install -r evidence/apks/app.apk
   adb -s "$serial" install -r evidence/apks/test.apk
+  installed_path="$(adb -s "$serial" shell pm path me.rerere.rikkahub.debug | sed -n 's/^package://p' | tr -d '\r')"
+  adb -s "$serial" pull "$installed_path" "$RUNNER_TEMP/$serial-installed.apk"
+  cmp evidence/apks/app.apk "$RUNNER_TEMP/$serial-installed.apk"
+  sha256sum "$RUNNER_TEMP/$serial-installed.apk" > "evidence/$serial-installed-apk-sha256.txt"
+  rm -f "$RUNNER_TEMP/$serial-installed.apk"
   adb -s "$serial" shell pm grant me.rerere.rikkahub.debug android.permission.POST_NOTIFICATIONS
   adb -s "$serial" shell dumpsys package me.rerere.rikkahub.debug > "evidence/$serial-installed-package.txt"
 done
