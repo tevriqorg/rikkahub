@@ -255,6 +255,41 @@ class P14RecoveryInstrumentedTest {
         evidence("deviceBContinue PASS: independent device bootstrap/lazy history, same Entry conversation continuation + durable Inbox; conversation=${entry.conversationId}")
     }
 
+    @Test fun seedInteractionOffline() = runBlocking {
+        val notificationId = requireNotNull(args.getString("p14NotificationId"))
+        val connection = requireNotNull(P14RuntimeCredentialStore(context).activeConnection())
+        val interaction = requireNotNull(remote().interaction(notificationId))
+        assertEquals("PENDING", interaction.status)
+        // Suspend only this synthetic installation's active delivery pointer. The token remains
+        // encrypted in Android Keystore-backed storage. No network outage is claimed by this phase.
+        context.getSharedPreferences("task4-evidence", Context.MODE_PRIVATE).edit()
+            .putString("paused-provider", connection.providerId).putString("paused-base", connection.baseUrl).commit()
+        context.getSharedPreferences("p14-rikkahub-runtime", Context.MODE_PRIVATE).edit()
+            .remove("active_provider").remove("active_base").commit()
+        remote().queueInteraction(notificationId, "once")
+        val dao = P14RemoteDatabase.get(context).dao()
+        val op = dao.pendingOperations().single { it.notificationId == notificationId && it.type == "INTERACTION" }
+        dao.setOperationState(op.operationId, "IN_FLIGHT")
+        context.getSharedPreferences("task4-evidence", Context.MODE_PRIVATE).edit().putString("interaction-operation", op.operationId).commit()
+        assertEquals("RESPONDED", dao.interaction(interaction.interactionId)?.status)
+        evidence("seedInteractionOffline PASS: accepted response and stable IN_FLIGHT operation persisted with delivery pointer suspended; external force-stop required")
+    }
+
+    @Test fun verifyInteractionRecovery() = runBlocking {
+        val prefs = context.getSharedPreferences("task4-evidence", Context.MODE_PRIVATE)
+        val operationId = requireNotNull(prefs.getString("interaction-operation", null))
+        val dao = P14RemoteDatabase.get(context).dao()
+        val op = dao.pendingOperations().single { it.operationId == operationId }
+        assertEquals("IN_FLIGHT", op.state)
+        P14RuntimeCredentialStore(context).markActive(requireNotNull(prefs.getString("paused-provider", null)), requireNotNull(prefs.getString("paused-base", null)))
+        assertTrue(remote().processPendingActive())
+        assertFalse(dao.pendingOperations().any { it.operationId == operationId })
+        val interaction = requireNotNull(remote().interaction(requireNotNull(args.getString("p14NotificationId"))))
+        assertEquals("RESPONDED", interaction.status)
+        assertEquals("once", interaction.response)
+        evidence("verifyInteractionRecovery PASS after external force-stop: persisted stable response operation reattempted, authoritative RESPONDED once")
+    }
+
     @Test fun deviceBMutations() = runBlocking {
         val repository = product()
         val runtime = requireNotNull(P14RuntimeCredentialStore(context).activeConnection())
@@ -294,6 +329,8 @@ class P14RecoveryInstrumentedTest {
         profile.importProfile(enabled)
         try {
             assertTrue(profile.locationEnabled())
+            assertEquals(PackageManager.PERMISSION_GRANTED, context.checkSelfPermission(android.Manifest.permission.ACCESS_COARSE_LOCATION))
+            assertTrue("LOCATION" in P14CapabilityRegistry.granted(context))
             val entryCount = P14ProductDatabase.get(context).dao().observeEntries().first().size
             val id = product().acceptLocationObservation(35.0, 139.0, 10.0, "foreground")
             val row = requireNotNull(P14ProductDatabase.get(context).dao().observation(id))
@@ -319,6 +356,11 @@ class P14RecoveryInstrumentedTest {
         repository.replayActive()
         assertEquals(before, repository.messages(entry.conversationId).first())
         assertTrue(repository.currentCursor() >= cursor)
+        remote().refreshActive()
+        args.getString("p14NotificationId")?.let {
+            assertEquals("RESPONDED", remote().interaction(it)?.status)
+            assertEquals("once", remote().interaction(it)?.response)
+        }
         val state = requireNotNull(repository.conversation(entry.conversationId))
         assertTrue(state.pinned && state.archived)
         assertTrue(repository.messages(entry.conversationId).first().any { it.tombstone })
