@@ -35,7 +35,9 @@ test_run=0
 instrument() {
   local serial="$1" method="$2" klass="${3:-P14RecoveryInstrumentedTest}"
   test_run=$((test_run + 1))
-  local report="evidence/$serial-$method-$test_run.txt"
+  local folder=evidence
+  if [ "${intentional_crash:-0}" = 1 ]; then folder=evidence/intentional-crashes; fi
+  local report="$folder/$serial-$method-$test_run.txt"
   local setup=()
   if [ "$serial" = emulator-5554 ]; then setup=(-e p14SetupToken task4-setup-synthetic-only); fi
   timeout 240 adb -s "$serial" shell am instrument -w -r \
@@ -57,6 +59,34 @@ instrument() {
   grep -Eq 'OK \([1-9][0-9]* test' "$report"
   ! grep -Eq 'FAILURES!!!|INSTRUMENTATION_FAILED|Process crashed' "$report"
 }
+crash_window() {
+  local serial="$1" method="$2" marker="$3" expected="$4"
+  mkdir -p evidence/intentional-crashes
+  adb -s "$serial" shell run-as me.rerere.rikkahub.debug rm -f "files/$marker"
+  intentional_crash=1 instrument "$serial" "$method" > "evidence/intentional-crashes/$method-driver.txt" 2>&1 &
+  local driver=$! observed="" pid_before=""
+  for attempt in $(seq 1 180); do
+    observed="$(adb -s "$serial" exec-out run-as me.rerere.rikkahub.debug cat "files/$marker" 2>/dev/null || true)"
+    if [ "$observed" = "$expected" ]; then break; fi
+    if ! kill -0 "$driver" 2>/dev/null; then cat "evidence/intentional-crashes/$method-driver.txt"; return 1; fi
+    sleep 0.5
+  done
+  test "$observed" = "$expected"
+  pid_before="$(adb -s "$serial" shell pidof me.rerere.rikkahub.debug | tr -d '\r')"
+  test -n "$pid_before"
+  adb -s "$serial" shell am force-stop me.rerere.rikkahub.debug
+  wait "$driver" || true
+  test -z "$(adb -s "$serial" shell pidof me.rerere.rikkahub.debug 2>/dev/null || true)"
+  python3 - "$method" "$observed" "$pid_before" <<'PY'
+import json,sys
+from pathlib import Path
+Path('evidence/intentional-crashes/'+sys.argv[1]+'.json').write_text(json.dumps({
+ 'method':sys.argv[1],'verified_window':sys.argv[2],'pid_before':sys.argv[3],
+ 'external_force_stop':True,'process_absent_after':True,
+ 'expected_instrumentation_interruption':True,'recovery_pass_requires_separate_test':True},indent=2)+'\n')
+PY
+}
+
 A=emulator-5554
 B=emulator-5556
 instrument "$A" localContracts
@@ -84,6 +114,11 @@ instrument "$A" deviceASeed
 instrument "$A" uploaderMediaContract
 adb -s "$A" exec-out run-as me.rerere.rikkahub.debug cat files/task4-remote-contracts.json > evidence/task4-remote-contracts.json
 P14_TASK4_SYNTHETIC=1 python3 synthetic-server/server/acceptance/task4_media_contract.py --input evidence/task4-remote-contracts.json > evidence/media-contract-validation.json
+crash_window "$B" bootstrapCommitWindow task4-bootstrap-window-ready FIRST_PAGE_PREFS_WITH_CURSOR_ZERO
+instrument "$B" verifyBootstrapWindow
+adb -s "$B" exec-out run-as me.rerere.rikkahub.debug cat files/task4-bootstrap-first-page-metrics.json > evidence/bootstrap-window-recovery.json
+crash_window "$B" olderPageCommitWindow task4-older-page-window-ready OLDER_PAGE_FETCHED_WITHOUT_COMMIT
+instrument "$B" verifyOlderPageWindow
 instrument "$B" deviceBContinue
 # Capture only a task-owned synthetic database after a real process stop; publish counts, not the DB.
 adb -s "$B" shell am force-stop me.rerere.rikkahub.debug
@@ -103,7 +138,7 @@ assert cursor > 0
 Path('evidence/large-history-android-bootstrap.json').write_text(json.dumps({
     'server_synthetic_historical_entries':1200,'device_B_local_entries_after_cold_sync_and_one_older_page':entries,
     'device_B_durable_cursor':cursor,'bounded_bootstrap':True,
-    'process_stopped_before_snapshot':True,'mid_transaction_kill_verified':False},indent=2)+'\n')
+    'process_stopped_before_snapshot':True,'mid_transaction_kill_verified':True},indent=2)+'\n')
 PY
 rm -f "$snapshot" "$snapshot-wal" "$snapshot-shm"
 
@@ -120,6 +155,8 @@ adb -s "$A" shell am force-stop me.rerere.rikkahub.debug
 instrument "$A" deviceAVerify
 adb -s "$A" shell pm grant me.rerere.rikkahub.debug android.permission.ACCESS_COARSE_LOCATION
 instrument "$A" observationPolicy
+instrument "$B" scaleDirectoryPaging
+adb -s "$B" exec-out run-as me.rerere.rikkahub.debug cat files/task4-directory-scale-metrics.json > evidence/directory-scale-metrics.json
 for serial in "$A" "$B"; do
   adb -s "$serial" shell am start -a android.intent.action.MAIN -c android.intent.category.LAUNCHER -p me.rerere.rikkahub.debug
   adb -s "$serial" shell uiautomator dump /sdcard/task4-ui.xml
