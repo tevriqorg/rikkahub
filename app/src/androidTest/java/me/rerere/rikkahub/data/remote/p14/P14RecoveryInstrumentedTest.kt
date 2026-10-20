@@ -437,6 +437,53 @@ class P14RecoveryInstrumentedTest {
         evidence("deviceBMutations PASS: revisioned Pin/Archive, edit/tombstone, four Views share same Entry/Conversation")
     }
 
+    @Test fun actionDecisionsAndQuickAction() = runBlocking {
+        val entryId=requireNotNull(args.getString("p14MediaEntryId"))
+        val conversationId=requireNotNull(args.getString("p14MediaConversationId"))
+        val repository=product()
+        repository.hydrateEntryState(entryId,conversationId)
+        val cases=listOf("confirm" to "approved_pending_execution","supplement" to "needs_reassessment","skip" to "skipped","cancel" to "cancelled")
+        for((decision,status) in cases) {
+            val key="p14Action"+decision.replaceFirstChar { it.uppercase() }
+            val actionId=requireNotNull(args.getString(key))
+            val op=remote().queueActionDecision(actionId,decision,if(decision=="supplement") "task4-Android-extra-context" else null)
+            assertTrue(remote().processPendingActive())
+            assertEquals("ACKED",operationState(op))
+            repository.replayActive()
+            repository.hydrateEntryState(entryId,conversationId)
+            assertEquals(status,P14ProductDatabase.get(context).dao().action(actionId)?.status)
+        }
+        val own=repository.directoryPage(0,100).single { it.bodyText=="task4-device-A" }
+        val op=remote().quickActionActive(own.conversationId,"content.accept")
+        val db=P14RemoteDatabase.get(context)
+        val payload=db.openHelper.readableDatabase.query("SELECT payload FROM p14_operations WHERE operation_id=?",arrayOf(op)).use { cursor ->
+            assertTrue(cursor.moveToFirst());Json.parseToJsonElement(cursor.getString(0)).jsonObject
+        }
+        val actionId=requireNotNull(payload["action_id"]?.jsonPrimitive?.content)
+        repeat(2) {
+            db.dao().setOperationState(op,"IN_FLIGHT")
+            assertTrue(remote().processPendingActive())
+            assertEquals("ACKED",operationState(op))
+        }
+        repository.replayActive()
+        repository.hydrateEntryState(own.entryId,own.conversationId)
+        assertEquals(1,repository.actions(own.conversationId).first().count { it.actionId==actionId })
+        evidence("actionDecisionsAndQuickAction PASS: four native durable decision paths -> canonical server statuses; stable QuickAction payload retries IN_FLIGHT twice and one authoritative Action. No tool/Hermes execution claimed")
+    }
+
+    @Test fun competingDeviceActionConflict() = runBlocking {
+        val actionId=requireNotNull(args.getString("p14ActionConfirm"))
+        val op=remote().queueActionDecision(actionId,"cancel")
+        remote().processPendingActive()
+        assertEquals("CONFLICT",operationState(op))
+        evidence("competingDeviceActionConflict PASS: other device cannot silently overwrite accepted once-only decision; local operation marked CONFLICT, not ACKED")
+    }
+
+    private fun operationState(id:String):String? = P14RemoteDatabase.get(context).openHelper.readableDatabase
+        .query("SELECT state FROM p14_operations WHERE operation_id=?",arrayOf(id)).use { cursor ->
+            if(cursor.moveToFirst()) cursor.getString(0) else null
+        }
+
     @Test fun observationPolicy() = runBlocking {
         val profile = P14ProfileStore(context)
         val before = profile.exportProfile()
