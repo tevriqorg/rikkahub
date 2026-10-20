@@ -26,10 +26,10 @@ done
 curl -fsS http://127.0.0.1:8014/healthz
 P14_TASK4_SYNTHETIC=1 python3 synthetic-server/server/acceptance/task4_fixture.py seed > evidence/fixture.json
 instrument() {
-  local serial="$1" method="$2"
+  local serial="$1" method="$2" klass="${3:-P14RecoveryInstrumentedTest}"
   local report="evidence/$serial-$method.txt"
   timeout 240 adb -s "$serial" shell am instrument -w -r \
-    -e class "me.rerere.rikkahub.data.remote.p14.P14RecoveryInstrumentedTest#$method" \
+    -e class "me.rerere.rikkahub.data.remote.p14.$klass#$method" \
     -e p14BaseUrl http://10.0.2.2:8014/v1 -e p14OwnerToken task4-owner-synthetic-only \
     -e p14NotificationId "$(python3 -c 'import json; print(json.load(open("evidence/fixture.json"))["notification_id"])')" \
     me.rerere.rikkahub.debug.test/androidx.test.runner.AndroidJUnitRunner | tee "$report"
@@ -48,6 +48,8 @@ instrument "$A" verifyOffline
 # Reinstallation with the same certificate must preserve the synthetic Room records.
 adb -s "$A" install -r evidence/apks/app.apk
 instrument "$A" verifyOffline
+instrument "$A" captureAndProfileUi P14RecoveryUiInstrumentedTest
+instrument "$A" sharedTextUsesDurableComposer P14RecoveryUiInstrumentedTest
 adb -s "$A" shell svc wifi enable
 adb -s "$A" shell svc data enable
 instrument "$A" deviceASeed

@@ -285,6 +285,7 @@ jobs:
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
       - name: Prepare SDK and synthetic backend
+        id: backend
         env:
           SERVER_SHA: ${{ inputs.server_sha }}
         run: |
@@ -299,6 +300,13 @@ jobs:
           echo $! > "$RUNNER_TEMP/p14-server.pid"
       - name: Run two-emulator acceptance
         run: bash scripts/p14-emulator-acceptance.sh
+      - name: Synthetic PostgreSQL concurrency, binary recovery and scale acceptance
+        if: always() && steps.backend.outcome == 'success'
+        env:
+          P14_TASK4_SYNTHETIC: '1'
+        run: |
+          python3 synthetic-server/server/acceptance/task4_fixture.py scale --count 1200 > evidence/scale-seed.json
+          python3 synthetic-server/server/acceptance/task4_http_checks.py > evidence/http-acceptance.json
       - name: Collect failure evidence
         if: always()
         run: |
