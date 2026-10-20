@@ -318,7 +318,7 @@ class P14RecoveryInstrumentedTest {
         }.build()
         val source = P14ProductDatabase.get(context).dao().attachmentsForMessage(localMessageId.toString()).single()
         for (kind in listOf("VOICE", "AUDIO")) {
-            val result = runCatching { P14DurableAttachmentUploader(context, intercepted).ensureUploaded(runtime, source.copy(kind = kind, state = "PENDING", remoteAttachmentId = null)) }
+            val result = runCatching { P14DurableAttachmentUploader(context, intercepted).ensureUploaded(runtime, source.copy(localAttachmentId = "contract-$kind-${source.localAttachmentId}", kind = kind, state = "PENDING", remoteAttachmentId = null)) }
             assertEquals(503, (result.exceptionOrNull() as? P14RemoteHttpException)?.status)
         }
         assertEquals(2, captured.size)
