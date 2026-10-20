@@ -69,8 +69,8 @@ instrument() {
     -e p14ActionSkip "$(python3 -c 'import json; print(json.load(open("evidence/fixture.json"))["actions"]["skip"])')" \
     -e p14ActionCancel "$(python3 -c 'import json; print(json.load(open("evidence/fixture.json"))["actions"]["cancel"])')" \
     "${setup[@]}" \
-    me.rerere.rikkahub.debug.test/androidx.test.runner.AndroidJUnitRunner | tee "$report"
-  grep -Eq 'OK \([1-9][0-9]* test' "$report"
+    me.rerere.rikkahub.debug.test/androidx.test.runner.AndroidJUnitRunner | tee "$report" || return 1
+  grep -Eq 'OK \([1-9][0-9]* test' "$report" || return 1
   ! grep -Eq 'FAILURES!!!|INSTRUMENTATION_FAILED|Process crashed' "$report"
 }
 crash_window() {
@@ -105,15 +105,15 @@ PY
 
 network_probe() {
   local serial="$1" mode="$2" result=0 report="evidence/$1-network-$2.txt"
-  adb -s "$serial" get-state | grep -qx device
+  adb -s "$serial" get-state | grep -qx device || return 1
   printf 'GET /healthz HTTP/1.1\r\nHost: 10.0.2.2\r\nConnection: close\r\n\r\n' | timeout 8 adb -s "$serial" shell toybox nc -w 3 10.0.2.2 8014 > "$report" 2>&1 || result=$?
   printf '\nprobe_exit=%s\n' "$result" >> "$report"
-  adb -s "$serial" get-state | grep -qx device
+  adb -s "$serial" get-state | grep -qx device || return 1
   if [ "$mode" = offline ]; then
-    ! grep -Eq 'HTTP/[0-9.]+ [0-9]{3}' "$report"
+    ! grep -Eq 'HTTP/[0-9.]+ [0-9]{3}' "$report" || return 1
     test "$result" = 1 || test "$result" = 124
   else
-    test "$result" = 0
+    test "$result" = 0 || return 1
     grep -Eq 'HTTP/1\.[01] 200' "$report"
   fi
 }
@@ -121,6 +121,9 @@ A=emulator-5554
 B=emulator-5556
 network_probe "$A" online-before
 preflight_failed=0
+instrument "$A" coldEntriesDoNotJumpAcrossUnloadedHistory P14DirectoryPagingInstrumentedTest || preflight_failed=1
+instrument "$A" sameMillisecondBoundaryNeverDropsOrRepeatsEntries P14DirectoryPagingInstrumentedTest || preflight_failed=1
+instrument "$A" stalledContinuationFailsWithoutFalseEndOfHistory P14DirectoryPagingInstrumentedTest || preflight_failed=1
 instrument "$A" localContracts || preflight_failed=1
 adb -s "$A" shell svc wifi disable
 adb -s "$A" shell svc data disable
@@ -159,7 +162,6 @@ adb -s "$B" exec-out run-as me.rerere.rikkahub.debug cat files/task4-bootstrap-f
 crash_window "$B" olderPageCommitWindow task4-older-page-window-ready OLDER_PAGE_FETCHED_WITHOUT_COMMIT
 instrument "$B" verifyOlderPageWindow
 instrument "$B" deviceBContinue
-instrument "$B" realNotificationOpensEntry P14RecoveryUiInstrumentedTest || ui_failed=1
 # Capture only a task-owned synthetic database after a real process stop; publish counts, not the DB.
 adb -s "$B" shell am force-stop me.rerere.rikkahub.debug
 snapshot="$RUNNER_TEMP/p14-bootstrap-snapshot.db"
@@ -182,14 +184,27 @@ Path('evidence/large-history-android-bootstrap.json').write_text(json.dumps({
 PY
 rm -f "$snapshot" "$snapshot-wal" "$snapshot-shm"
 
+instrument "$B" realNotificationOpensEntry P14RecoveryUiInstrumentedTest || ui_failed=1
+
 instrument "$B" materializeRemoteMedia
 adb -s "$B" shell am force-stop me.rerere.rikkahub.debug
 instrument "$B" verifyRemoteMedia
 instrument "$B" deviceBMutations
 instrument "$B" actionDecisionsAndQuickAction
 instrument "$A" competingDeviceActionConflict
+network_probe "$B" online-before
+adb -s "$B" shell svc wifi disable
+adb -s "$B" shell svc data disable
+network_probe "$B" offline
 instrument "$B" seedInteractionOffline
 adb -s "$B" shell am force-stop me.rerere.rikkahub.debug
+adb -s "$B" shell svc wifi enable
+adb -s "$B" shell svc data enable
+for attempt in $(seq 1 15); do
+  if network_probe "$B" online-restored; then break; fi
+  sleep 2
+done
+grep -Eq 'HTTP/1\.[01] 200' "evidence/$B-network-online-restored.txt"
 instrument "$B" verifyInteractionRecovery
 adb -s "$A" shell am force-stop me.rerere.rikkahub.debug
 instrument "$A" deviceAVerify

@@ -178,8 +178,9 @@ interface P14ProductDao {
     @Upsert suspend fun upsertSyncState(item: P14ProductSyncStateEntity)
 
     @Query("SELECT * FROM p14_entries ORDER BY created_at_epoch_ms DESC") fun observeEntries(): Flow<List<P14EntryEntity>>
-    @Query("SELECT * FROM p14_conversations ORDER BY pinned DESC, created_at_epoch_ms DESC LIMIT :limit OFFSET :offset") suspend fun directoryPage(limit:Int,offset:Int):List<P14ProductConversationEntity>
-    @Query("SELECT c.* FROM p14_conversations c JOIN p14_entry_views v ON c.entry_id=v.entry_id WHERE v.view_name=:viewName AND v.enabled=1 ORDER BY c.pinned DESC,c.created_at_epoch_ms DESC LIMIT :limit OFFSET :offset") suspend fun directoryPageForView(viewName:String,limit:Int,offset:Int):List<P14ProductConversationEntity>
+    @Query("SELECT * FROM p14_conversations ORDER BY pinned DESC, created_at_epoch_ms DESC, entry_id DESC LIMIT :limit OFFSET :offset") suspend fun directoryPage(limit:Int,offset:Int):List<P14ProductConversationEntity>
+    @Query("SELECT * FROM p14_conversations WHERE :coverageAfter IS NULL OR local_conversation_id IS NOT NULL OR created_at_epoch_ms > :coverageAfter ORDER BY pinned DESC, created_at_epoch_ms DESC, entry_id DESC LIMIT :limit OFFSET :offset") suspend fun coveredDirectoryPage(limit:Int,offset:Int,coverageAfter:Long?):List<P14ProductConversationEntity>
+    @Query("SELECT c.* FROM p14_conversations c JOIN p14_entry_views v ON c.entry_id=v.entry_id WHERE v.view_name=:viewName AND v.enabled=1 ORDER BY c.pinned DESC,c.created_at_epoch_ms DESC,c.entry_id DESC LIMIT :limit OFFSET :offset") suspend fun directoryPageForView(viewName:String,limit:Int,offset:Int):List<P14ProductConversationEntity>
     @Query("SELECT * FROM p14_entries WHERE entry_id=:entryId LIMIT 1") suspend fun entry(entryId: String): P14EntryEntity?
     @Query("SELECT * FROM p14_entries WHERE entry_id=:entryId LIMIT 1") fun observeEntry(entryId: String): Flow<P14EntryEntity?>
     @Query("SELECT * FROM p14_conversations WHERE conversation_id=:conversationId LIMIT 1") suspend fun conversation(conversationId: String): P14ProductConversationEntity?

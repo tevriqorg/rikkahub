@@ -75,26 +75,34 @@ private data class P14SyncReplayDto(
 internal class P14ProductRepository(
     context: Context,
     private val http: OkHttpClient,
+    private val database: P14ProductDatabase = P14ProductDatabase.get(context.applicationContext),
 ) {
     private val appContext = context.applicationContext
-    private val database = P14ProductDatabase.get(appContext)
     private val dao = database.dao()
     private val json = Json { ignoreUnknownKeys = true; explicitNulls = false }
     private val credentialStore = P14RuntimeCredentialStore(appContext)
 
     val entries: Flow<List<P14EntryEntity>> = dao.observeEntries()
     suspend fun directoryPage(offset:Int,limit:Int=20,view:String="chat"):List<P14EntryDirectoryItem> = withContext(Dispatchers.IO) {
-        require(offset>=0 && limit in 1..100)
-        require(view in setOf("chat","todo","idea","research","execute"))
-        var raw = if(view=="chat") dao.directoryPage(limit,offset) else dao.directoryPageForView(view,limit,offset)
-        if(view=="chat" && raw.size < limit && bootstrapPrefs.getBoolean("more",false)) {
-            credentialStore.activeConnection()?.let { connection ->
-                runCatching { bootstrapNextPage(connection) }
-                raw=dao.directoryPage(limit,offset)
+        directoryMutex.withLock {
+            require(offset>=0 && limit in 1..100)
+            require(view in setOf("chat","todo","idea","research","execute"))
+            fun coverageAfter():Long? = if(bootstrapPrefs.getBoolean("more",false)) {
+                // Room stores milliseconds, whereas the server keyset may contain microseconds.
+                // Hold the entire boundary millisecond back until it is completely covered.
+                val boundary=requireNotNull(bootstrapPrefs.getString("before_time",null)) { "Bootstrap coverage boundary absent" }
+                OffsetDateTime.parse(boundary).toInstant().toEpochMilli()
+            } else null
+            suspend fun page() = if(view=="chat") dao.coveredDirectoryPage(limit,offset,coverageAfter())
+                else dao.directoryPageForView(view,limit,offset)
+            var raw=page()
+            while(view=="chat" && raw.size<limit && bootstrapPrefs.getBoolean("more",false)) {
+                val connection=credentialStore.activeConnection() ?: error("Older Entry history requires an active connection")
+                // Failure is surfaced to the caller; a partial page must not masquerade as EOF.
+                bootstrapNextPage(connection)
+                raw=page()
             }
-        }
-        raw.map { c ->
-            P14EntryDirectoryItem(c.entryId,c.conversationId,dao.entry(c.entryId)?.bodyText.orEmpty(),c.pinned,c.archived)
+            raw.map { c -> P14EntryDirectoryItem(c.entryId,c.conversationId,dao.entry(c.entryId)?.bodyText.orEmpty(),c.pinned,c.archived) }
         }
     }
     val pendingOutboxCount: Flow<Int> = dao.observePendingOutboxCount()
@@ -321,18 +329,31 @@ internal class P14ProductRepository(
 
     /** Keyset paging of older server-authoritative Entries; no historical event flood. */
     private suspend fun bootstrapNextPage(connection:P14RuntimeConnection):Boolean {
-        val before=bootstrapPrefs.getString("before_time",null) ?: return false
-        val beforeId=bootstrapPrefs.getString("before_id",null) ?: return false
-        val anchor=bootstrapPrefs.getString("snapshot",null) ?: return false
+        val before=requireNotNull(bootstrapPrefs.getString("before_time",null)) { "Bootstrap boundary absent" }
+        val beforeId=requireNotNull(bootstrapPrefs.getString("before_id",null)) { "Bootstrap boundary identity absent" }
+        val anchor=requireNotNull(bootstrapPrefs.getString("snapshot",null)) { "Bootstrap snapshot absent" }
         val url=connection.baseUrl.toHttpUrl().newBuilder().addPathSegments("bootstrap/entries")
             .addQueryParameter("limit","50").addQueryParameter("snapshot_at",anchor)
             .addQueryParameter("before_created_at",before).addQueryParameter("before_entry_id",beforeId).build()
         val root=json.parseToJsonElement(get(connection,url.toString())).jsonObject
-        val entries=root["items"]?.jsonArray ?: return false
+        val entries=root["items"]?.jsonArray ?: error("Bootstrap list absent")
+        check(entries.size<=50) { "Bootstrap page exceeds the requested bound" }
+        val responseAnchor=root["snapshot_at"]?.jsonPrimitive?.contentOrNull ?: error("Bootstrap snapshot absent")
+        check(OffsetDateTime.parse(responseAnchor).toInstant()==OffsetDateTime.parse(anchor).toInstant()) { "Bootstrap snapshot changed" }
+        val more=root["has_more"]?.jsonPrimitive?.contentOrNull?.let {
+            when(it) { "true" -> true; "false" -> false; else -> error("Invalid bootstrap continuation") }
+        } ?: error("Bootstrap continuation absent")
+        val nextTime=root["next_before_created_at"]?.jsonPrimitive?.contentOrNull
+        val nextId=root["next_before_entry_id"]?.jsonPrimitive?.contentOrNull
+        if(more) {
+            check(entries.isNotEmpty()) { "Bootstrap continuation made no progress" }
+            val next=OffsetDateTime.parse(requireNotNull(nextTime)).toInstant()
+            val previous=OffsetDateTime.parse(before).toInstant()
+            check(next<previous || (next==previous && requireNotNull(nextId)<beforeId)) { "Bootstrap continuation did not move backwards" }
+        }
         database.withTransaction { for(item in entries) seedBootstrapEntry(item.jsonObject) }
-        bootstrapPrefs.edit().putString("before_time",root["next_before_created_at"]?.jsonPrimitive?.contentOrNull)
-            .putString("before_id",root["next_before_entry_id"]?.jsonPrimitive?.contentOrNull)
-            .putBoolean("more",root["has_more"]?.jsonPrimitive?.contentOrNull=="true").apply()
+        check(bootstrapPrefs.edit().putString("before_time",nextTime).putString("before_id",nextId)
+            .putBoolean("more",more).commit()) { "Bootstrap continuation was not persisted" }
         return entries.isNotEmpty()
     }
 
@@ -800,6 +821,7 @@ internal class P14ProductRepository(
     companion object {
         private const val SYNC_SCOPE = "account"
         private const val MAX_DOWNLOAD_BYTES=512L*1024*1024
+        private val directoryMutex=Mutex()
         private val mediaDownloadMutex=Mutex()
         private val JSON_MEDIA = "application/json; charset=utf-8".toMediaType()
     }
