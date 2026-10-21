@@ -90,11 +90,15 @@ jobs:
           chmod +x gradlew
           ./gradlew assembleDebug --stacktrace
 
-      - name: Upload debug APKs
+      - name: Upload debug APKs and JVM reports
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: rikkahub-p14-ci-${{ github.sha }}
-          path: app/build/outputs/apk/debug/*.apk
+          path: |
+            app/build/outputs/apk/debug/*.apk
+            app/build/test-results/testDebugUnitTest/
+            app/build/reports/tests/testDebugUnitTest/
           if-no-files-found: error
 
   build-p14-server:
