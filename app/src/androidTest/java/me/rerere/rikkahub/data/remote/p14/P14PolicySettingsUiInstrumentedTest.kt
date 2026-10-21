@@ -56,7 +56,7 @@ class P14PolicySettingsUiInstrumentedTest {
                 compose.onNodeWithContentDescription("Messages").performClick()
                 // A fetched release note can occupy the small emulator drawer.
                 // Dismiss its visible card through the normal UI before opening Settings.
-                val closeUpdate=hasContentDescription(context.getString(R.string.close)) and hasClickAction()
+                val closeUpdate=hasContentDescription(context.getString(R.string.update_card_close)) and hasClickAction()
                 if(compose.onAllNodes(closeUpdate).fetchSemanticsNodes().size==1) {
                     compose.onNode(closeUpdate).performClick()
                 }
