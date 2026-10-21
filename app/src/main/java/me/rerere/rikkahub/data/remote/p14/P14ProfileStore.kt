@@ -8,7 +8,8 @@ import org.yaml.snakeyaml.constructor.SafeConstructor
 /** Portable, non-executable profile. No credential is serialized or logged. */
 internal class P14ProfileStore(private val context:Context) {
     private val prefs=context.applicationContext.getSharedPreferences("p14-native-profile",Context.MODE_PRIVATE)
-    private val yaml=Yaml(SafeConstructor(LoaderOptions()))
+    // SnakeYAML holds parse state; each concurrent read must own its parser.
+    private val yaml get() = Yaml(SafeConstructor(LoaderOptions()))
     fun exportProfile():String = prefs.getString("active_profile",null) ?: DEFAULT_PROFILE
     fun profileIdentity():Pair<String,Int> {
         val root=yaml.load<Any>(exportProfile()) as? Map<*,*> ?: error("Invalid active Profile")

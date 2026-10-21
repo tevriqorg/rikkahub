@@ -7,7 +7,8 @@ import org.yaml.snakeyaml.constructor.SafeConstructor
 /** Pure contract validation before an imported Profile can replace the active one. */
 internal object P14ProfileContract {
     private val compiledCapture = setOf("text", "photo", "scan", "voice", "file", "share")
-    private val yaml = Yaml(SafeConstructor(LoaderOptions().apply {
+    // SnakeYAML holds parse state; each concurrent read must own its parser.
+    private val yaml get() = Yaml(SafeConstructor(LoaderOptions().apply {
         maxAliasesForCollections = 10
         codePointLimit = 32768
     }))

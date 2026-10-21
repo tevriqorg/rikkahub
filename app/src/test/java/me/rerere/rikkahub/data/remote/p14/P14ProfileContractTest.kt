@@ -44,4 +44,31 @@ class P14ProfileContractTest {
         rejects(base.replace("p14.profile/v1","p14.profile/v2"))
         rejects(base+"\nnew_runtime: {required: true, enabled: true}")
     }
+    @Test(timeout=60000) fun concurrentPoliciesRemainIndependentAndSecretsStayRejected() {
+        val pool=java.util.concurrent.Executors.newFixedThreadPool(8)
+        val start=java.util.concurrent.CountDownLatch(1)
+        try {
+            val tasks=(0 until 8).map { worker -> pool.submit {
+                start.await()
+                repeat(200) { index ->
+                    val enabled=(worker+index)%2==0
+                    val days=1+(worker+index)%30
+                    val source=base.replace("id: test","id: concurrent-$worker-$index")
+                        .replace("enabled: false","enabled: $enabled")
+                        .replace("local_days: 7","local_days: $days")
+                    val result=P14ProfileContract.validate(source)
+                    assertEquals(enabled,result.locationEnabled)
+                    assertEquals(days,result.localRetentionDays)
+                    val states=P14CapabilityRegistry.activation(source,setOf("LOCATION","BACKGROUND_LOCATION"))
+                    assertEquals(P14Availability.READY,states.single { it.id=="text" }.state)
+                    assertEquals(if(enabled) P14Availability.READY else P14Availability.DISABLED,
+                        states.single { it.id=="observation.location" }.state)
+                    if(index%20==0) rejects(source+"\ntoken: synthetic-forbidden")
+                }
+            } }
+            start.countDown()
+            tasks.forEach { it.get(45,java.util.concurrent.TimeUnit.SECONDS) }
+        } finally { pool.shutdownNow() }
+    }
+
 }

@@ -15,7 +15,8 @@ internal data class P14EffectiveCapability(val id:String, val state:P14Availabil
 /** The Profile never dynamically loads code: only these native capabilities can execute. */
 internal object P14CapabilityRegistry {
     private val compiled = setOf("text","photo","voice","scan","file","share","observation.location")
-    private val yaml = Yaml(SafeConstructor(LoaderOptions()))
+    // SnakeYAML holds parse state; each concurrent read must own its parser.
+    private val yaml get() = Yaml(SafeConstructor(LoaderOptions()))
     fun resolve(source:String, granted:Set<String>, available:Set<String> = compiled):List<P14EffectiveCapability> {
         P14ProfileContract.validate(source)
         val root=yaml.load<Any>(source) as Map<*,*>
