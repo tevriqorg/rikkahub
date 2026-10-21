@@ -1,6 +1,13 @@
 package me.rerere.rikkahub.data.remote.p14
 
 import android.content.Context
+import android.media.MediaPlayer
+import android.net.Uri
+import androidx.work.WorkManager
+import java.io.File
+import java.io.FileOutputStream
+import java.util.concurrent.CountDownLatch
+import okio.Buffer
 import android.content.Intent
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createEmptyComposeRule
@@ -106,6 +113,9 @@ class P14ChannelAcceptanceInstrumentedTest {
         val entry=product().directoryPage(0,100).single { it.bodyText=="task4-device-A" }
         // Existing online Action acceptance has cached the real Manifest; offline uses that LKG.
         val op=remote().quickActionActive(entry.conversationId,"todo.create")
+        assertTrue(prefs.edit().putString("channel-quick-provider",runtime.providerId)
+            .putString("channel-quick-base",runtime.baseUrl).commit())
+        suspendDelivery()
         val stored=operation(op)
         assertTrue("Offline durable operation cannot be ACKed",stored.state in setOf("PENDING","IN_FLIGHT","RETRY"))
         val payload=Json.parseToJsonElement(stored.payload).jsonObject
@@ -117,13 +127,60 @@ class P14ChannelAcceptanceInstrumentedTest {
             .putString("channel-quick-entry",entry.entryId)
             .putString("channel-quick-payload-hash",hash(stored.payload)).commit())
         assertNotNull(runtime)
-        evidence("seedQuickActionOffline PASS: real QuickAction queue committed stable operation/action/payload with network unreachable; external force-stop required next")
+        evidence("seedQuickActionOffline PASS: real QuickAction queue committed stable operation/action/payload with network unreachable; active delivery suspended and unique worker cancelled/awaited; restore network for actual ACK-window POST next")
     }
 
-    /** B, after external force-stop and restored network; tolerate legitimate automatic worker recovery. */
-    @Test fun verifyQuickActionAfterRestart():Unit = runBlocking {
-        guardRuntime()
+    /** Exact HTTP-success/local-ACK crash window. Root must force-stop after the fsynced marker. */
+    @Test fun quickActionAcknowledgementWindow():Unit = runBlocking {
+        guardFixture()
+        assertNull(P14RuntimeCredentialStore(context).activeConnection())
+        WorkManager.getInstance(context).cancelUniqueWork("p14-remote-sync").result.get(15,TimeUnit.SECONDS)
         val op=requireNotNull(prefs.getString("channel-quick-operation",null))
+        val conversation=requireNotNull(prefs.getString("channel-quick-conversation",null))
+        val expectedHash=requireNotNull(prefs.getString("channel-quick-payload-hash",null))
+        val marker=File(context.filesDir,"task4-quick-ack-window-ready")
+        if(marker.exists()) assertTrue(marker.delete())
+        val intercepted=http.newBuilder().addInterceptor { chain ->
+            val request=chain.request()
+            val matching=request.method=="POST" && request.url.toString()==BASE+"/conversations/"+conversation+"/quick-actions" &&
+                request.body?.let { body ->
+                    val buffer=Buffer();body.writeTo(buffer)
+                    Json.parseToJsonElement(buffer.readUtf8()).jsonObject["client_operation_id"]?.jsonPrimitive?.content==op
+                }==true
+            val response=chain.proceed(request)
+            if(!matching) response else {
+                try {
+                    assertTrue("Actual QuickAction Server response must be successful",response.isSuccessful)
+                    // Consume real committed response but deliberately do not return it to repository ACK code.
+                    val committed=Json.parseToJsonElement(requireNotNull(response.body).string()).jsonObject
+                    assertEquals(prefs.getString("channel-quick-action",null),committed["action_id"]?.jsonPrimitive?.content)
+                    assertEquals("IN_FLIGHT",operation(op).state)
+                    assertEquals(expectedHash,hash(operation(op).payload))
+                    suspendDelivery()
+                    assertEquals("IN_FLIGHT",operation(op).state)
+                    FileOutputStream(marker).use { out ->
+                        out.write("SERVER_COMMITTED_WITHOUT_LOCAL_ACK".toByteArray());out.fd.sync()
+                    }
+                    evidence("quickActionAcknowledgementWindow SERVER_COMMITTED_WITHOUT_LOCAL_ACK: awaiting external process death")
+                    CountDownLatch(1).await(90,TimeUnit.SECONDS)
+                    throw IOException("External force-stop did not arrive within bounded acknowledgement window")
+                } finally { response.close() }
+            }
+        }.build()
+        restoreQuickRuntime()
+        val completed=P14RemoteRepository(context,GlobalContext.get().get<SettingsStore>(),intercepted).processPendingActive()
+        fail("Crash-window process survived: completed="+completed)
+    }
+
+    /** B, after external force-stop and restored network: original committed op is retried. */
+    @Test fun verifyQuickActionAfterRestart():Unit = runBlocking {
+        guardFixture()
+        assertNull(P14RuntimeCredentialStore(context).activeConnection())
+        assertEquals("SERVER_COMMITTED_WITHOUT_LOCAL_ACK",
+            File(context.filesDir,"task4-quick-ack-window-ready").readText())
+        val op=requireNotNull(prefs.getString("channel-quick-operation",null))
+        assertEquals("IN_FLIGHT",operation(op).state)
+        restoreQuickRuntime()
         val action=requireNotNull(prefs.getString("channel-quick-action",null))
         val conversation=requireNotNull(prefs.getString("channel-quick-conversation",null))
         val entry=requireNotNull(prefs.getString("channel-quick-entry",null))
@@ -144,7 +201,11 @@ class P14ChannelAcceptanceInstrumentedTest {
         assertEquals("todo.create",todo.kind)
         assertEquals(entry,todo.entryId)
         assertEquals(conversation,todo.conversationId)
-        evidence("verifyQuickActionAfterRestart PASS: actual offline enqueue survived external kill, original payload recovered and ACKed; explicit same-op retry created one authoritative typed Todo Action")
+        FileOutputStream(File(context.filesDir,"task4-quick-proof.json")).use { out ->
+            out.write(buildJsonObject { put("operation_id",op);put("action_id",action);put("conversation_id",conversation) }.toString().toByteArray())
+            out.fd.sync()
+        }
+        evidence("verifyQuickActionAfterRestart PASS: actual offline enqueue and Server-success-before-local-ACK process death recovered original payload and ACKed; explicit same-op retry created one authoritative typed Todo Action")
     }
 
     /** B, after its real confirm decision: synthetic producer result is consumed by native replay/views. */
@@ -203,6 +264,54 @@ class P14ChannelAcceptanceInstrumentedTest {
         evidence("consumeProducerResultAndTypedViews PASS: actual Android-confirmed Action consumed producer-only Result through native replay, typed Execute/Research UI and real Action Result/Destination detail UI; Idea/Research preserve Entry identity; synthetic producer is not Hermes execution")
     }
 
+    /** B after materializeRemoteMedia: actual Android decoder preparation/play/completion on cached WAV. */
+    @Test fun playMaterializedVoiceToCompletion():Unit = runBlocking {
+        guardRuntime()
+        val id=requireNotNull(prefs.getString("remote-media-local-id",null))
+        val dao=P14ProductDatabase.get(context).dao()
+        val before=requireNotNull(dao.attachment(id))
+        assertEquals("VOICE",before.kind);assertEquals("audio/wav",before.mimeType)
+        assertEquals(args.getString("p14MediaAttachmentId"),before.remoteAttachmentId)
+        val locator=requireNotNull(before.localLocator)
+        val bytes=context.contentResolver.openInputStream(Uri.parse(locator))!!.use { it.readBytes() }
+        val digest=MessageDigest.getInstance("SHA-256").digest(bytes).toList()
+        val complete=CountDownLatch(1)
+        val errors=java.util.concurrent.atomic.AtomicReference<String?>(null)
+        val player=MediaPlayer()
+        try {
+            player.setDataSource(context,Uri.parse(locator))
+            player.setOnCompletionListener { complete.countDown() }
+            player.setOnErrorListener { _,what,extra -> errors.set("MediaPlayer "+what+"/"+extra);complete.countDown();true }
+            player.prepare()
+            assertTrue("Native decoder must report positive duration",player.duration>0)
+            player.start()
+            assertTrue("Native playback must complete within 15 seconds",complete.await(15,TimeUnit.SECONDS))
+            assertNull(errors.get())
+        } finally { player.release() }
+        assertEquals(before,dao.attachment(id))
+        val after=context.contentResolver.openInputStream(Uri.parse(locator))!!.use { it.readBytes() }
+        assertEquals(digest,MessageDigest.getInstance("SHA-256").digest(after).toList())
+        assertTrue(recoverP14AttachmentPart(before) is UIMessagePart.Audio)
+        evidence("playMaterializedVoiceToCompletion PASS: real MediaPlayer prepared/started/completed cached synthetic WAV; VOICE identity and source hash unchanged; no physical speaker/microphone claim")
+    }
+
+    private fun suspendDelivery() {
+        assertTrue(context.getSharedPreferences("p14-rikkahub-runtime",Context.MODE_PRIVATE).edit()
+            .remove("active_provider").remove("active_base").commit())
+        WorkManager.getInstance(context).cancelUniqueWork("p14-remote-sync").result.get(15,TimeUnit.SECONDS)
+    }
+
+    private fun restoreQuickRuntime():P14RuntimeConnection {
+        guardFixture()
+        val provider=requireNotNull(prefs.getString("channel-quick-provider",null))
+        val base=requireNotNull(prefs.getString("channel-quick-base",null))
+        require(base==BASE)
+        val store=P14RuntimeCredentialStore(context)
+        requireNotNull(store.load(provider,base)) { "Original encrypted credential must survive process death" }
+        store.markActive(provider,base)
+        return guardRuntime()
+    }
+
     private fun assertWorkUi(view:String,marker:String,vararg labels:String) {
         val intent=Intent(context,P14EntryActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         ActivityScenario.launch<P14EntryActivity>(intent).use {
@@ -220,10 +329,14 @@ class P14ChannelAcceptanceInstrumentedTest {
         }
     }
 
-    private fun guardRuntime():P14RuntimeConnection {
+    private fun guardFixture() {
         require(args.getString("p14OwnerToken")=="task4-owner-synthetic-only") { "Synthetic acceptance only" }
         require(args.getString("p14BaseUrl")==BASE) { "Runner emulator fixture only" }
         require(context.packageName=="me.rerere.rikkahub.debug")
+    }
+
+    private fun guardRuntime():P14RuntimeConnection {
+        guardFixture()
         return requireNotNull(P14RuntimeCredentialStore(context).activeConnection()).also {
             require(it.baseUrl==BASE) { "Unexpected runtime target" }
         }

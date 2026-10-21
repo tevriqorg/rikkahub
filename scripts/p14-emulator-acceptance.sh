@@ -78,10 +78,10 @@ instrument() {
   ! grep -Eq 'FAILURES!!!|INSTRUMENTATION_FAILED|Process crashed' "$report"
 }
 crash_window() {
-  local serial="$1" method="$2" marker="$3" expected="$4"
+  local serial="$1" method="$2" marker="$3" expected="$4" klass="${5:-P14RecoveryInstrumentedTest}"
   mkdir -p evidence/intentional-crashes
   adb -s "$serial" shell run-as me.rerere.rikkahub.debug rm -f "files/$marker"
-  intentional_crash=1 instrument "$serial" "$method" > "evidence/intentional-crashes/$method-driver.txt" 2>&1 &
+  intentional_crash=1 instrument "$serial" "$method" "$klass" > "evidence/intentional-crashes/$method-driver.txt" 2>&1 &
   local driver=$! observed="" pid_before=""
   for attempt in $(seq 1 180); do
     observed="$(adb -s "$serial" exec-out run-as me.rerere.rikkahub.debug cat "files/$marker" 2>/dev/null || true)"
@@ -183,6 +183,7 @@ instrument "$B" realNotificationOpensEntry P14RecoveryUiInstrumentedTest || ui_f
 instrument "$B" materializeRemoteMedia
 adb -s "$B" shell am force-stop me.rerere.rikkahub.debug
 instrument "$B" verifyRemoteMedia
+instrument "$B" playMaterializedVoiceToCompletion P14ChannelAcceptanceInstrumentedTest
 instrument "$B" deviceBMutations
 instrument "$B" actionDecisionsAndQuickAction
 instrument "$A" competingDeviceActionConflict
@@ -212,7 +213,9 @@ adb -s "$B" shell am force-stop me.rerere.rikkahub.debug
 adb -s "$B" shell svc wifi enable
 adb -s "$B" shell svc data enable
 network_probe "$B" online-after-quick-action
+crash_window "$B" quickActionAcknowledgementWindow task4-quick-ack-window-ready SERVER_COMMITTED_WITHOUT_LOCAL_ACK P14ChannelAcceptanceInstrumentedTest
 instrument "$B" verifyQuickActionAfterRestart P14ChannelAcceptanceInstrumentedTest
+adb -s "$B" exec-out run-as me.rerere.rikkahub.debug cat files/task4-quick-proof.json > evidence/native-quick-action.json
 instrument "$B" consumeProducerResultAndTypedViews P14ChannelAcceptanceInstrumentedTest
 # Independent live Runtime delivery and two-installation Interaction arbitration.
 wait_marker() {
