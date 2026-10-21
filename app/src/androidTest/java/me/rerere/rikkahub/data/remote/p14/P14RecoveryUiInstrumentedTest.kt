@@ -8,6 +8,9 @@ import android.accessibilityservice.AccessibilityServiceInfo
 import java.io.File
 import android.os.SystemClock
 import android.view.accessibility.AccessibilityNodeInfo
+import android.view.MotionEvent
+import android.view.InputDevice
+import android.graphics.Rect
 import kotlinx.coroutines.runBlocking
 import me.rerere.rikkahub.data.datastore.SettingsStore
 import okhttp3.OkHttpClient
@@ -203,13 +206,20 @@ class P14RecoveryUiInstrumentedTest {
             var clicked=false
             val clickDeadline=SystemClock.elapsedRealtime()+10000
             while(!clicked && SystemClock.elapsedRealtime()<clickDeadline) {
-                val matches=systemUiRoots().flatMap { it.findAccessibilityNodeInfosByText(notification.title).orEmpty() }
+                val matches=systemUiNodes().filter { it.text?.toString()==notification.title && it.isVisibleToUser }
                 for(node in matches) {
                     if(node.text?.toString()!=notification.title) continue
-                    var target:AccessibilityNodeInfo?=node
-                    repeat(8) {
-                        if(!clicked) clicked=target?.performAction(AccessibilityNodeInfo.ACTION_CLICK)==true
-                        target=target?.parent
+                    // Real touch at the bounds of the exact visible title; no PendingIntent dispatch.
+                    val bounds=Rect()
+                    node.getBoundsInScreen(bounds)
+                    if(!bounds.isEmpty) {
+                        val down=SystemClock.uptimeMillis()
+                        val press=MotionEvent.obtain(down,down,MotionEvent.ACTION_DOWN,bounds.exactCenterX(),bounds.exactCenterY(),0)
+                        val release=MotionEvent.obtain(down,down+50,MotionEvent.ACTION_UP,bounds.exactCenterX(),bounds.exactCenterY(),0)
+                        press.source=InputDevice.SOURCE_TOUCHSCREEN;release.source=InputDevice.SOURCE_TOUCHSCREEN
+                        try {
+                            clicked=automation.injectInputEvent(press,true) && automation.injectInputEvent(release,true)
+                        } finally { press.recycle();release.recycle() }
                     }
                     if(clicked) break
                 }
@@ -239,13 +249,23 @@ class P14RecoveryUiInstrumentedTest {
         return (automation.windows.mapNotNull { it.root }+listOfNotNull(automation.rootInActiveWindow))
             .filter { it.packageName?.toString()=="com.android.systemui" }
     }
+    private fun systemUiNodes():List<AccessibilityNodeInfo> {
+        val queue=java.util.ArrayDeque<AccessibilityNodeInfo>()
+        systemUiRoots().distinctBy { it.windowId }.forEach { queue.add(it) }
+        val nodes=mutableListOf<AccessibilityNodeInfo>()
+        while(queue.isNotEmpty() && nodes.size<600) {
+            val node=queue.removeFirst();nodes.add(node)
+            for(i in 0 until node.childCount) node.getChild(i)?.let { queue.add(it) }
+        }
+        return nodes
+    }
     private fun saveSystemUiTree(name:String) {
         val lines=mutableListOf<String>()
         val queue=java.util.ArrayDeque<AccessibilityNodeInfo>()
         systemUiRoots().forEach { queue.add(it) }
         while(queue.isNotEmpty() && lines.size<600) {
             val node=queue.removeFirst()
-            lines.add("id=${node.viewIdResourceName} class=${node.className} clickable=${node.isClickable} text=${node.text?.take(160)} desc=${node.contentDescription?.take(160)}")
+            lines.add("id=${node.viewIdResourceName} class=${node.className} clickable=${node.isClickable} visible=${node.isVisibleToUser} text=${node.text?.take(160)} desc=${node.contentDescription?.take(160)}")
             for(i in 0 until node.childCount) node.getChild(i)?.let { queue.add(it) }
         }
         File(context.filesDir,name).writeText(lines.joinToString("\n"))

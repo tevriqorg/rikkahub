@@ -689,7 +689,21 @@ class P14RecoveryInstrumentedTest {
             assertEquals("foreground", row.permissionState)
             assertEquals(P14RuntimeCredentialStore(context).deviceId(), row.sourceDeviceId)
             assertEquals(entryCount, P14ProductDatabase.get(context).dao().observeEntries().first().size)
-            product().syncAndFlushActive()
+            assertTrue(product().syncAndFlushActive())
+            kotlinx.coroutines.withTimeout(15000) {
+                while(P14ProductDatabase.get(context).dao().pendingObservationOutbox().any { it.observationId==id }) {
+                    delay(100)
+                    assertTrue(product().syncAndFlushActive())
+                }
+            }
+            val runtime=requireNotNull(P14RuntimeCredentialStore(context).activeConnection())
+            http.newCall(Request.Builder().url(runtime.baseUrl+"/observations?limit=50")
+                .header("Authorization","Bearer "+runtime.bearerToken).build()).execute().use { response ->
+                assertEquals(200,response.code)
+                val records=Json.parseToJsonElement(requireNotNull(response.body).string()).jsonArray
+                val committed=records.single { it.jsonObject["observation_id"]?.jsonPrimitive?.content==id }.jsonObject
+                assertEquals(P14RuntimeCredentialStore(context).deviceId(),committed["payload"]!!.jsonObject["source_device_id"]?.jsonPrimitive?.content)
+            }
             assertFalse(P14ProductDatabase.get(context).dao().pendingObservationOutbox().any { it.observationId == id })
             evidence("observationPolicy PASS: explicit opt-in synthetic coordinates, provenance/Outbox and server commit, separate Entry count unchanged; no GPS sensor/background efficacy claim")
         } finally { profile.importProfile(before) }
