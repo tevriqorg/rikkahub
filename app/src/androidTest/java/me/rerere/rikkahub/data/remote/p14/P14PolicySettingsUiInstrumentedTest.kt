@@ -53,7 +53,7 @@ class P14PolicySettingsUiInstrumentedTest {
                     compose.onAllNodesWithContentDescription("Messages").fetchSemanticsNodes().isNotEmpty()
                 }
                 compose.onNodeWithContentDescription("Messages").performClick()
-                text(context.getString(R.string.settings)).performClick()
+                description(context.getString(R.string.settings)).performClick()
                 val providersLabel=context.getString(R.string.setting_page_providers)
                 compose.waitUntil(20_000) {
                     runCatching { compose.onNode(hasScrollToIndexAction()).performScrollToNode(hasText(providersLabel)) }.isSuccess
@@ -146,8 +146,23 @@ class P14PolicySettingsUiInstrumentedTest {
     }
 
     private fun text(value:String):SemanticsNodeInteraction {
-        compose.waitUntil(20_000) { compose.onAllNodesWithText(value).fetchSemanticsNodes().isNotEmpty() }
+        try {
+            compose.waitUntil(20_000) { compose.onAllNodesWithText(value).fetchSemanticsNodes().isNotEmpty() }
+        } catch(failure:Throwable) { saveFailureTree();throw failure }
         return compose.onNodeWithText(value)
+    }
+    private fun description(value:String):SemanticsNodeInteraction {
+        try {
+            compose.waitUntil(20_000) { compose.onAllNodesWithContentDescription(value).fetchSemanticsNodes().isNotEmpty() }
+        } catch(failure:Throwable) { saveFailureTree();throw failure }
+        return compose.onNodeWithContentDescription(value)
+    }
+    private fun saveFailureTree() {
+        runCatching {
+            val tree=compose.onRoot(useUnmergedTree=true).printToString()
+                .replace(Regex("p14d_[A-Za-z0-9_-]{30,}"),"[REDACTED_DEVICE_CREDENTIAL]")
+            java.io.File(context.filesDir,"task4-settings-ui-tree.txt").writeText(tree.take(48000))
+        }
     }
     private fun provider(id:String)=settings.settingsFlow.value.providers.single { it.id.toString()==id } as ProviderSetting.OpenAI
     private fun guardRuntime():P14RuntimeConnection {
