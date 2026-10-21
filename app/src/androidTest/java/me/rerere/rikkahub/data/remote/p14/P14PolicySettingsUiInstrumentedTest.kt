@@ -61,7 +61,9 @@ class P14PolicySettingsUiInstrumentedTest {
                 text(providersLabel).performClick()
                 text(context.getString(R.string.setting_provider_page_search_providers))
                     .performTextReplacement(original.name)
-                text(original.name).performClick()
+                val providerCard=hasText(original.name) and hasClickAction() and !hasSetTextAction()
+                compose.waitUntil(20_000) { compose.onAllNodes(providerCard).fetchSemanticsNodes().size==1 }
+                compose.onNode(providerCard).performClick()
                 text(context.getString(R.string.setting_provider_page_models)).performClick()
                 // Entering the production Models tab performs real model discovery.
                 compose.onNodeWithContentDescription(context.getString(R.string.setting_provider_page_avaliable_models)).performClick()
