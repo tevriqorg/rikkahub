@@ -55,9 +55,12 @@ instrument() {
   local folder=evidence
   if [ "${intentional_crash:-0}" = 1 ]; then folder=evidence/intentional-crashes; fi
   local report="$folder/$serial-$method-$test_run.txt"
-  local setup=()
+  local setup=() observation=()
+  if [ -n "${observation_id:-}" ] && [ -n "${observation_source_device:-}" ]; then
+    observation=(-e p14ObservationId "$observation_id" -e p14ObservationSourceDevice "$observation_source_device")
+  fi
   if [ "$serial" = emulator-5554 ]; then setup=(-e p14SetupToken task4-setup-synthetic-only); fi
-  timeout 240 adb -s "$serial" shell am instrument -w -r \
+  timeout 240 adb -s "$serial" shell am instrument --user 0 -w -r \
     -e class "me.rerere.rikkahub.data.remote.p14.$klass#$method" \
     -e p14BaseUrl http://10.0.2.2:8014/v1 -e p14OwnerToken task4-owner-synthetic-only \
     -e p14NotificationId "$(python3 -c 'import json; print(json.load(open("evidence/fixture.json"))["notification_id"])')" \
@@ -71,7 +74,7 @@ instrument() {
     -e p14ActionSupplement "$(python3 -c 'import json; print(json.load(open("evidence/fixture.json"))["actions"]["supplement"])')" \
     -e p14ActionSkip "$(python3 -c 'import json; print(json.load(open("evidence/fixture.json"))["actions"]["skip"])')" \
     -e p14ActionCancel "$(python3 -c 'import json; print(json.load(open("evidence/fixture.json"))["actions"]["cancel"])')" \
-    -e p14ObservationId "${observation_id:-}" -e p14ObservationSourceDevice "${observation_source_device:-}" \
+    "${observation[@]}" \
     -e p14RealtimeRunId "$realtime_run" -e p14RaceAtEpochMs "$race_at" -e p14RaceChoice "$race_choice" \
     "${setup[@]}" \
     me.rerere.rikkahub.debug.test/androidx.test.runner.AndroidJUnitRunner | tee "$report" || return 1
