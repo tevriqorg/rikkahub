@@ -445,6 +445,10 @@ class P14RecoveryInstrumentedTest {
     }
 
     @Test fun scaleDirectoryPaging() = runBlocking {
+        val runtimePrefs=context.getSharedPreferences("p14-rikkahub-runtime",Context.MODE_PRIVATE)
+        val providerId=runtimePrefs.getString("active_provider",null)
+        assertTrue("Persisted runtime unavailable before paging: providerPresent=${providerId!=null}, basePresent=${runtimePrefs.contains("active_base")}, encryptedTokenPresent=${providerId?.let { runtimePrefs.contains(it+"_token") }==true}, ivPresent=${providerId?.let { runtimePrefs.contains(it+"_iv") }==true}",
+            P14RuntimeCredentialStore(context).activeConnection()!=null)
         val seen=mutableSetOf<String>()
         var offset=0
         val start=android.os.SystemClock.elapsedRealtime()
