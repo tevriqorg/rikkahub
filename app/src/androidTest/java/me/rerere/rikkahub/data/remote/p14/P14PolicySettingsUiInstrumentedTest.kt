@@ -49,16 +49,15 @@ class P14PolicySettingsUiInstrumentedTest {
         try {
             val intent=Intent(context,RouteActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             ActivityScenario.launch<RouteActivity>(intent).use {
+                try {
                 compose.waitUntil(20_000) {
                     compose.onAllNodesWithContentDescription("Messages").fetchSemanticsNodes().isNotEmpty()
                 }
                 compose.onNodeWithContentDescription("Messages").performClick()
                 description(context.getString(R.string.settings)).performClick()
                 val providersLabel=context.getString(R.string.setting_page_providers)
-                compose.waitUntil(20_000) {
-                    runCatching { compose.onNode(hasScrollToIndexAction()).performScrollToNode(hasText(providersLabel)) }.isSuccess
-                }
-                text(providersLabel).performClick()
+                compose.onNode(hasScrollToIndexAction()).performScrollToKey("modelServices")
+                text(providersLabel).performScrollTo().performClick()
                 text(context.getString(R.string.setting_provider_page_search_providers))
                     .performTextReplacement(original.name)
                 val providerCard=hasText(original.name) and hasClickAction() and !hasSetTextAction()
@@ -74,6 +73,7 @@ class P14PolicySettingsUiInstrumentedTest {
                 Espresso.pressBack()
                 compose.waitForIdle()
                 text("p14-hermes").assertExists()
+                } catch(failure:Throwable) { saveFailureTree();throw failure }
             }
             // Reopen the actual settings path's persisted result, not a manually created Model.
             assertEquals(1,provider(runtime.providerId).models.count { it.modelId=="p14-hermes" })
