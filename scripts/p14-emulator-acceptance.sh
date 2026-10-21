@@ -31,8 +31,23 @@ for serial in emulator-5554 emulator-5556; do
   adb -s "$serial" install --no-incremental -r evidence/apks/app.apk
   adb -s "$serial" install --no-incremental -r evidence/apks/test.apk
   installed_path="$(adb -s "$serial" shell pm path me.rerere.rikkahub.debug | sed -n 's/^package://p' | tr -d '\r')"
-  timeout 120 adb -s "$serial" pull "$installed_path" "$RUNNER_TEMP/$serial-installed.apk"
-  cmp evidence/apks/app.apk "$RUNNER_TEMP/$serial-installed.apk"
+  installed_verified=0
+  for attempt in 1 2 3; do
+    transfer_log="evidence/$serial-installed-apk-transfer-$attempt.txt"
+    if [ "$attempt" = 1 ]; then
+      timeout 120 adb -s "$serial" pull "$installed_path" "$RUNNER_TEMP/$serial-installed.apk" > "$transfer_log" 2>&1 && transfer_ok=1 || transfer_ok=0
+    else
+      timeout 120 adb -s "$serial" exec-out cat "$installed_path" > "$RUNNER_TEMP/$serial-installed.apk" 2> "$transfer_log" && transfer_ok=1 || transfer_ok=0
+    fi
+    if [ "$transfer_ok" = 1 ] && cmp -s evidence/apks/app.apk "$RUNNER_TEMP/$serial-installed.apk"; then
+      installed_verified=1
+      printf 'complete_transfer_and_byte_comparison=PASS\n' >> "$transfer_log"
+      break
+    fi
+    printf 'complete_transfer_and_byte_comparison=FAIL\n' >> "$transfer_log"
+    timeout 30 adb -s "$serial" wait-for-device
+  done
+  test "$installed_verified" = 1
   sha256sum "$RUNNER_TEMP/$serial-installed.apk" > "evidence/$serial-installed-apk-sha256.txt"
   rm -f "$RUNNER_TEMP/$serial-installed.apk"
   adb -s "$serial" shell pm grant me.rerere.rikkahub.debug android.permission.POST_NOTIFICATIONS
