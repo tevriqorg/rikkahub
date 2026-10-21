@@ -15,8 +15,10 @@ class RequestLoggingInterceptor : Interceptor {
         val request = chain.request()
         val startTime = System.currentTimeMillis()
 
-        val requestHeaders = request.headers.toMap()
-        val requestBody = request.body?.let { body ->
+        val requestHeaders = request.headers.toSafeLogMap()
+        // A request authenticated with a bearer may include additional secret material in
+        // the payload; it is not safe to persist that payload in the request-log database.
+        val requestBody = if (request.header("Authorization") != null) null else request.body?.let { body ->
             val buffer = Buffer()
             body.writeTo(buffer)
             buffer.readUtf8()
@@ -43,7 +45,7 @@ class RequestLoggingInterceptor : Interceptor {
         }
 
         val durationMs = System.currentTimeMillis() - startTime
-        val responseHeaders = response.headers.toMap()
+        val responseHeaders = response.headers.toSafeLogMap()
 
         Logging.logRequest(
             LogEntry.RequestLog(
@@ -62,13 +64,17 @@ class RequestLoggingInterceptor : Interceptor {
         return response
     }
 
-    private fun okhttp3.Headers.toMap(): Map<String, String> {
-        return names().associateWith { name ->
-            if (name.equals("Proxy-Authorization", ignoreCase = true)) {
+}
+
+/** Shared redaction policy for persisted request logs, including failures. */
+internal fun okhttp3.Headers.toSafeLogMap(): Map<String, String> {
+    return names().associateWith { name ->
+            if (name.equals("Proxy-Authorization", ignoreCase = true) ||
+                name.equals("Authorization", ignoreCase = true) ||
+                name.equals("X-API-Key", ignoreCase = true)) {
                 "██"
             } else {
                 get(name) ?: ""
             }
         }
-    }
 }

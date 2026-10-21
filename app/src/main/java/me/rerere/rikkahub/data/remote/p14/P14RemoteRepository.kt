@@ -1,6 +1,7 @@
 package me.rerere.rikkahub.data.remote.p14
 
 import android.content.Context
+import androidx.room.withTransaction
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.withContext
@@ -9,6 +10,8 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
 import me.rerere.ai.provider.ProviderSetting
 import me.rerere.rikkahub.data.datastore.SettingsStore
 import okhttp3.HttpUrl.Companion.toHttpUrl
@@ -17,6 +20,21 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import kotlin.uuid.Uuid
+
+@Serializable internal data class P14WorkItem(
+    val source:String,
+    @SerialName("source_id") val sourceId:String?=null,
+    @SerialName("entry_id") val entryId:String,
+    @SerialName("conversation_id") val conversationId:String?=null,
+    val kind:String,
+    val status:String,
+    val phase:String?=null,
+    @SerialName("progress_percent") val progressPercent:Int?=null,
+    @SerialName("interaction_id") val interactionId:String?=null,
+    @SerialName("result_text") val resultText:String?=null,
+    @SerialName("destination_ref") val destinationRef:String?=null,
+    @SerialName("body_text") val bodyText:String?=null,
+)
 
 internal class P14RemoteRepository(
     private val context:Context,
@@ -28,6 +46,15 @@ internal class P14RemoteRepository(
     private val access=P14RuntimeAccess(context,settingsStore,http)
     val notifications:Flow<List<P14NotificationEntity>> = dao.observeNotifications()
     val unreadCount:Flow<Int> = dao.observeUnreadCount()
+
+    suspend fun workItems(view:String,offset:Int=0,limit:Int=20):List<P14WorkItem> = withContext(Dispatchers.IO) {
+        require(view in setOf("todo","idea","research","execute"))
+        val connection=P14RuntimeCredentialStore(context).activeConnection() ?: return@withContext emptyList()
+        val url=connection.baseUrl.toHttpUrl().newBuilder().addPathSegments("views/$view/work")
+            .addQueryParameter("offset",offset.toString()).addQueryParameter("limit",limit.toString()).build()
+        val raw=execute(Request.Builder().url(url).header("Authorization","Bearer ${connection.bearerToken}").get().build())
+        json.decodeFromString<List<P14WorkItem>>(raw)
+    }
 
     suspend fun runtimeProvider(provider:ProviderSetting.OpenAI)=access.prepare(provider)
     suspend fun refresh(provider:ProviderSetting.OpenAI) = refresh(access.connection(provider))
@@ -48,20 +75,63 @@ internal class P14RemoteRepository(
         P14SystemNotifications.project(context, dao, items)
     }
 
-    suspend fun manifest(provider:ProviderSetting.OpenAI):P14EffectiveManifest {
-        val c=access.connection(provider)
-        return runCatching {
-            val url=c.baseUrl.toHttpUrl().newBuilder().addPathSegment("remote-manifest")
-                .addQueryParameter("client_protocol",P14RikkaCapabilities.PROTOCOL.toString()).build()
-            val dto:P14ManifestDto=json.decodeFromString(execute(Request.Builder().url(url).header("Authorization","Bearer ${c.bearerToken}").get().build()))
-            val effective=dto.effective()
-            context.getSharedPreferences("p14-manifest",Context.MODE_PRIVATE).edit().putString(c.baseUrl,json.encodeToString(dto)).apply()
-            effective
-        }.getOrElse {
-            val raw=context.getSharedPreferences("p14-manifest",Context.MODE_PRIVATE).getString(c.baseUrl,null)
-            if(raw!=null) runCatching { json.decodeFromString<P14ManifestDto>(raw).effective("LAST_KNOWN_GOOD") }.getOrElse{fallbackP14Manifest()}
-            else fallbackP14Manifest()
-        }
+    suspend fun manifest(provider:ProviderSetting.OpenAI):P14EffectiveManifest = withContext(Dispatchers.IO) { manifest(access.connection(provider)) }
+    suspend fun manifestActive():P14EffectiveManifest = withContext(Dispatchers.IO) {
+        val c=P14RuntimeCredentialStore(context).activeConnection() ?: return@withContext fallbackP14Manifest()
+        manifest(c)
+    }
+    private fun manifest(c:P14RuntimeConnection):P14EffectiveManifest = P14ManifestPolicy.load(context,c,http)
+
+    suspend fun notification(notificationId:String):P14NotificationEntity?=withContext(Dispatchers.IO){ dao.notification(notificationId) }
+    suspend fun setConversationStateActive(conversationId:String,baseRevision:Int,pinned:Boolean?=null,archived:Boolean?=null)=withContext(Dispatchers.IO) {
+        val c=P14RuntimeCredentialStore(context).activeConnection() ?: error("P14 device is not connected")
+        val payload=buildJsonObject {
+            put("client_operation_id",Uuid.random().toString()); put("base_revision",baseRevision)
+            pinned?.let { put("pinned",it) }; archived?.let { put("archived",it) }
+        }.toString()
+        post(c,"conversations/$conversationId/state",payload)
+    }
+
+    /** P14 Quick Action is queued with its stable operation/action identity before any HTTP. */
+    suspend fun quickActionActive(conversationId:String,actionType:String):String=withContext(Dispatchers.IO) {
+        val c=P14RuntimeCredentialStore(context).activeConnection() ?: error("P14 device is not connected")
+        val manifest=manifest(c)
+        require(actionType in manifest.quickActionTypes) { "Quick Action is not enabled by the current P14 Manifest" }
+        val operationId=Uuid.random().toString()
+        val actionId=Uuid.random().toString()
+        val payload=buildJsonObject {
+            put("client_operation_id",operationId); put("action_id",actionId); put("action_type",actionType)
+            put("payload",buildJsonObject {})
+        }.toString()
+        dao.enqueueOperation(P14OperationEntity(operationId,"", "QUICK_ACTION",payload,
+            conversationId=conversationId,actionId=actionId))
+        P14RemoteWork.enqueue(context)
+        operationId
+    }
+
+    /** Offline-first Action Card decision; user approval does not itself execute tools. */
+    suspend fun queueActionDecision(actionId:String,decision:String,supplementText:String?=null):String {
+        require(decision in setOf("confirm","supplement","skip","cancel"))
+        require((decision=="supplement") == !supplementText.isNullOrBlank())
+        val operationId=Uuid.random().toString()
+        val payload=buildJsonObject {
+            put("client_operation_id",operationId)
+            put("decision",decision)
+            if(decision=="supplement") put("supplement_text",supplementText!!.trim())
+        }.toString()
+        dao.enqueueOperation(P14OperationEntity(operationId,"","ACTION_DECISION",payload,actionId=actionId))
+        P14RemoteWork.enqueue(context)
+        return operationId
+    }
+
+    suspend fun queueObservationContextLink(entryId:String,observationId:String):String {
+        require(entryId.isNotBlank() && observationId.isNotBlank())
+        val operationId=Uuid.random().toString()
+        val payload=buildJsonObject { put("client_operation_id",operationId) }.toString()
+        dao.enqueueOperation(P14OperationEntity(operationId,"","LINK_OBSERVATION",payload,
+            conversationId=entryId,actionId=observationId))
+        P14RemoteWork.enqueue(context)
+        return operationId
     }
 
     suspend fun queueState(notificationId:String,state:String) {
@@ -69,7 +139,15 @@ internal class P14RemoteRepository(
         P14RemoteWork.enqueue(context)
     }
     suspend fun queueInteraction(notificationId:String,response:String) {
-        dao.enqueueOperation(P14OperationEntity(Uuid.random().toString(),notificationId,"INTERACTION",response))
+        val normalized=response.trim(); require(normalized.isNotEmpty())
+        val notification=requireNotNull(dao.notification(notificationId)) { "Unknown P14 notification" }
+        val interactionId=requireNotNull(notification.interactionId) { "Notification is not actionable" }
+        val interaction=requireNotNull(dao.interaction(interactionId)) { "Interaction context is not available" }
+        require(interaction.actionable && interaction.status=="PENDING") { "Interaction is no longer actionable" }
+        db.withTransaction {
+            check(dao.markInteractionResponded(interactionId,normalized)==1) { "Interaction was already answered" }
+            dao.enqueueOperation(P14OperationEntity(Uuid.random().toString(),notificationId,"INTERACTION",normalized))
+        }
         P14RemoteWork.enqueue(context)
     }
     suspend fun processPendingActive():Boolean {
@@ -94,12 +172,32 @@ internal class P14RemoteRepository(
                         post(c,"notifications/${op.notificationId}/interaction-response",json.encodeToString(cmd))
                         fetchInteraction(c,op.notificationId)
                     }
+                    "LINK_OBSERVATION" -> {
+                        val entryId=requireNotNull(op.conversationId)
+                        val observationId=requireNotNull(op.actionId)
+                        post(c,"entries/$entryId/context/observations/$observationId",op.payload)
+                    }
+                    "ACTION_DECISION" -> {
+                        val actionId=requireNotNull(op.actionId) { "Decision missing Action ID" }
+                        post(c,"actions/$actionId/decision",op.payload)
+                    }
+                    "QUICK_ACTION" -> {
+                        val conversationId=requireNotNull(op.conversationId) { "Quick Action missing durable conversation" }
+                        // The original serialized payload preserves action_id/client_operation_id on retry.
+                        post(c,"conversations/$conversationId/quick-actions",op.payload)
+                    }
                     else -> error("Unknown P14 operation ${op.type}")
                 }
                 dao.setOperationState(op.operationId,"ACKED")
             } catch(e:P14RemoteHttpException) {
-                if(e.status==409) { runCatching{refresh(c)}; dao.setOperationState(op.operationId,"ACKED") }
-                else dao.setOperationState(op.operationId,"RETRY")
+                if(e.status==409 && op.type in setOf("ACTION_DECISION","LINK_OBSERVATION","INTERACTION")) {
+                    // A competing device or an expired Interaction can reject this operation.
+                    // Never misreport that conflicting decision as ACKED.
+                    dao.setOperationState(op.operationId,"CONFLICT")
+                    if(op.type=="INTERACTION") runCatching { refresh(c) }
+                } else if(e.status==409 && op.type != "QUICK_ACTION") {
+                    runCatching{refresh(c)}; dao.setOperationState(op.operationId,"ACKED")
+                } else dao.setOperationState(op.operationId,"RETRY")
             } catch(_:Throwable) { dao.setOperationState(op.operationId,"RETRY") }
         }
     }

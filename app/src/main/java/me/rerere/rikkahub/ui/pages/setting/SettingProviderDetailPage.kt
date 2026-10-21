@@ -1040,7 +1040,7 @@ private fun ModelPicker(
                 showModal = true
             }
         ) {
-            Icon(HugeIcons.Package01, null)
+            Icon(HugeIcons.Package01, stringResource(R.string.setting_provider_page_avaliable_models))
         }
     }
 }

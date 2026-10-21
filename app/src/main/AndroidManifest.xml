@@ -4,6 +4,8 @@
 
   <uses-permission android:name="android.permission.INTERNET" />
   <uses-permission android:name="android.permission.CAMERA" />
+  <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+  <uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION" />
   <uses-permission android:name="android.permission.RECORD_AUDIO" />
   <uses-permission
     android:name="android.permission.WRITE_EXTERNAL_STORAGE"
@@ -63,6 +65,20 @@
       android:name=".ui.activity.P14InboxActivity"
       android:exported="false"
       android:theme="@style/Theme.Rikkahub" />
+    <activity
+      android:name=".ui.activity.P14EntryActivity"
+      android:exported="true"
+      android:label="P14 Capture"
+      android:theme="@style/Theme.Rikkahub">
+      <intent-filter>
+        <action android:name="android.intent.action.SEND" />
+        <category android:name="android.intent.category.DEFAULT" />
+        <data android:mimeType="text/plain" />
+        <data android:mimeType="image/*" />
+        <data android:mimeType="audio/*" />
+        <data android:mimeType="application/*" />
+      </intent-filter>
+    </activity>
     <activity
       android:name=".ui.activity.SafeModeActivity"
       android:exported="false"

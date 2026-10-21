@@ -26,6 +26,31 @@ class P14RemoteManifestTest {
         assertTrue(effective.messageCapabilities.isEmpty())
     }
 
+
+    @Test
+    fun quickActionsComeOnlyFromCompatibleServerManifest() {
+        val enabled = manifest(
+            capabilities = listOf("text", "quick_action"),
+            quickActions = listOf("content.accept", "test.retry"),
+        ).effective()
+        assertEquals(listOf("content.accept", "test.retry"), enabled.quickActionTypes)
+
+        val upgrade = manifest(
+            compatibility = "UPGRADE_REQUIRED",
+            capabilities = listOf("text", "quick_action"),
+            quickActions = listOf("content.accept"),
+        ).effective()
+        assertTrue(upgrade.quickActionTypes.isEmpty())
+    }
+
+    @Test
+    fun manifestLimitsAttachmentTypeAndSize() {
+        val effective = manifest(capabilities = listOf("text", "image")).effective()
+        P14ManifestPolicy.requireAttachment(effective, "IMAGE", 1024)
+        assertTrue(runCatching { P14ManifestPolicy.requireAttachment(effective, "VIDEO", 1024) }.isFailure)
+        assertTrue(runCatching { P14ManifestPolicy.requireAttachment(effective, "IMAGE", effective.maxAttachmentBytes + 1) }.isFailure)
+    }
+
     @Test
     fun builtinFallbackIsConservativeAndExplicit() {
         val fallback = fallbackP14Manifest()
@@ -41,6 +66,7 @@ class P14RemoteManifestTest {
         compatibility: String = "COMPATIBLE",
         views: List<String> = listOf("chat", "inbox", "activity"),
         capabilities: List<String> = listOf("text", "image", "voice", "file"),
+        quickActions: List<String> = emptyList(),
     ) = P14ManifestDto(
         schemaVersion = P14RikkaCapabilities.SCHEMA,
         manifestVersion = 7,
@@ -49,5 +75,6 @@ class P14RemoteManifestTest {
         compatibility = compatibility,
         enabledViews = views,
         messageCapabilities = capabilities,
+        quickActionTypes = quickActions,
     )
 }

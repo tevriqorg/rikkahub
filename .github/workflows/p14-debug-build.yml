@@ -2,15 +2,34 @@ name: P14 Debug APK
 
 on:
   workflow_dispatch:
+    inputs:
+      apk_run:
+        description: Optional successful build artifact run ID for orchestration-only retries
+        type: string
+        default: ''
+      apk_sha:
+        description: Exact Android SHA of the reused build (required with apk_run)
+        type: string
+        default: ''
+      emulator_acceptance:
+        description: Run Task 4 synthetic emulator acceptance
+        type: boolean
+        default: false
+      server_sha:
+        description: 'Optional exact P14 Server recovery SHA; empty builds Android'
+        type: string
+        default: ''
   push:
     branches:
       - p14/remote
 
 permissions:
   contents: read
+  actions: read
 
 jobs:
   build-debug:
+    if: ${{ inputs.server_sha == '' && !inputs.emulator_acceptance }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -71,9 +90,287 @@ jobs:
           chmod +x gradlew
           ./gradlew assembleDebug --stacktrace
 
-      - name: Upload debug APKs
+      - name: Upload debug APKs and JVM reports
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: rikkahub-p14-ci-${{ github.sha }}
-          path: app/build/outputs/apk/debug/*.apk
+          path: |
+            app/build/outputs/apk/debug/*.apk
+            app/build/test-results/testDebugUnitTest/
+            app/build/reports/tests/testDebugUnitTest/
           if-no-files-found: error
+
+  build-p14-server:
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.server_sha != '' && !inputs.emulator_acceptance }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: p14
+          POSTGRES_PASSWORD: ci-only-password
+          POSTGRES_DB: p14_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U p14 -d p14_test"
+          --health-interval 5s --health-timeout 5s --health-retries 12
+    env:
+      SOURCE_SHA: ${{ inputs.server_sha }}
+      P14_TEST_DATABASE_URL: postgresql+psycopg://p14:ci-only-password@127.0.0.1:5432/p14_test
+    steps:
+      - name: Validate immutable source identity
+        run: |
+          [[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]
+      - uses: actions/checkout@v4
+        with:
+          repository: tevriqorg/P14-Entry
+          fetch-depth: 0
+          ref: ${{ inputs.server_sha }}
+          token: ${{ secrets.P14_SOURCE_READ_TOKEN }}
+          persist-credentials: false
+          sparse-checkout: |
+            server
+            hermes-plugin/p14
+            scripts/check_p14r3_recovery.py
+            requirements/P14R3_RECOVERY_MATRIX.json
+            PROJECT.md
+            HANDOFF.md
+            AGENTS.md
+          sparse-checkout-cone-mode: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Confirm checked-out source
+        run: test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+      - name: Validate frozen recovery scope and commit mapping
+        run: python3 scripts/check_p14r3_recovery.py --repo server --head "$SOURCE_SHA"
+      - name: Validate current recovery PR metadata
+        env:
+          GH_TOKEN: ${{ secrets.P14_SOURCE_READ_TOKEN }}
+        run: |
+          body="$(gh api repos/tevriqorg/P14-Entry/pulls/52 --jq .body)"
+          P14_PR_BODY="$body" python3 scripts/check_p14r3_recovery.py --pr-body-env P14_PR_BODY
+      - name: Install and test Server against PostgreSQL 17
+        run: |
+          python -m pip install -e './server[test]'
+          pytest server/tests --junitxml=/tmp/p14-tests.xml
+      - name: Build and export immutable Server image
+        run: |
+          mkdir -p /tmp/p14-delivery
+          docker build --label org.opencontainers.image.revision="$SOURCE_SHA" --label org.opencontainers.image.source=https://github.com/tevriqorg/P14-Entry -t "p14-server:$SOURCE_SHA" server
+          docker save "p14-server:$SOURCE_SHA" | gzip -1 > /tmp/p14-delivery/p14-server-image.tar.gz
+          docker image inspect "p14-server:$SOURCE_SHA" --format '{{json .Id}}' > /tmp/p14-delivery/image-id.json
+          cp /tmp/p14-tests.xml /tmp/p14-delivery/
+          python - <<'PY'
+          import json,os,subprocess
+          from pathlib import Path
+          target=Path('/tmp/p14-delivery')
+          data={'source_repository':'tevriqorg/P14-Entry','source_sha':os.environ['SOURCE_SHA'],'build_repository':os.environ['GITHUB_REPOSITORY'],'build_sha':os.environ['GITHUB_SHA'],'run_id':os.environ['GITHUB_RUN_ID'],'run_attempt':os.environ['GITHUB_RUN_ATTEMPT'],'image_id':json.loads((target/'image-id.json').read_text())}
+          (target/'provenance.json').write_text(json.dumps(data,indent=2)+'\n')
+          PY
+          cd /tmp/p14-delivery
+          sha256sum p14-server-image.tar.gz provenance.json p14-tests.xml image-id.json > SHA256SUMS
+      - name: Upload verified Server delivery
+        uses: actions/upload-artifact@v4
+        with:
+          name: p14-server-${{ inputs.server_sha }}
+          path: /tmp/p14-delivery/*
+          retention-days: 7
+          if-no-files-found: error
+      - name: Remove private checkout
+        if: always()
+        run: rm -rf "$GITHUB_WORKSPACE/server" "$GITHUB_WORKSPACE/hermes-plugin" "$GITHUB_WORKSPACE/.git"
+
+  build-emulator:
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.emulator_acceptance && inputs.apk_run == '' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          persist-credentials: false
+      - uses: actions/setup-java@v4
+        with:
+          distribution: jetbrains
+          java-version: '21'
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: web-ui/pnpm-lock.yaml
+      - uses: gradle/actions/setup-gradle@v4
+      - run: pnpm install --frozen-lockfile
+        working-directory: web-ui
+      - name: CI-only Firebase configuration
+        run: |
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          Path('app/google-services.json').write_text(json.dumps({
+            'project_info': {'project_number':'1234567890','project_id':'rikkahub-p14-ci','storage_bucket':'rikkahub-p14-ci.appspot.com'},
+            'client':[{'client_info':{'mobilesdk_app_id':'1:1234567890:android:0000000000000000','android_client_info':{'package_name':'me.rerere.rikkahub.debug'}},
+              'api_key':[{'current_key':'AIzaSyCIOnlyPlaceholderNotARealKey000000'}]}],
+            'configuration_version':'1'}))
+          PY
+      - name: Build actual application and instrumentation APKs
+        run: |
+          chmod +x gradlew
+          ./gradlew :app:assembleDebug :app:assembleDebugAndroidTest --stacktrace
+      - name: Sign candidates with fixed Recovery identity
+        env:
+          KEYSTORE_B64: ${{ secrets.P14_FIXED_KEYSTORE_B64 }}
+          STORE_PASSWORD: ${{ secrets.P14_FIXED_STORE_PASSWORD }}
+        run: |
+          set -euo pipefail
+          umask 077
+          mkdir -p "$RUNNER_TEMP/p14-signing" evidence/apks
+          trap 'rm -rf "$RUNNER_TEMP/p14-signing"' EXIT
+          printf '%s' "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/p14-signing/fixed.p12"
+          printf '%s' "$STORE_PASSWORD" > "$RUNNER_TEMP/p14-signing/password"
+          cp app/build/outputs/apk/debug/app-x86_64-debug.apk evidence/apks/incompatible-ci.apk
+          signer="$(find "$ANDROID_HOME/build-tools" -name apksigner | sort -V | tail -1)"
+          "$signer" sign --ks "$RUNNER_TEMP/p14-signing/fixed.p12" --ks-key-alias p14-fixed-recovery --ks-pass "file:$RUNNER_TEMP/p14-signing/password" --out evidence/apks/app.apk app/build/outputs/apk/debug/app-x86_64-debug.apk
+          testapk="$(find app/build/outputs/apk/androidTest -name '*.apk' | head -1)"
+          "$signer" sign --ks "$RUNNER_TEMP/p14-signing/fixed.p12" --ks-key-alias p14-fixed-recovery --ks-pass "file:$RUNNER_TEMP/p14-signing/password" --out evidence/apks/test.apk "$testapk"
+          "$signer" verify --verbose --print-certs evidence/apks/app.apk | tee evidence/signature.txt
+          grep -q dfa33df904e4eb3ca30fdc61a1817dbec36d131a94a594663f7d79522430cc94 evidence/signature.txt
+          sha256sum evidence/apks/*.apk > evidence/SHA256SUMS
+          printf '%s\n' "$GITHUB_SHA" > evidence/android-source-sha.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: p14-emulator-build-${{ github.sha }}
+          path: |
+            evidence/
+            app/build/reports/
+            app/build/outputs/logs/
+          retention-days: 14
+          if-no-files-found: warn
+
+  emulator-acceptance:
+    if: ${{ always() && inputs.emulator_acceptance && (needs.build-emulator.result == 'success' || inputs.apk_run != '') }}
+    needs: build-emulator
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: p14
+          POSTGRES_PASSWORD: synthetic-ci-only
+          POSTGRES_DB: p14_task4
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U p14 -d p14_task4"
+          --health-interval 5s --health-timeout 5s --health-retries 12
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          name: p14-emulator-build-${{ inputs.apk_sha || github.sha }}
+          run-id: ${{ inputs.apk_run || github.run_id }}
+          github-token: ${{ github.token }}
+          path: .
+      - name: Validate APK provenance and unchanged product sources
+        env:
+          APK_SHA: ${{ inputs.apk_sha || github.sha }}
+        run: |
+          [[ "$APK_SHA" =~ ^[0-9a-f]{40}$ ]]
+          test "$(cat evidence/android-source-sha.txt)" = "$APK_SHA"
+          git fetch origin "$APK_SHA" --depth=1
+          git diff --exit-code "$APK_SHA" "$GITHUB_SHA" -- app ai common document highlight material3 ui search speech web workspace oauth mediagen gradle build.gradle.kts settings.gradle.kts gradle.properties
+      - uses: actions/checkout@v4
+        with:
+          repository: tevriqorg/P14-Entry
+          ref: ${{ inputs.server_sha }}
+          path: synthetic-server
+          token: ${{ secrets.P14_SOURCE_READ_TOKEN }}
+          persist-credentials: false
+          sparse-checkout: |
+            server
+            hermes-plugin/p14
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - name: Install Android SDK command line tools
+        uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
+          log-accepted-android-sdk-licenses: false
+      - name: Install emulator runtime dependency
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libpulse0
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: Prepare SDK and synthetic backend
+        id: backend
+        env:
+          SERVER_SHA: ${{ inputs.server_sha }}
+        run: |
+          set -euo pipefail
+          [[ "$SERVER_SHA" =~ ^[0-9a-f]{40}$ ]]
+          test "$(git -C synthetic-server rev-parse HEAD)" = "$SERVER_SHA"
+          printf '%s\n' "$SERVER_SHA" > evidence/server-source-sha.txt
+          python -m pip install -e './synthetic-server/server[test]'
+          P14_TEST_DATABASE_URL=postgresql+psycopg://p14:synthetic-ci-only@127.0.0.1:5432/p14_task4 pytest synthetic-server/server/tests --junitxml=evidence/server-tests.xml
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager 'platform-tools' 'emulator' 'system-images;android-35;google_apis;x86_64'
+          P14_TASK4_SYNTHETIC=1 P14_TEST_DATABASE_URL=postgresql+psycopg://p14:synthetic-ci-only@127.0.0.1:5432/p14_task4 python3 synthetic-server/server/acceptance/task4_fixture.py serve > evidence/server.log 2>&1 &
+          echo $! > "$RUNNER_TEMP/p14-server.pid"
+      - name: Run two-emulator acceptance
+        env:
+          ANDROID_USER_HOME: ${{ runner.temp }}/p14-android-user
+          ANDROID_EMULATOR_HOME: ${{ runner.temp }}/p14-android-user
+          ANDROID_AVD_HOME: ${{ runner.temp }}/p14-android-user/avd
+        run: bash scripts/p14-emulator-acceptance.sh
+      - name: Synthetic PostgreSQL concurrency, binary recovery and scale acceptance
+        if: always() && steps.backend.outcome == 'success'
+        env:
+          P14_TASK4_SYNTHETIC: '1'
+        run: |
+          python3 synthetic-server/server/acceptance/task4_fixture.py scale --count 1200 > evidence/scale-seed.json
+          python3 synthetic-server/server/acceptance/task4_http_checks.py > evidence/http-acceptance.json
+      - name: Collect failure evidence
+        timeout-minutes: 2
+        if: always()
+        run: |
+          for serial in emulator-5554 emulator-5556; do
+            timeout 15 adb -s "$serial" logcat -d > "evidence/$serial-logcat.txt" 2>&1 || true
+            for tree in task4-notification-systemui-tree.txt task4-direct-systemui-tree.txt task4-settings-ui-tree.txt; do
+              timeout 15 adb -s "$serial" exec-out run-as me.rerere.rikkahub.debug cat "files/$tree" > "evidence/$serial-$tree" 2>/dev/null || true
+            done
+            timeout 15 adb -s "$serial" shell screencap -p /sdcard/task4.png || true
+            timeout 15 adb -s "$serial" pull /sdcard/task4.png "evidence/$serial.png" || true
+            timeout 15 adb -s "$serial" shell getprop > "evidence/$serial-properties.txt" 2>&1 || true
+          done
+          timeout 15 adb version > evidence/adb-version.txt
+          timeout 15 "$ANDROID_HOME/emulator/emulator" -version > evidence/emulator-version.txt 2>&1 || true
+      - name: Summarize instrumentation and audit diagnostic credential leakage
+        if: always()
+        run: python3 scripts/p14-emulator-report.py
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: p14-emulator-acceptance-${{ github.sha }}-${{ github.run_attempt }}
+          path: evidence/
+          retention-days: 14
+          if-no-files-found: error
+      - name: Remove private source
+        if: always()
+        run: rm -rf synthetic-server

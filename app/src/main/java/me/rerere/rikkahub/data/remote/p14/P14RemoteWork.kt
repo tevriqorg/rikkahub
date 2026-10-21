@@ -18,7 +18,10 @@ internal object P14RemoteWork {
 class P14RemoteSyncWorker(ctx:Context,params:WorkerParameters):CoroutineWorker(ctx,params) {
     override suspend fun doWork():Result = runCatching {
         val koin=GlobalContext.get()
-        val repo=P14RemoteRepository(applicationContext,koin.get<SettingsStore>(),koin.get<OkHttpClient>())
+        val http=koin.get<OkHttpClient>()
+        val product=P14ProductRepository(applicationContext,http)
+        product.syncAndFlushActive()
+        val repo=P14RemoteRepository(applicationContext,koin.get<SettingsStore>(),http)
         if(!repo.processPendingActive()) repo.refreshActive()
         Result.success()
     }.getOrElse { Result.retry() }

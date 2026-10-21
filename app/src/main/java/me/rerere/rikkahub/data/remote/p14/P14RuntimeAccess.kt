@@ -21,6 +21,11 @@ import javax.crypto.SecretKey
 import javax.crypto.spec.GCMParameterSpec
 import kotlin.uuid.Uuid
 
+internal const val P14_DEVICE_CREDENTIAL_MARKER_PREFIX = "p14-device://"
+internal fun p14DeviceCredentialMarker(providerId: String) = P14_DEVICE_CREDENTIAL_MARKER_PREFIX + providerId
+internal fun p14DeviceCredentialProviderId(value: String): String? =
+    value.takeIf { it.startsWith(P14_DEVICE_CREDENTIAL_MARKER_PREFIX) }?.removePrefix(P14_DEVICE_CREDENTIAL_MARKER_PREFIX)?.takeIf { it.isNotBlank() }
+
 internal data class P14RuntimeConnection(val baseUrl: String, val bearerToken: String, val providerId: String)
 
 internal class P14RuntimeCredentialStore(context: Context) {
@@ -28,7 +33,17 @@ internal class P14RuntimeCredentialStore(context: Context) {
     fun deviceId(): String = prefs.getString("device_id", null) ?: Uuid.random().toString().also {
         prefs.edit().putString("device_id", it).apply()
     }
-    fun markActive(providerId:String, baseUrl:String) { prefs.edit().putString("active_provider",providerId).putString("active_base",baseUrl.trimEnd('/')).apply() }
+    fun canAdoptDeviceId(): Boolean = prefs.all.keys.none { it.endsWith("_token") }
+    fun adoptDeviceId(deviceId: String) {
+        require(canAdoptDeviceId()) { "P14 device identity already has stored credentials" }
+        prefs.edit().putString("device_id", deviceId).apply()
+    }
+    fun markActive(providerId:String, baseUrl:String) {
+        // Pairing/restoration must survive a process restart before reporting success.
+        // commit also flushes any preceding encrypted credential save in this prefs file.
+        check(prefs.edit().putString("active_provider",providerId)
+            .putString("active_base",baseUrl.trimEnd('/')).commit()) { "P14 active connection could not be persisted" }
+    }
     fun activeConnection():P14RuntimeConnection? {
         val pid=prefs.getString("active_provider",null)?:return null
         val base=prefs.getString("active_base",null)?:return null
@@ -44,6 +59,11 @@ internal class P14RuntimeCredentialStore(context: Context) {
             cipher.init(Cipher.DECRYPT_MODE, key(), GCMParameterSpec(128, Base64.decode(iv, Base64.NO_WRAP)))
             cipher.doFinal(Base64.decode(data, Base64.NO_WRAP)).toString(Charsets.UTF_8)
         }.getOrNull()
+    }
+    fun loadForRequest(providerId: String, requestUrl: String): String? {
+        val base = prefs.getString("${providerId}_base", null) ?: return null
+        if (!requestUrl.startsWith(base)) return null
+        return load(providerId, base)
     }
     fun save(providerId: String, baseUrl: String, token: String) {
         val cipher=Cipher.getInstance(TRANSFORMATION); cipher.init(Cipher.ENCRYPT_MODE, key())
@@ -76,17 +96,42 @@ internal class P14RuntimeAccess(
     private val settingsStore: SettingsStore,
     private val http: OkHttpClient,
 ) {
-    private val store=P14RuntimeCredentialStore(context.applicationContext)
+    private val appContext=context.applicationContext
+    private val store=P14RuntimeCredentialStore(appContext)
     private val json=Json { ignoreUnknownKeys=true; explicitNulls=false }
 
     suspend fun prepare(provider: ProviderSetting.OpenAI): ProviderSetting.OpenAI {
         val pid=provider.id.toString(); val base=provider.baseUrl.trimEnd('/')
-        store.load(pid, base)?.let { store.markActive(pid,base); return provider.copy(apiKey=it) }
+        store.load(pid, base)?.let { token ->
+            store.markActive(pid,base)
+            val marker = p14DeviceCredentialMarker(pid)
+            if (provider.apiKey != marker) settingsStore.update { settings ->
+                settings.copy(providers=settings.providers.map { p ->
+                    if (p is ProviderSetting.OpenAI && p.id==provider.id) p.copy(apiKey=marker) else p
+                })
+            }
+            return provider.copy(apiKey=token)
+        }
+        require(p14DeviceCredentialProviderId(provider.apiKey) == null) {
+            "P14 device credential is unavailable on this installation; pair this device again"
+        }
         require(provider.apiKey.isNotBlank()) { "P14 Remote needs setup credential once on this device" }
         val setup=P14RuntimeConnection(base, provider.apiKey, pid)
         val session:DeviceSession=decode(get(setup,"device-session"))
         val token=when(session.scope) {
-            "DEVICE" -> { require(session.deviceId==store.deviceId()) { "P14 device credential belongs to another installation" }; provider.apiKey }
+            "DEVICE" -> {
+                val credentialDeviceId = requireNotNull(session.deviceId) { "P14 device credential has no device identity" }
+                if (credentialDeviceId != store.deviceId()) {
+                    // A manually pasted, pre-issued device credential is an explicit device import.
+                    // Adopt its app-private UUID only when this install has no existing P14 credential;
+                    // never overwrite an established device identity with active credentials.
+                    require(store.canAdoptDeviceId()) {
+                        "P14 device credential belongs to another installation; use a setup credential or the existing paired provider"
+                    }
+                    store.adoptDeviceId(credentialDeviceId)
+                }
+                provider.apiKey
+            }
             "OWNER_SETUP" -> {
                 val issued:DeviceIssued=decode(post(setup,"devices/${store.deviceId()}/credential", json.encodeToString(IssueCommand())))
                 require(issued.active && issued.deviceId==store.deviceId()); issued.deviceToken
@@ -95,10 +140,13 @@ internal class P14RuntimeAccess(
         }
         store.save(pid,base,token)
         store.markActive(pid,base)
-        // Never retain owner/setup or runtime bearer credentials in ordinary RikkaHub settings.
-        if (provider.apiKey.isNotBlank()) settingsStore.update { settings ->
+        P14RemoteWork.enqueue(appContext)
+        P14ProductSyncRuntime.start(appContext, http)
+        // Ordinary Provider settings retain only a non-secret marker; the bearer stays in Android Keystore.
+        val marker = p14DeviceCredentialMarker(pid)
+        settingsStore.update { settings ->
             settings.copy(providers=settings.providers.map { p ->
-                if (p is ProviderSetting.OpenAI && p.id==provider.id) p.copy(apiKey="") else p
+                if (p is ProviderSetting.OpenAI && p.id==provider.id) p.copy(apiKey=marker) else p
             })
         }
         return provider.copy(apiKey=token)
@@ -114,11 +162,19 @@ internal class P14RuntimeAccess(
 
     fun deviceId()=store.deviceId()
 
-    internal fun get(c:P14RuntimeConnection,path:String):String=execute(c,Request.Builder().url("${c.baseUrl}/${path.trimStart('/')}").get())
-    internal fun post(c:P14RuntimeConnection,path:String,body:String):String=execute(c,Request.Builder().url("${c.baseUrl}/${path.trimStart('/')}").post(body.toRequestBody(JSON)))
-    internal fun put(c:P14RuntimeConnection,path:String,body:String):String=execute(c,Request.Builder().url("${c.baseUrl}/${path.trimStart('/')}").put(body.toRequestBody(JSON)))
-    private fun execute(c:P14RuntimeConnection,b:Request.Builder):String=http.newCall(b.header("Authorization","Bearer ${c.bearerToken}").header("Accept","application/json").build()).execute().use { r ->
-        val text=r.body?.string().orEmpty(); if(!r.isSuccessful) throw P14RemoteHttpException(r.code,text.take(800)); text
+    internal suspend fun get(c:P14RuntimeConnection,path:String):String=execute(c,Request.Builder().url("${c.baseUrl}/${path.trimStart('/')}").get())
+    internal suspend fun post(c:P14RuntimeConnection,path:String,body:String):String=execute(c,Request.Builder().url("${c.baseUrl}/${path.trimStart('/')}").post(body.toRequestBody(JSON)))
+    internal suspend fun put(c:P14RuntimeConnection,path:String,body:String):String=execute(c,Request.Builder().url("${c.baseUrl}/${path.trimStart('/')}").put(body.toRequestBody(JSON)))
+    private suspend fun execute(c:P14RuntimeConnection,b:Request.Builder):String = withContext(Dispatchers.IO) {
+        http.newCall(
+            b.header("Authorization", "Bearer ${c.bearerToken}")
+                .header("Accept", "application/json")
+                .build()
+        ).execute().use { r ->
+            val text = r.body?.string().orEmpty()
+            if (!r.isSuccessful) throw P14RemoteHttpException(r.code, text.take(800))
+            text
+        }
     }
     private inline fun <reified T> decode(text:String):T=json.decodeFromString(text)
     companion object { private val JSON="application/json; charset=utf-8".toMediaType() }

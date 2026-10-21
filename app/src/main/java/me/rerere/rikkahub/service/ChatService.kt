@@ -66,6 +66,12 @@ import me.rerere.rikkahub.data.ai.transformers.WorkspaceReminderTransformer
 import me.rerere.rikkahub.data.remote.p14.P14RemoteAttachmentTransformer
 import me.rerere.rikkahub.data.remote.p14.P14RemoteControlClient
 import me.rerere.rikkahub.data.remote.p14.P14RuntimeAccess
+import me.rerere.rikkahub.data.remote.p14.P14ProductRepository
+import me.rerere.rikkahub.data.remote.p14.P14ChatRecovery
+import me.rerere.rikkahub.data.remote.p14.P14ProductDatabase
+import me.rerere.rikkahub.data.remote.p14.P14RemoteWork
+import me.rerere.rikkahub.data.remote.p14.P14EffectiveManifest
+import me.rerere.rikkahub.data.remote.p14.P14RemoteRepository
 import me.rerere.rikkahub.data.event.AppEvent
 import me.rerere.rikkahub.data.event.AppEventBus
 import me.rerere.rikkahub.data.datastore.Settings
@@ -218,6 +224,8 @@ class ChatService(
     private val p14RemoteAttachmentTransformer = P14RemoteAttachmentTransformer(filesManager, okHttpClient)
     private val p14RemoteControlClient = P14RemoteControlClient(okHttpClient)
     private val p14RuntimeAccess = P14RuntimeAccess(context, settingsStore, okHttpClient)
+    private val p14ProductRepository = P14ProductRepository(context, okHttpClient)
+    private val p14RemoteRepository = P14RemoteRepository(context, settingsStore, okHttpClient)
 
     private val sessionManager = ConversationSessionManager(
         scope = appScope,
@@ -337,6 +345,9 @@ class ChatService(
 
     // 引入会话配置之前创建的会话没有固定配置，加载时按助手当前的值补上，之后不再随助手变化。
     private suspend fun loadConversation(conversationId: Uuid): Conversation? {
+        // Close the crash window between P14 Room acceptance and RikkaHub chat save.
+        P14ChatRecovery(P14ProductDatabase.get(context).dao(), conversationRepo, settingsStore)
+            .restoreOne(conversationId)
         val conversation = conversationRepo.getConversationById(conversationId) ?: return null
         // settingsFlow 在启动初期还是占位值，固定配置必须基于真实设置
         val bound = conversation.bindConfig(settingsStore.awaitLoaded())
@@ -463,27 +474,47 @@ class ChatService(
                 val assistant = settings.getAssistantById(currentConversation.assistantId)
                     ?: settings.getCurrentAssistant()
                 var processedContent = preprocessUserInputParts(content, assistant)
+                val selectedModel = settings.getChatModelOf(currentConversation)
+                val isP14Remote = selectedModel?.modelId == "p14-hermes"
                 queued.replyToMessageId?.let { targetMessageId ->
-                    val remote = resolveP14RemoteMutationContext(
-                        conversationId, currentConversation, settings
-                    ) ?: error("Reply is currently supported only by P14 Remote")
-                    val target = p14RemoteControlClient.getMessageState(
-                        remote.provider, remote.conversationId, targetMessageId
-                    )
-                    check(!target.deleted) { "Cannot reply to a deleted P14 message" }
+                    check(isP14Remote) { "Reply is currently supported only by P14 Remote" }
+                    val durableTarget = p14ProductRepository.message(targetMessageId.toString())
+                    check(durableTarget?.tombstone != true) { "Cannot reply to a deleted P14 message" }
+                    val localTarget = currentConversation.currentMessages.firstOrNull { it.id == targetMessageId }
+                    val sourceText = durableTarget?.bodyText?.takeIf { it.isNotBlank() }
+                        ?: localTarget?.toText().orEmpty()
+                    check(sourceText.isNotBlank()) { "Reply target is not available locally" }
                     processedContent = processedContent.withP14ReplyContext(
                         targetMessageId = targetMessageId,
-                        sourceRevision = target.revision,
-                        sourceText = target.bodyText,
+                        sourceRevision = durableTarget?.revision ?: 1,
+                        sourceText = sourceText,
                     )
                 }
 
-                // 添加消息到列表
+                val userMessage = UIMessage(role = MessageRole.USER, parts = processedContent)
+                if (isP14Remote) {
+                    // S0 acceptance: one P14-owned Room transaction persists the user mutation and Outbox
+                    // before any P14 network call is allowed to run.
+                    p14ProductRepository.acceptRikkaMessage(
+                        externalSessionId = conversationId.toString(),
+                        localConversationId = conversationId.toString(),
+                        message = userMessage,
+                        assistantId = currentConversation.assistantId.toString(),
+                        modelId = requireNotNull(selectedModel).id.toString(),
+                    )
+                    if (queued.replyToMessageId != null) {
+                        val configured = selectedModel?.findProvider(settings.providers) as? ProviderSetting.OpenAI
+                            ?: error("P14 Remote requires an OpenAI-compatible provider")
+                        val runtimeProvider = p14RuntimeAccess.prepare(configured)
+                        val manifest = p14RemoteRepository.manifest(runtimeProvider)
+                        check("reply" in manifest.messageCapabilities) { "P14 Manifest disabled reply" }
+                    }
+                    P14RemoteWork.enqueue(context)
+                }
+
+                // RikkaHub's normal conversation projection follows the durable P14 acceptance.
                 val newConversation = currentConversation.copy(
-                    messageNodes = currentConversation.messageNodes + UIMessage(
-                        role = MessageRole.USER,
-                        parts = processedContent,
-                    ).toMessageNode(),
+                    messageNodes = currentConversation.messageNodes + userMessage.toMessageNode(),
                 )
                 saveConversation(conversationId, newConversation)
                 session.submittingMessage = null
@@ -680,10 +711,14 @@ class ChatService(
         val initialConversation = getConversationFlow(conversationId).value
         // 模型、思考级别、搜索、工具等以会话上固定的配置为准
         val assistant = settings.getAssistantOf(initialConversation)
-        val remoteRuntime = assistant.runtimeMode == AssistantRuntimeMode.REMOTE
-        val generationAssistant = assistant.forGenerationRuntime()
         val model = settings.getChatModelOf(initialConversation)
             ?: throw IllegalStateException("No chat model selected")
+        val remoteRuntime = assistant.runtimeMode == AssistantRuntimeMode.REMOTE || model.modelId == "p14-hermes"
+        val generationAssistant = if (remoteRuntime) {
+            assistant.copy(runtimeMode = AssistantRuntimeMode.REMOTE).forGenerationRuntime()
+        } else {
+            assistant.forGenerationRuntime()
+        }
         val generationSettings = if (remoteRuntime && model.modelId == "p14-hermes") {
             val configured = model.findProvider(settings.providers) as? ProviderSetting.OpenAI
                 ?: error("P14 Remote requires an OpenAI-compatible provider")
@@ -1420,6 +1455,7 @@ class ChatService(
         val remote = resolveP14RemoteMutationContext(conversationId, currentConversation, settings)
 
         if (remote != null) {
+            check("edit" in p14RemoteRepository.manifest(remote.provider).messageCapabilities) { "P14 Manifest disabled edit" }
             check(original.role == MessageRole.USER) { "P14 Remote can edit only your own messages" }
             check(!original.isContextCheckpoint) { "P14 Remote cannot edit a local context checkpoint" }
             check(
@@ -1560,6 +1596,7 @@ class ChatService(
         val settings = settingsStore.awaitLoaded()
         val remote = resolveP14RemoteMutationContext(conversationId, currentConversation, settings)
         if (remote != null) {
+            check("delete" in p14RemoteRepository.manifest(remote.provider).messageCapabilities) { "P14 Manifest disabled delete" }
             check(target.role == MessageRole.USER) { "P14 Remote can delete only your own messages" }
             val state = p14RemoteControlClient.getMessageState(
                 remote.provider, remote.conversationId, messageId
@@ -1660,14 +1697,25 @@ class ChatService(
         settings: Settings,
     ): P14RemoteMutationContext? {
         val assistant = settings.getAssistantOf(conversation)
-        if (assistant.runtimeMode != AssistantRuntimeMode.REMOTE) return null
         val model = settings.getChatModelOf(conversation) ?: return null
+        if (assistant.runtimeMode != AssistantRuntimeMode.REMOTE && model.modelId != "p14-hermes") return null
         if (model.modelId != "p14-hermes") return null
         val configured = model.findProvider(settings.providers) as? ProviderSetting.OpenAI
             ?: error("P14 Remote requires an OpenAI-compatible provider")
         val provider = p14RuntimeAccess.prepare(configured)
         val binding = p14RemoteControlClient.resolveSession(provider, conversationId.toString())
         return P14RemoteMutationContext(provider, binding.conversationId)
+    }
+
+    internal suspend fun getP14RemoteManifest(conversationId: Uuid): P14EffectiveManifest? {
+        val conversation = getConversationFlow(conversationId).value
+        val settings = settingsStore.awaitLoaded()
+        val model = settings.getChatModelOf(conversation) ?: return null
+        if (model.modelId != "p14-hermes") return null
+        val configured = model.findProvider(settings.providers) as? ProviderSetting.OpenAI
+            ?: return null
+        val provider = p14RuntimeAccess.prepare(configured)
+        return p14RemoteRepository.manifest(provider)
     }
 
     internal suspend fun getP14RemoteActivityStatusLines(conversationId: Uuid): List<String> {

@@ -36,6 +36,7 @@ import me.rerere.rikkahub.data.datastore.Settings
 import me.rerere.rikkahub.data.datastore.SettingsStore
 import me.rerere.rikkahub.data.files.FilesManager
 import me.rerere.rikkahub.data.model.Assistant
+import me.rerere.rikkahub.data.model.AssistantRuntimeMode
 import me.rerere.rikkahub.data.model.Avatar
 import me.rerere.rikkahub.data.model.Conversation
 import me.rerere.rikkahub.data.model.MessageNode
@@ -44,6 +45,7 @@ import me.rerere.rikkahub.data.model.getAssistantOf
 import me.rerere.rikkahub.data.model.getChatModelOf
 import me.rerere.rikkahub.data.repository.ConversationRepository
 import me.rerere.rikkahub.data.repository.FavoriteRepository
+import me.rerere.rikkahub.data.remote.p14.P14EffectiveManifest
 import me.rerere.rikkahub.service.ChatError
 import me.rerere.rikkahub.service.ChatService
 import me.rerere.rikkahub.ui.hooks.writeStringPreference
@@ -89,6 +91,8 @@ class ChatVM(
 
     private val _remoteActivityStatusLines = MutableStateFlow<List<String>>(emptyList())
     val remoteActivityStatusLines: StateFlow<List<String>> = _remoteActivityStatusLines.asStateFlow()
+    private val _remoteManifest = MutableStateFlow<P14EffectiveManifest?>(null)
+    val remoteManifest: StateFlow<P14EffectiveManifest?> = _remoteManifest.asStateFlow()
 
     val conversationJobs = chatService
         .getConversationJobs()
@@ -101,10 +105,20 @@ class ChatVM(
         // 初始化对话；Remote Activity 只在当前 ChatVM 生命周期内做轻量刷新。
         viewModelScope.launch {
             chatService.initializeConversation(_conversationId)
+            var tick = 0
             while (isActive) {
-                _remoteActivityStatusLines.value = runCatching {
-                    chatService.getP14RemoteActivityStatusLines(_conversationId)
-                }.getOrDefault(emptyList())
+                if (tick % 12 == 0 || _remoteManifest.value == null) {
+                    _remoteManifest.value = runCatching {
+                        chatService.getP14RemoteManifest(_conversationId)
+                    }.getOrNull()
+                }
+                _remoteActivityStatusLines.value = if (_remoteManifest.value?.enabledViews?.contains("activity") == true) {
+                    runCatching { chatService.getP14RemoteActivityStatusLines(_conversationId) }
+                        .getOrDefault(emptyList())
+                } else {
+                    emptyList()
+                }
+                tick++
                 delay(5_000)
             }
         }
@@ -200,7 +214,12 @@ class ChatVM(
     // 设置聊天模型
     fun setChatModel(model: Model) {
         viewModelScope.launch {
-            chatService.updateChatAssistant(_conversationId) { it.copy(chatModelId = model.id) }
+            chatService.updateChatAssistant(_conversationId) { assistant ->
+                assistant.copy(
+                    chatModelId = model.id,
+                    runtimeMode = if (model.modelId == "p14-hermes") AssistantRuntimeMode.REMOTE else assistant.runtimeMode,
+                )
+            }
         }
     }
 

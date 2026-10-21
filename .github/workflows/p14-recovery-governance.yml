@@ -1,0 +1,43 @@
+name: P14 Recovery Governance
+
+on:
+  pull_request:
+    branches:
+      - p14/remote
+  push:
+    branches:
+      - p14/remote
+      - fix/p14r3-recovery
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  recovery-guard:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Validate pinned P14 recovery authority and commit Row mapping
+        env:
+          P14_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: python3 scripts/check_p14_recovery.py --head "$P14_HEAD_SHA"
+
+      - name: Validate PR requirement-row mapping
+        if: github.event_name == 'pull_request'
+        env:
+          P14_PR_BODY: ${{ github.event.pull_request.body }}
+        run: python3 scripts/check_p14_recovery.py --head "${{ github.event.pull_request.head.sha }}" --pr-body-env P14_PR_BODY
+
+      - name: Validate open recovery PR metadata on push
+        if: github.event_name == 'push' && github.ref_name == 'fix/p14r3-recovery'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          body="$(gh api "repos/${GITHUB_REPOSITORY}/pulls?state=open&head=${GITHUB_REPOSITORY_OWNER}:${GITHUB_REF_NAME}" --jq '.[0].body // ""')"
+          test -n "$body" || { echo "No open recovery PR found for ${GITHUB_REF_NAME}"; exit 1; }
+          P14_PR_BODY="$body" python3 scripts/check_p14_recovery.py --head "$GITHUB_SHA" --pr-body-env P14_PR_BODY
