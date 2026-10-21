@@ -54,7 +54,15 @@ class P14PolicySettingsUiInstrumentedTest {
                     compose.onAllNodesWithContentDescription("Messages").fetchSemanticsNodes().isNotEmpty()
                 }
                 compose.onNodeWithContentDescription("Messages").performClick()
-                description(context.getString(R.string.settings)).performClick()
+                // A fetched release note can occupy the small emulator drawer.
+                // Dismiss its visible card through the normal UI before opening Settings.
+                val closeUpdate=hasContentDescription(context.getString(R.string.close)) and hasClickAction()
+                if(compose.onAllNodes(closeUpdate).fetchSemanticsNodes().size==1) {
+                    compose.onNode(closeUpdate).performClick()
+                }
+                // Tooltip's icon node exposes long-click only; activate its actual Surface.
+                description(context.getString(R.string.settings)).onAncestors()
+                    .filter(hasClickAction()).onFirst().assertIsDisplayed().performClick()
                 val providersLabel=context.getString(R.string.setting_page_providers)
                 // RouteActivity retains other navigation lists during transitions.
                 // Select the real Settings list by identity, never the first scroll container.
