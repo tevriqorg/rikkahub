@@ -236,6 +236,13 @@ class P14RecoveryUiInstrumentedTest {
             assertEquals(entryId,requireNotNull(product.conversationForId(conversationId)).entryId)
             assertEquals(cursorBefore,product.currentCursor())
             assertEquals(beforeId,bootstrap.getString("before_id",null))
+            kotlinx.coroutines.withTimeout(15000) {
+                while(remote.notification(notificationId)?.state!="OPENED") {
+                    assertTrue(remote.processPendingActive())
+                    kotlinx.coroutines.delay(100)
+                }
+            }
+            assertEquals("OPENED",remote.notification(notificationId)?.state)
             android.util.Log.i("P14_TASK4","realNotificationOpensEntry PASS: real SystemUI click opened actual cold Entry body; global replay cursor and older-page locator unchanged")
         } finally {
             activity?.let { opened -> instrumentation.runOnMainSync { opened.finish() } }

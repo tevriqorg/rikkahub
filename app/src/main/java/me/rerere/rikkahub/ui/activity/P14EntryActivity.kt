@@ -299,7 +299,7 @@ private fun P14EntryScreen(
                     OutlinedTextField(
                         value = input,
                         onValueChange = { input = it },
-                        modifier = Modifier.weight(1f),
+                        modifier = Modifier.weight(1f).testTag("p14-entry-message-input"),
                         enabled = canText && !upgradeRequired,
                         placeholder = { Text(if (upgradeRequired) "Client upgrade required" else "Continue this Entry") },
                     )

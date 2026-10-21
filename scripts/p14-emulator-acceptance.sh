@@ -71,6 +71,7 @@ instrument() {
     -e p14ActionSupplement "$(python3 -c 'import json; print(json.load(open("evidence/fixture.json"))["actions"]["supplement"])')" \
     -e p14ActionSkip "$(python3 -c 'import json; print(json.load(open("evidence/fixture.json"))["actions"]["skip"])')" \
     -e p14ActionCancel "$(python3 -c 'import json; print(json.load(open("evidence/fixture.json"))["actions"]["cancel"])')" \
+    -e p14ObservationId "${observation_id:-}" -e p14ObservationSourceDevice "${observation_source_device:-}" \
     -e p14RealtimeRunId "$realtime_run" -e p14RaceAtEpochMs "$race_at" -e p14RaceChoice "$race_choice" \
     "${setup[@]}" \
     me.rerere.rikkahub.debug.test/androidx.test.runner.AndroidJUnitRunner | tee "$report" || return 1
@@ -201,6 +202,10 @@ adb -s "$A" shell am force-stop me.rerere.rikkahub.debug
 instrument "$A" deviceAVerify
 adb -s "$A" shell pm grant me.rerere.rikkahub.debug android.permission.ACCESS_COARSE_LOCATION
 instrument "$A" observationPolicy
+adb -s "$A" exec-out run-as me.rerere.rikkahub.debug cat files/task4-observation-evidence.json > evidence/native-observation.json
+observation_id="$(python3 -c 'import json;print(json.load(open("evidence/native-observation.json"))["observation_id"])')"
+observation_source_device="$(python3 -c 'import json;print(json.load(open("evidence/native-observation.json"))["source_device_id"])')"
+instrument "$B" deviceBObservationContext
 instrument "$B" scaleDirectoryPaging
 adb -s "$B" exec-out run-as me.rerere.rikkahub.debug cat files/task4-directory-scale-metrics.json > evidence/directory-scale-metrics.json
 instrument "$A" replyAndQuoteThroughNativeOutbox P14ChannelAcceptanceInstrumentedTest
@@ -217,6 +222,15 @@ crash_window "$B" quickActionAcknowledgementWindow task4-quick-ack-window-ready 
 instrument "$B" verifyQuickActionAfterRestart P14ChannelAcceptanceInstrumentedTest
 adb -s "$B" exec-out run-as me.rerere.rikkahub.debug cat files/task4-quick-proof.json > evidence/native-quick-action.json
 instrument "$B" consumeProducerResultAndTypedViews P14ChannelAcceptanceInstrumentedTest
+instrument "$A" crossDeviceActionResultViews P14ChannelAcceptanceInstrumentedTest
+adb -s "$A" shell svc wifi disable
+adb -s "$A" shell svc data disable
+network_probe "$A" offline
+adb -s "$A" shell am force-stop me.rerere.rikkahub.debug
+instrument "$A" cachedResultUiAfterOfflineRestart P14ChannelAcceptanceInstrumentedTest
+adb -s "$A" shell svc wifi enable
+adb -s "$A" shell svc data enable
+network_probe "$A" online-after-result-cache
 # Independent live Runtime delivery and two-installation Interaction arbitration.
 wait_marker() {
   local serial="$1" marker="$2" expected="$3" value=""
@@ -257,6 +271,8 @@ instrument "$A" selfRevoke
 instrument "$B" writeAfterOtherDeviceRevoke
 adb -s "$A" shell am force-stop me.rerere.rikkahub.debug
 instrument "$A" verifyRevokedDeviceCannotRecoverNewState
+instrument "$B" ordinaryProviderModelDiscoveryUi P14PolicySettingsUiInstrumentedTest
+instrument "$B" incompatibleManifestProductUi P14PolicySettingsUiInstrumentedTest
 for serial in "$A" "$B"; do
   timeout 15 adb -s "$serial" shell am start -n me.rerere.rikkahub.debug/me.rerere.rikkahub.ui.activity.P14EntryActivity
   timeout 15 adb -s "$serial" shell uiautomator dump /sdcard/task4-ui.xml || true

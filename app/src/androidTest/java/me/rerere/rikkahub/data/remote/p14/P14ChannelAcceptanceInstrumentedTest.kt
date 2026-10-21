@@ -265,6 +265,45 @@ class P14ChannelAcceptanceInstrumentedTest {
     }
 
     /** B after materializeRemoteMedia: actual Android decoder preparation/play/completion on cached WAV. */
+    /** A independently consumes B's Result and work projection before offline restart. */
+    @Test fun crossDeviceActionResultViews():Unit = runBlocking {
+        guardRuntime()
+        val entry=requireNotNull(args.getString("p14MediaEntryId"))
+        val conversation=requireNotNull(args.getString("p14MediaConversationId"))
+        val action=requireNotNull(args.getString("p14ActionConfirm"))
+        val repository=product()
+        assertTrue(repository.replayActive())
+        assertNotNull(repository.ensureConversationForId(conversation))
+        repository.hydrateEntryState(entry,conversation)
+        val stored=requireNotNull(P14ProductDatabase.get(context).dao().action(action))
+        assertEquals("completed",stored.status);assertEquals(RESULT,stored.resultText)
+        assertEquals(DESTINATION,stored.destinationRef)
+        val work=remote().workItems("execute",0,100).single { it.source=="action" && it.sourceId==action }
+        assertEquals(entry,work.entryId);assertEquals(conversation,work.conversationId)
+        assertEquals(stored.status,work.status);assertEquals(stored.resultText,work.resultText)
+        assertEquals(stored.destinationRef,work.destinationRef)
+        evidence("crossDeviceActionResultViews PASS: A independently recovered B's completed Result and same Entry/Conversation work projection")
+    }
+
+    /** A after actual network disable and external force-stop: display cached real Result. */
+    @Test fun cachedResultUiAfterOfflineRestart():Unit = runBlocking {
+        guardRuntime()
+        assertTrue(runCatching { http.newCall(Request.Builder().url(HEALTH).build()).execute().use { it.code } }.exceptionOrNull() is IOException)
+        val action=requireNotNull(args.getString("p14ActionConfirm"))
+        assertEquals(RESULT,requireNotNull(P14ProductDatabase.get(context).dao().action(action)).resultText)
+        val intent=Intent(context,P14EntryActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            .putExtra(P14EntryActivity.EXTRA_CONVERSATION_ID,requireNotNull(args.getString("p14MediaConversationId")))
+        ActivityScenario.launch<P14EntryActivity>(intent).use {
+            compose.waitUntil(20000) {
+                runCatching { compose.onNode(hasScrollToIndexAction()).performScrollToNode(hasText(RESULT)) }.isSuccess
+            }
+            compose.onNodeWithText(RESULT).assertIsDisplayed()
+            compose.onNode(hasScrollToIndexAction()).performScrollToNode(hasText("Destination: "+DESTINATION))
+            compose.onNodeWithText("Destination: "+DESTINATION).assertIsDisplayed()
+        }
+        evidence("cachedResultUiAfterOfflineRestart PASS: real offline process restart displayed cached completed ActionResult and destination without creating another Runtime")
+    }
+
     @Test fun playMaterializedVoiceToCompletion():Unit = runBlocking {
         guardRuntime()
         val id=requireNotNull(prefs.getString("remote-media-local-id",null))

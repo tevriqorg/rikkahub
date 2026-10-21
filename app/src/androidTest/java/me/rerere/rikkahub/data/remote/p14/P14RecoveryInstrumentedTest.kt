@@ -16,6 +16,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.delay
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
@@ -335,7 +336,7 @@ class P14RecoveryInstrumentedTest {
         }
         val stored = context.getSharedPreferences("p14-rikkahub-runtime", Context.MODE_PRIVATE).all
         assertFalse(stored.values.any { it.toString() == connection.bearerToken })
-        assertEquals(connection.bearerToken, P14RuntimeCredentialStore(context).load(connection.providerId, connection.baseUrl))
+        assertTrue("Encrypted runtime credential must reload unchanged",connection.bearerToken==P14RuntimeCredentialStore(context).load(connection.providerId, connection.baseUrl))
         return connection
     }
 
@@ -705,8 +706,46 @@ class P14RecoveryInstrumentedTest {
                 assertEquals(P14RuntimeCredentialStore(context).deviceId(),committed["payload"]!!.jsonObject["source_device_id"]?.jsonPrimitive?.content)
             }
             assertFalse(P14ProductDatabase.get(context).dao().pendingObservationOutbox().any { it.observationId == id })
+            File(context.filesDir,"task4-observation-evidence.json").outputStream().use { out ->
+                out.write(buildJsonObject { put("observation_id",id);put("source_device_id",row.sourceDeviceId) }.toString().toByteArray())
+                out.fd.sync()
+            }
             evidence("observationPolicy PASS: explicit opt-in synthetic coordinates, provenance/Outbox and server commit, separate Entry count unchanged; no GPS sensor/background efficacy claim")
         } finally { profile.importProfile(before) }
+    }
+
+    /** B consumes A's authenticated Observation provenance and links the same object to an Entry. */
+    @Test fun deviceBObservationContext():Unit = runBlocking {
+        val runtime=requireNotNull(P14RuntimeCredentialStore(context).activeConnection())
+        require(args.getString("p14BaseUrl")=="http://10.0.2.2:8014/v1" && runtime.baseUrl=="http://10.0.2.2:8014/v1")
+        val id=requireNotNull(args.getString("p14ObservationId")).also { require(it.isNotBlank()) }
+        val source=requireNotNull(args.getString("p14ObservationSourceDevice")).also { require(it.isNotBlank()) }
+        assertNotEquals(P14RuntimeCredentialStore(context).deviceId(),source)
+        val repository=product()
+        assertTrue(repository.replayActive())
+        val observed=requireNotNull(P14ProductDatabase.get(context).dao().observation(id))
+        assertEquals("task4-location-profile",observed.profileId)
+        assertEquals(source,observed.sourceDeviceId)
+        assertEquals("foreground",observed.permissionState)
+        assertEquals("significant-change",observed.policyMode)
+        assertTrue(observed.profileVersion>0 && observed.retentionDays in 1..30)
+        val before=P14ProductDatabase.get(context).dao().observeEntries().first().map { it.entryId }.toSet()
+        val entry=repository.directoryPage(0,100).single { it.bodyText=="task4-device-A" }
+        val store=P14RuntimeCredentialStore(context)
+        assertTrue(context.getSharedPreferences("p14-rikkahub-runtime",Context.MODE_PRIVATE).edit()
+            .remove("active_provider").remove("active_base").commit())
+        val op=try {
+            androidx.work.WorkManager.getInstance(context).cancelUniqueWork("p14-remote-sync").result.get(15,java.util.concurrent.TimeUnit.SECONDS)
+            remote().queueObservationContextLink(entry.entryId,id).also {
+                androidx.work.WorkManager.getInstance(context).cancelUniqueWork("p14-remote-sync").result.get(15,java.util.concurrent.TimeUnit.SECONDS)
+                assertEquals("PENDING",operationState(it))
+            }
+        } finally { store.markActive(runtime.providerId,runtime.baseUrl) }
+        assertTrue(remote().processPendingActive())
+        assertEquals("ACKED",operationState(op))
+        assertTrue(id in repository.linkedObservationIds(entry.entryId))
+        assertEquals(before,P14ProductDatabase.get(context).dao().observeEntries().first().map { it.entryId }.toSet())
+        evidence("deviceBObservationContext PASS: B replay preserved A's authenticated Profile/device/policy provenance; native durable Context Link references same Observation without creating an Entry")
     }
 
     @Test fun deviceAVerify() = runBlocking {
@@ -723,6 +762,7 @@ class P14RecoveryInstrumentedTest {
         assertTrue(repository.currentCursor() >= cursor)
         remote().refreshActive()
         args.getString("p14NotificationId")?.let {
+            assertEquals("OPENED",remote().notification(it)?.state)
             assertEquals("RESPONDED", remote().interaction(it)?.status)
             assertEquals("once", remote().interaction(it)?.response)
         }
