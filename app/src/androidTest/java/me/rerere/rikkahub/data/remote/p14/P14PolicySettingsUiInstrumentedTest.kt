@@ -56,7 +56,13 @@ class P14PolicySettingsUiInstrumentedTest {
                 compose.onNodeWithContentDescription("Messages").performClick()
                 description(context.getString(R.string.settings)).performClick()
                 val providersLabel=context.getString(R.string.setting_page_providers)
-                compose.onNode(hasScrollToIndexAction()).performScrollToKey("modelServices")
+                // RouteActivity retains other navigation lists during transitions.
+                // Select the real Settings list by identity, never the first scroll container.
+                compose.waitUntil(20_000) {
+                    compose.onAllNodesWithTag("settings-page-list").fetchSemanticsNodes().size==1
+                }
+                compose.onNodeWithTag("settings-page-list").assertIsDisplayed()
+                    .performScrollToKey("modelServices")
                 text(providersLabel).performScrollTo().performClick()
                 text(context.getString(R.string.setting_provider_page_search_providers))
                     .performTextReplacement(original.name)
