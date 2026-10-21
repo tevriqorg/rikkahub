@@ -38,7 +38,12 @@ internal class P14RuntimeCredentialStore(context: Context) {
         require(canAdoptDeviceId()) { "P14 device identity already has stored credentials" }
         prefs.edit().putString("device_id", deviceId).apply()
     }
-    fun markActive(providerId:String, baseUrl:String) { prefs.edit().putString("active_provider",providerId).putString("active_base",baseUrl.trimEnd('/')).apply() }
+    fun markActive(providerId:String, baseUrl:String) {
+        // Pairing/restoration must survive a process restart before reporting success.
+        // commit also flushes any preceding encrypted credential save in this prefs file.
+        check(prefs.edit().putString("active_provider",providerId)
+            .putString("active_base",baseUrl.trimEnd('/')).commit()) { "P14 active connection could not be persisted" }
+    }
     fun activeConnection():P14RuntimeConnection? {
         val pid=prefs.getString("active_provider",null)?:return null
         val base=prefs.getString("active_base",null)?:return null
