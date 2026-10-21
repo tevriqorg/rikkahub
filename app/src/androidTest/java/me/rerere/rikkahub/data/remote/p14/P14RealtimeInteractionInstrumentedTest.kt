@@ -3,6 +3,9 @@ package me.rerere.rikkahub.data.remote.p14
 import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.AccessibilityServiceInfo
 import android.app.NotificationManager
+import android.graphics.Rect
+import android.view.InputDevice
+import android.view.MotionEvent
 import android.os.SystemClock
 import android.view.accessibility.AccessibilityNodeInfo
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -243,6 +246,22 @@ class P14RealtimeInteractionInstrumentedTest {
         marker("task4-direct-systemui-tree.txt", dump.take(180000))
     }
 
+    private fun touchSystemUiNode(node: AccessibilityNodeInfo): Boolean {
+        if (!node.isVisibleToUser) return false
+        val bounds = Rect().also(node::getBoundsInScreen)
+        if (bounds.isEmpty) return false
+        val automation = InstrumentationRegistry.getInstrumentation().uiAutomation
+        val now = SystemClock.uptimeMillis()
+        val down = MotionEvent.obtain(now, now, MotionEvent.ACTION_DOWN, bounds.exactCenterX(), bounds.exactCenterY(), 0)
+        val up = MotionEvent.obtain(now, now + 60, MotionEvent.ACTION_UP, bounds.exactCenterX(), bounds.exactCenterY(), 0)
+        down.source = InputDevice.SOURCE_TOUCHSCREEN
+        up.source = InputDevice.SOURCE_TOUCHSCREEN
+        return try {
+            val accepted = automation.injectInputEvent(down, true)
+            automation.injectInputEvent(up, true) && accepted
+        } finally { down.recycle(); up.recycle() }
+    }
+
     /** A only: stale client expiry rejection, then actual SystemUI option click on independent fixture. */
     @Test fun expiryAndDirectNotificationAction(): Unit = runBlocking {
         val expires = Instant.now().plusSeconds(12)
@@ -273,35 +292,36 @@ class P14RealtimeInteractionInstrumentedTest {
         assertTrue(automation.performGlobalAction(AccessibilityService.GLOBAL_ACTION_NOTIFICATIONS))
         val label = "Task4 direct allow ${runId()}"
         var clicked = false
-        var expanded = false
-        val deadline = SystemClock.elapsedRealtime() + 12000
+        val expandedButtons = mutableSetOf<String>()
+        val deadline = SystemClock.elapsedRealtime() + 20000
         try {
             while (!clicked && SystemClock.elapsedRealtime() < deadline) {
                 val nodes = systemUiNodes(automation)
-                // Some SystemUI versions uppercase action text; identity remains exact apart from case.
-                val option = nodes.firstOrNull { it.text?.toString()?.equals(label, ignoreCase = true) == true }
+                // Exact action identity; physical input reaches the actual SystemUI button.
+                val option = nodes.firstOrNull {
+                    it.text?.toString()?.equals(label, ignoreCase = true) == true && it.isVisibleToUser
+                }
                 if (option != null) {
-                    var target: AccessibilityNodeInfo? = option
-                    repeat(5) {
-                        if (!clicked) clicked = target?.performAction(AccessibilityNodeInfo.ACTION_CLICK) == true
-                        target = target?.parent
-                    }
-                } else if (!expanded) {
+                    clicked = touchSystemUiNode(option)
+                } else {
                     val title = "Task4 ${runId()} direct"
                     var ancestor = nodes.firstOrNull { it.text?.toString() == title }?.parent
                     var level = 0
-                    while (!expanded && ancestor != null && level++ < 6) {
-                        val subtree = accessibilitySubtree(ancestor)
-                        // Never climb into a container covering other notifications or the whole shade.
-                        if (subtree.any { node ->
-                            node.viewIdResourceName?.endsWith("/title") == true &&
-                                !node.text.isNullOrBlank() && node.text.toString() != title
-                        }) break
-                        expanded = if (ancestor.actionList.any { it.id == AccessibilityNodeInfo.ACTION_EXPAND }) {
-                            ancestor.performAction(AccessibilityNodeInfo.ACTION_EXPAND)
-                        } else {
-                            subtree.firstOrNull { it.viewIdResourceName?.endsWith("/expand_button") == true }
-                                ?.performAction(AccessibilityNodeInfo.ACTION_CLICK) == true
+                    while (ancestor != null && level++ < 12) {
+                        // Expand only ancestors of the exact target. A grouped notification needs
+                        // its application-group header opened before its own action row exists.
+                        if (ancestor.viewIdResourceName?.endsWith("/notification_stack_scroller") == true ||
+                            ancestor.viewIdResourceName?.endsWith("/notification_panel") == true) break
+                        val button = accessibilitySubtree(ancestor).firstOrNull { node ->
+                            val bounds = Rect().also(node::getBoundsInScreen)
+                            node.viewIdResourceName?.endsWith("/expand_button") == true &&
+                                node.contentDescription?.toString()?.equals("Expand", ignoreCase = true) == true &&
+                                node.isVisibleToUser && !bounds.isEmpty && bounds.toShortString() !in expandedButtons
+                        }
+                        if (button != null) {
+                            val bounds = Rect().also(button::getBoundsInScreen)
+                            if (touchSystemUiNode(button)) expandedButtons.add(bounds.toShortString())
+                            break
                         }
                         ancestor = ancestor.parent
                     }
