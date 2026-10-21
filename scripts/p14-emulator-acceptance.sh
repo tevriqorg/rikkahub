@@ -282,15 +282,15 @@ wait "$race_A"
 wait "$race_B"
 instrument "$A" raceVerify P14RealtimeInteractionInstrumentedTest
 instrument "$B" raceVerify P14RealtimeInteractionInstrumentedTest
-instrument "$A" expiryAndDirectNotificationAction P14RealtimeInteractionInstrumentedTest
-python3 scripts/p14-interaction-evidence.py "$realtime_run"
+instrument "$A" expiryAndDirectNotificationAction P14RealtimeInteractionInstrumentedTest || ui_failed=1
+python3 scripts/p14-interaction-evidence.py "$realtime_run" || preflight_failed=1
 # Revocation runs last: retain A's actual encrypted credential to prove Server rejection.
 instrument "$A" selfRevoke
 instrument "$B" writeAfterOtherDeviceRevoke
 adb -s "$A" shell am force-stop me.rerere.rikkahub.debug
 instrument "$A" verifyRevokedDeviceCannotRecoverNewState
-instrument "$B" ordinaryProviderModelDiscoveryUi P14PolicySettingsUiInstrumentedTest
-instrument "$B" incompatibleManifestProductUi P14PolicySettingsUiInstrumentedTest
+instrument "$B" ordinaryProviderModelDiscoveryUi P14PolicySettingsUiInstrumentedTest || ui_failed=1
+instrument "$B" incompatibleManifestProductUi P14PolicySettingsUiInstrumentedTest || ui_failed=1
 for serial in "$A" "$B"; do
   timeout 15 adb -s "$serial" shell am start -n me.rerere.rikkahub.debug/me.rerere.rikkahub.ui.activity.P14EntryActivity
   timeout 15 adb -s "$serial" shell uiautomator dump /sdcard/task4-ui.xml || true

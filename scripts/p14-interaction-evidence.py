@@ -23,11 +23,15 @@ with psycopg.connect("host=127.0.0.1 port=5432 dbname=p14_task4 user=p14 passwor
         assert len(events) == expected, (kind, len(events))
         assert row[0] == ("RESPONDED" if expected else "PENDING"), (kind, row[0])
         idempotency = db.execute("SELECT response_json FROM idempotency_results").fetchall()
-        matching = [json.loads(item[0]) for item in idempotency if json.loads(item[0]).get("interaction_id") == key]
+        associated = [json.loads(item[0]) for item in idempotency if json.loads(item[0]).get("interaction_id") == key]
+        matching = [item for item in associated if "response" in item]
+        notification_states = [item for item in associated if "response" not in item]
+        assert all("notification_id" in item and "state" in item for item in notification_states), kind
         assert len(matching) == expected, (kind, len(matching))
         if expected:
             assert matching[0]["client_operation_id"] == events[0][0]
-        results[kind] = {"interaction_id": key, "status": row[0], "response_events": len(events), "idempotency_results": len(matching)}
+            assert matching[0]["status"] == row[0] and matching[0]["response"] == row[1]
+        results[kind] = {"interaction_id": key, "status": row[0], "response_events": len(events), "idempotency_results": len(matching), "notification_state_receipts": len(notification_states)}
     quick = json.loads(Path("evidence/native-quick-action.json").read_text())
     action_count = db.execute("SELECT COUNT(*) FROM quick_actions WHERE action_id=%s", (quick["action_id"],)).fetchone()[0]
     event_count = db.execute("SELECT COUNT(*) FROM sync_events WHERE entity_id=%s AND event_type='conversation.quick_action.created' AND caused_by_operation_id=%s", (quick["action_id"], quick["operation_id"])).fetchone()[0]
