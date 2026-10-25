@@ -1,6 +1,5 @@
 package me.rerere.rikkahub.ui.activity
 
-import androidx.compose.ui.test.assertExists
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
@@ -38,7 +37,7 @@ class P14InboxReplicaUiInstrumentedTest {
                 )
             }
         }
-        compose.onNodeWithTag("p14-inbox-list").assertExists()
+        compose.onNodeWithTag("p14-inbox-list").assertIsDisplayed()
         compose.onNodeWithText("收件箱").assertIsDisplayed()
         compose.onNodeWithText("北海道旅行计划").performClick()
         compose.runOnIdle { assertEquals("conversation-synthetic-1",chosen) }
