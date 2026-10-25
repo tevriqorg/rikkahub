@@ -459,7 +459,7 @@ private fun P14EntryScreen(
                 item(key="view-filter") {
                     Row(horizontalArrangement=Arrangement.spacedBy(4.dp),modifier=Modifier.fillMaxWidth()) {
                         listOf("chat","todo","idea","research","execute").filter{it in manifest.enabledViews}.forEach { view ->
-                            TextButton(onClick={ selectedView=view;directoryPage=0;directory=emptyList() },
+                            TextButton(onClick={ selectedView=view;directoryPage=0;directory=emptyList();workItems=emptyList();workError=null },
                                 contentPadding=PaddingValues(horizontal=4.dp)) {
                                 Text(if (view==selectedView) view.uppercase() else view)
                             }
@@ -467,7 +467,18 @@ private fun P14EntryScreen(
                     }
                 }
                 workError?.let { message -> item(key="work-error") { Text(message,style=MaterialTheme.typography.labelSmall) } }
-                if(selectedView!="chat") items(workItems,key={"work:${it.source}:${it.sourceId}"}) { item ->
+                if(selectedView!="chat") items(directory,key={"filed:${selectedView}:${it.conversationId}"}) { item ->
+                    OutlinedCard(onClick={conversationId=item.conversationId},modifier=Modifier.fillMaxWidth()) {
+                        Column(Modifier.padding(12.dp),verticalArrangement=Arrangement.spacedBy(4.dp)) {
+                            Text(item.bodyText.take(150).ifBlank{"Entry ${item.entryId}"})
+                            Text("Entry · ${selectedView.uppercase()}",style=MaterialTheme.typography.labelSmall)
+                        }
+                    }
+                }
+                if(selectedView!="chat") items(
+                    p14VisibleWorkItems(workItems,directory.map { it.entryId }.toSet()),
+                    key={it.stableListKey()}
+                ) { item ->
                     OutlinedCard(onClick={scope.launch {
                         val cid=item.conversationId ?: return@launch
                         product.seedWorkEntry(item.entryId,cid,item.bodyText.orEmpty())
@@ -489,7 +500,7 @@ private fun P14EntryScreen(
                         }
                     }
                 }
-                if(directoryHasMore || (selectedView!="chat" && workItems.size >= (directoryPage+1)*20)) item {
+                if(directoryHasMore || (selectedView!="chat" && workItems.size==20)) item {
                     TextButton(onClick={directoryPage++}){Text("Load more")}
                 }
                 item(key="refresh") { OutlinedButton(onClick={directoryPage=0;refreshContext++}) {Text("Refresh Entry list")} }
@@ -540,6 +551,7 @@ private fun P14EntryScreen(
                                         status=runCatching {
                                             product.assignEntryView(currentEntry.entryId,view,!enabled)
                                             P14RemoteWork.enqueue(context)
+                                            refreshContext++
                                             "View assignment queued"
                                         }.getOrElse{it.message?:"View failed"}
                                     }},contentPadding=PaddingValues(horizontal=3.dp)) {

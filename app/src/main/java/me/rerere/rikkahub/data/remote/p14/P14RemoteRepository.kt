@@ -36,6 +36,14 @@ import kotlin.uuid.Uuid
     @SerialName("body_text") val bodyText:String?=null,
 )
 
+/** Entry-first View cards are local-first; omit the remote projection of an already shown Entry. */
+internal fun p14VisibleWorkItems(items:List<P14WorkItem>,shownEntryIds:Set<String>):List<P14WorkItem> =
+    items.filterNot { it.source=="entry" && it.entryId in shownEntryIds }
+
+/** Stable keys are mandatory even for Idea records that predate server source_id. */
+internal fun P14WorkItem.stableListKey():String =
+    "work:$source:${sourceId ?: entryId}"
+
 internal class P14RemoteRepository(
     private val context:Context,
     private val settingsStore:SettingsStore,
