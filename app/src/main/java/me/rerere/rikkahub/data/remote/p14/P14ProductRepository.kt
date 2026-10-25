@@ -106,6 +106,7 @@ internal class P14ProductRepository(
     private val credentialStore = P14RuntimeCredentialStore(appContext)
 
     val entries: Flow<List<P14EntryEntity>> = dao.observeEntries()
+    fun inboxRows(archived:Boolean=false,limit:Int=60):Flow<List<P14InboxRow>> = dao.observeInboxRows(archived,limit)
     suspend fun directoryPage(offset:Int,limit:Int=20,view:String="chat"):List<P14EntryDirectoryItem> = withContext(Dispatchers.IO) {
         directoryMutex.withLock {
             require(offset>=0 && limit in 1..100)

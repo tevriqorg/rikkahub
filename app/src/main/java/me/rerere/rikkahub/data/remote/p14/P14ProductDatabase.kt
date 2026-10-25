@@ -149,6 +149,16 @@ data class P14ProductSyncStateEntity(
     @ColumnInfo(name = "last_sync_seq") val lastSyncSeq: Long,
 )
 
+/** A projected Inbox row: one stable Entry and its existing Conversation. */
+data class P14InboxRow(
+    val entryId: String,
+    val conversationId: String,
+    val bodyText: String,
+    val createdAtEpochMs: Long,
+    val pinned: Boolean,
+    val archived: Boolean,
+)
+
 @Dao
 interface P14ProductDao {
     @Upsert suspend fun upsertAction(item:P14ActionEntity)
@@ -180,6 +190,18 @@ interface P14ProductDao {
     @Insert(onConflict = OnConflictStrategy.IGNORE) suspend fun insertOutbox(item: P14ChatOutboxEntity): Long
     @Upsert suspend fun upsertSyncState(item: P14ProductSyncStateEntity)
 
+    /** Live, locally backed TickTick-style Inbox. Does not fork Entry or Conversation. */
+    @Query("""
+        SELECT c.entry_id AS entryId, c.conversation_id AS conversationId,
+               e.body_text AS bodyText, c.created_at_epoch_ms AS createdAtEpochMs,
+               c.pinned AS pinned, c.archived AS archived
+        FROM p14_conversations c
+        INNER JOIN p14_entries e ON e.entry_id = c.entry_id
+        WHERE c.archived = :archived
+        ORDER BY c.pinned DESC, c.created_at_epoch_ms DESC, c.entry_id DESC
+        LIMIT :limit
+    """)
+    fun observeInboxRows(archived:Boolean,limit:Int):Flow<List<P14InboxRow>>
     @Query("SELECT * FROM p14_entries ORDER BY created_at_epoch_ms DESC") fun observeEntries(): Flow<List<P14EntryEntity>>
     @Query("SELECT * FROM p14_conversations ORDER BY pinned DESC, created_at_epoch_ms DESC, entry_id DESC LIMIT :limit OFFSET :offset") suspend fun directoryPage(limit:Int,offset:Int):List<P14ProductConversationEntity>
     @Query("SELECT * FROM p14_conversations WHERE :coverageAfter IS NULL OR local_conversation_id IS NOT NULL OR created_at_epoch_ms > :coverageAfter ORDER BY pinned DESC, created_at_epoch_ms DESC, entry_id DESC LIMIT :limit OFFSET :offset") suspend fun coveredDirectoryPage(limit:Int,offset:Int,coverageAfter:Long?):List<P14ProductConversationEntity>
