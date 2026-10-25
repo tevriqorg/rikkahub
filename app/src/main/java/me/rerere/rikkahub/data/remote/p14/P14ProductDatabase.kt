@@ -171,6 +171,9 @@ interface P14ProductDao {
     @Upsert suspend fun upsertEntry(item: P14EntryEntity)
     @Upsert suspend fun upsertConversation(item: P14ProductConversationEntity)
     @Upsert suspend fun upsertMessage(item: P14ProductMessageEntity)
+    /** A finalized Hermes message replaces its exact transient draft, never a user message. */
+    @Query("DELETE FROM p14_messages WHERE message_id=:draftMessageId AND delivery_state='STREAMING' AND role='assistant'")
+    suspend fun deleteFinalizedDraft(draftMessageId:String):Int
     @Upsert suspend fun upsertAttachment(item: P14ProductAttachmentEntity)
     @Query("SELECT * FROM p14_attachments WHERE local_attachment_id=:id LIMIT 1") suspend fun attachment(id:String):P14ProductAttachmentEntity?
     @Query("UPDATE p14_attachments SET local_locator=:locator WHERE local_attachment_id=:id") suspend fun setAttachmentLocalLocator(id:String,locator:String)

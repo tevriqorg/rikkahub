@@ -672,7 +672,7 @@ private fun P14EntryScreen(
                 }
             }
             if(messages.size>=historyLimit) item { OutlinedButton(onClick={historyLimit=(historyLimit+50).coerceAtMost(10000)}) {Text("Load older messages")} }
-            items(messages, key = { it.messageId }) { message ->
+            items(p14VisibleEntryMessages(messages), key = { it.messageId }) { message ->
                 val count = attachments.count { it.messageId == message.messageId }
                 ElevatedCard(Modifier.fillMaxWidth()) {
                     Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {

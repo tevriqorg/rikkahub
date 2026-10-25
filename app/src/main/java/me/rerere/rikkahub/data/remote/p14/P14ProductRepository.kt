@@ -72,6 +72,29 @@ private data class P14SyncReplayDto(
     val has_more: Boolean,
 )
 
+/**
+ * Backward-compatible read projection for drafts already materialized by earlier APKs.
+ * New authoritative finalization deletes the exact draft inside the sync transaction.
+ * This only hides identical superseded legacy STREAMING text; it never alters Room data
+ * or merges two distinct final messages produced by Hermes.
+ */
+internal fun p14VisibleEntryMessages(messages:List<P14ProductMessageEntity>):List<P14ProductMessageEntity> {
+    val finished = messages.filter {
+        it.role == "assistant" && it.deliveryState == "SYNCED" && !it.tombstone && it.bodyText.isNotBlank()
+    }.groupBy { it.conversationId to it.bodyText }
+    return messages.filter { row ->
+        if (row.role != "assistant" || row.deliveryState != "STREAMING" || row.bodyText.isBlank()) {
+            true
+        } else {
+            val candidates = finished[row.conversationId to row.bodyText].orEmpty()
+            candidates.none { final ->
+                final.createdAtEpochMs >= row.createdAtEpochMs &&
+                    final.createdAtEpochMs - row.createdAtEpochMs <= 3_600_000L
+            }
+        }
+    }
+}
+
 internal class P14ProductRepository(
     context: Context,
     private val http: OkHttpClient,
@@ -496,6 +519,15 @@ internal class P14ProductRepository(
             )
         )
         dao.markMessageSynced(messageId)
+        if (item.requiredString("role").lowercase() == "assistant") {
+            // Server outbound events already carry this authoritative relation.
+            // Both rows and the sync cursor advance atomically in applyEvents().
+            event.payload["finalizes_draft_id"]?.jsonPrimitive?.contentOrNull
+                ?.takeIf { it.isNotBlank() }
+                ?.let { draftId ->
+                    dao.deleteFinalizedDraft("draft:$conversationId:$draftId")
+                }
+        }
         item["attachments"]?.jsonArray?.forEachIndexed { index, raw ->
             val a = raw.jsonObject
             storeRemoteAttachment(a, messageId, conversationId,
