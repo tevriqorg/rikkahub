@@ -88,6 +88,10 @@ class P14EntryActivity : ComponentActivity() {
     }
 }
 
+/** Older Entry roots are server-keyset paged even when current Room pages are shorter. */
+internal fun p14InboxShouldOfferMore(localCount:Int,limit:Int,serverHasOlder:Boolean):Boolean =
+    serverHasOlder || localCount >= limit
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun P14EntryScreen(
@@ -212,6 +216,7 @@ private fun P14EntryScreen(
     var legacyWorkbench by remember { mutableStateOf(false) }
     var inboxArchived by remember { mutableStateOf(false) }
     var inboxLimit by remember { mutableIntStateOf(60) }
+    var inboxLoadingMore by remember { mutableStateOf(false) }
     val inboxRows by remember(inboxArchived, inboxLimit) {
         product.inboxRows(inboxArchived, inboxLimit)
     }.collectAsState(initial = emptyList())
@@ -356,8 +361,28 @@ private fun P14EntryScreen(
                     }
                 },
                 onMore = { legacyWorkbench = true; status = null },
-                onLoadMore = { inboxLimit += 60 },
-                hasMore = inboxRows.size >= inboxLimit,
+                onLoadMore = {
+                    if (!inboxLoadingMore) {
+                        inboxLoadingMore = true
+                        scope.launch {
+                            runCatching {
+                                // The oldest ~50 server Entry roots are bootstrapped first.
+                                // Page at the current boundary to fetch older keyset pages
+                                // before increasing the observable Room projection limit.
+                                product.directoryPage(
+                                    offset = (inboxLimit - 10).coerceAtLeast(0),
+                                    limit = 20,
+                                    view = "chat",
+                                )
+                                inboxLimit += 60
+                            }.onFailure { status = it.message ?: "加载历史条目失败" }
+                            inboxLoadingMore = false
+                        }
+                    }
+                },
+                hasMore = p14InboxShouldOfferMore(
+                    inboxRows.size, inboxLimit, product.inboxHasOlderServerEntries(),
+                ),
                 onBack = onBack,
                 resumeQuickDraft = savedDraft.text.isNotBlank(),
             )

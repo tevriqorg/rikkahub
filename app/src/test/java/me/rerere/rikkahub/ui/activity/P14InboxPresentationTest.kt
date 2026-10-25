@@ -45,6 +45,12 @@ class P14InboxPresentationTest {
             p14InboxConversationMessages(listOf(source,later),"调查 TickTick 收件箱",1_000L))
     }
 
+    @Test fun remoteBootstrapHasMoreEvenWithShortLocalPage() {
+        assertTrue(p14InboxShouldOfferMore(50,60,true))
+        assertTrue(p14InboxShouldOfferMore(60,60,false))
+        assertEquals(false,p14InboxShouldOfferMore(20,60,false))
+    }
+
     @Test fun doNotHideAssistantOrMessagesWithoutAuthoritativeSource() {
         val first=msg("assistant","原始记录",role="assistant")
         val other=msg("user","另一个内容",role="user")
