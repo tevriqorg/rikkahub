@@ -47,7 +47,7 @@ class P14InboxReplicaUiInstrumentedTest {
         }
     }
 
-    @Test fun launcherOpensInboxAndSettingsCanReturnToShell() {
+    @Test fun launcherOpensInboxAndBackExits() {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val intent = android.content.Intent(context, me.rerere.rikkahub.RouteActivity::class.java)
             .setAction(android.content.Intent.ACTION_MAIN)
@@ -60,8 +60,11 @@ class P14InboxReplicaUiInstrumentedTest {
             }
             compose.onNodeWithText("收件箱").assertIsDisplayed()
             compose.onNodeWithTag("p14-inbox-add").assertIsDisplayed()
-            pressBack()
-            InstrumentationRegistry.getInstrumentation().waitForIdleSync()
+            androidx.test.espresso.Espresso.pressBackUnconditionally()
+            val deadline = android.os.SystemClock.uptimeMillis() + 5_000L
+            while (scenario.state != androidx.lifecycle.Lifecycle.State.DESTROYED &&
+                android.os.SystemClock.uptimeMillis() < deadline) android.os.SystemClock.sleep(50L)
+            assertEquals(androidx.lifecycle.Lifecycle.State.DESTROYED, scenario.state)
         } finally {
             scenario.close()
         }
