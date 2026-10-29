@@ -60,7 +60,7 @@ class P14InboxReplicaUiInstrumentedTest {
             }
         }
         compose.onNodeWithTag("p14-inbox-list").assertIsDisplayed()
-        compose.onNodeWithText("收件箱").assertIsDisplayed()
+        compose.onNodeWithText("北海道旅行计划").assertIsDisplayed()
         screenshot("01-inbox-light")
         compose.onNodeWithText("北海道旅行计划").performClick()
         compose.runOnIdle { assertEquals("conversation-synthetic-1",chosen) }
