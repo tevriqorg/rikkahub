@@ -47,6 +47,47 @@ class P14InboxReplicaUiInstrumentedTest {
         }
     }
 
+    @Test fun synchronizedClockSkewDoesNotPutReplyBeforeQuestion() = kotlinx.coroutines.runBlocking {
+        val base = InstrumentationRegistry.getInstrumentation().targetContext
+        val prefix = "p14-clock-" + java.util.UUID.randomUUID()
+        val names = mutableSetOf<String>()
+        val context = object : android.content.ContextWrapper(base) {
+            override fun getApplicationContext(): android.content.Context = this
+            override fun getSharedPreferences(name: String, mode: Int): android.content.SharedPreferences {
+                val scoped = "$prefix-$name"
+                names.add(scoped)
+                return base.getSharedPreferences(scoped, mode)
+            }
+        }
+        val db = androidx.room.Room.inMemoryDatabaseBuilder(context,
+            me.rerere.rikkahub.data.remote.p14.P14ProductDatabase::class.java).build()
+        try {
+            val repo = me.rerere.rikkahub.data.remote.p14.P14ProductRepository(context, okhttp3.OkHttpClient(), db)
+            val serverTime = java.time.Instant.parse("2026-10-29T12:00:00Z").toEpochMilli()
+            // Phone is five minutes ahead. Exercise real Room upserts and event acknowledgement.
+            for (state in listOf("LOCAL_PENDING", "SYNCED")) {
+                db.clearAllTables()
+                db.dao().upsertMessage(me.rerere.rikkahub.data.remote.p14.P14ProductMessageEntity(
+                    "question", "conv-clock", "user", "Which model?",
+                    deliveryState = state, createdAtEpochMs = serverTime + 300_000L))
+                repo.applyLiveEvents("""{"type":"events","events":[
+                  {"event_id":"q-event","sync_seq":1,"event_type":"conversation.message.created",
+                   "entity_type":"message","entity_id":"question","occurred_at":"2026-10-29T12:00:00Z",
+                   "payload":{"message":{"message_id":"question","conversation_id":"conv-clock","role":"user","body_text":"Which model?","created_at":"2026-10-29T12:00:00Z"}}},
+                  {"event_id":"a-event","sync_seq":2,"event_type":"conversation.message.created",
+                   "entity_type":"message","entity_id":"answer","occurred_at":"2026-10-29T12:00:01Z",
+                   "payload":{"message":{"message_id":"answer","conversation_id":"conv-clock","role":"assistant","body_text":"Synthetic answer","created_at":"2026-10-29T12:00:01Z"}}}
+                ]}""")
+                assertEquals(serverTime, repo.message("question")!!.createdAtEpochMs)
+                assertEquals(listOf("question", "answer"), db.dao().listMessages("conv-clock").map { it.messageId })
+                assertEquals(2L, repo.currentCursor())
+            }
+        } finally {
+            db.close()
+            names.forEach { base.deleteSharedPreferences(it) }
+        }
+    }
+
     @Test fun inboxShowsRealEntryAndOpensExistingConversation() {
         var chosen:String?=null
         compose.setContent {
@@ -60,6 +101,7 @@ class P14InboxReplicaUiInstrumentedTest {
             }
         }
         compose.onNodeWithTag("p14-inbox-list").assertIsDisplayed()
+        compose.onNodeWithText("归档").assertIsDisplayed()
         compose.onNodeWithText("北海道旅行计划").assertIsDisplayed()
         screenshot("01-inbox-light")
         compose.onNodeWithText("北海道旅行计划").performClick()

@@ -169,34 +169,14 @@ private fun InboxItemRow(
             .testTag("p14-inbox-item-${row.entryId}"),
         verticalAlignment = Alignment.Top,
     ) {
-        IconButton(
+        TextButton(
             onClick = onToggleArchive,
-            modifier = Modifier.size(48.dp).testTag("p14-inbox-toggle-${row.entryId}")
+            modifier = Modifier.testTag("p14-inbox-toggle-${row.entryId}")
                 .semantics { contentDescription = if (archived) "移回收件箱" else "归档记录" },
         ) {
-            Box(
-                Modifier.size(21.dp).background(
-                    color = if (archived) colors.blue else Color.Transparent,
-                    shape = RoundedCornerShape(5.dp),
-                ),
-                contentAlignment = Alignment.Center,
-            ) {
-                if (archived) Text("↶", color = Color.White, fontSize = 18.sp)
-                else Box(
-                    Modifier.size(19.dp).background(Color.Transparent, RoundedCornerShape(5.dp)),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    // P14 archive is never a task completion state.
-                    Surface(
-                        color = Color.Transparent,
-                        shape = RoundedCornerShape(4.dp),
-                        border = androidx.compose.foundation.BorderStroke(1.5.dp, Color(0xFFADB3BF)),
-                        modifier = Modifier.size(18.dp),
-                    ) {}
-                }
-            }
+            Text(if (archived) "移回" else "归档", color = colors.muted,
+                style = MaterialTheme.typography.labelSmall)
         }
-        Spacer(Modifier.width(8.dp))
         Column(Modifier.weight(1f).padding(top = 2.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
             Text(
                 text = p14InboxTitle(row.bodyText, row.entryId),
@@ -297,9 +277,14 @@ internal fun P14TickTickInboxScreen(
                     onClick = { onShowArchived(true); scope.launch { drawer.close() } },
                     modifier = Modifier.padding(horizontal = 12.dp),
                 )
+                NavigationDrawerItem(
+                    label = { Text("连接与设置") }, selected = false,
+                    onClick = onBack,
+                    modifier = Modifier.padding(horizontal = 12.dp),
+                )
                 HorizontalDivider(Modifier.padding(vertical = 14.dp))
                 NavigationDrawerItem(
-                    label = { Text("高级功能 / 旧入口") }, selected = false,
+                    label = { Text("更多管理功能") }, selected = false,
                     onClick = { scope.launch { drawer.close() }; onMore() },
                     modifier = Modifier.padding(horizontal = 12.dp),
                 )

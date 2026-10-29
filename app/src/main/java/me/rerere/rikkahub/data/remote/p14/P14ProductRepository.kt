@@ -435,7 +435,7 @@ internal class P14ProductRepository(
                     dao.upsertMessage(P14ProductMessageEntity(mid,convoId,item.stringOrEmpty("role"),
                         item.stringOrEmpty("body_text"),revision=revision,
                         tombstone=item["tombstone"]?.jsonPrimitive?.contentOrNull=="true",
-                        deliveryState="SYNCED",createdAtEpochMs=existing?.createdAtEpochMs ?: time))
+                        deliveryState="SYNCED",createdAtEpochMs=time))
                 }
                 item["attachments"]?.jsonArray?.forEach { a ->
                     val att=a.jsonObject
@@ -521,7 +521,7 @@ internal class P14ProductRepository(
                 item["revision"]?.jsonPrimitive?.intOrNull ?: existingMessage?.revision ?: 1,
                 item["tombstone"]?.jsonPrimitive?.contentOrNull?.toBooleanStrictOrNull() ?: false,
                 "SYNCED",
-                existingMessage?.createdAtEpochMs ?: item.epochMs("created_at", event.occurred_at),
+                item.epochMs("created_at", event.occurred_at),
             )
         )
         dao.markMessageSynced(messageId)

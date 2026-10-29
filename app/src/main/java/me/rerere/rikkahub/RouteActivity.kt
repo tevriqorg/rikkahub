@@ -181,6 +181,13 @@ class RouteActivity : ComponentActivity() {
         if (savedInstanceState == null) {
             handleIntent(intent)
         }
+        // The P14 test track starts with records, including before provider setup.
+        // Keep the shell underneath for the existing provider/settings flow.
+        if (savedInstanceState == null && intent.action == Intent.ACTION_MAIN &&
+            intent.hasCategory(Intent.CATEGORY_LAUNCHER)) {
+            startActivity(Intent(this, me.rerere.rikkahub.ui.activity.P14EntryActivity::class.java))
+        }
+
         setContent {
             RikkahubTheme {
                 setSingletonImageLoaderFactory { context ->
