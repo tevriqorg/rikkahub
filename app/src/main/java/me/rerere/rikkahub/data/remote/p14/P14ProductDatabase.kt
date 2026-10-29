@@ -157,6 +157,11 @@ data class P14InboxRow(
     val createdAtEpochMs: Long,
     val pinned: Boolean,
     val archived: Boolean,
+    val views: String? = null,
+    val thumbnailLocator: String? = null,
+    val thumbnailAttachmentId: String? = null,
+    val attachmentCount: Int = 0,
+    val messageVersion: Int = 0,
 )
 
 @Dao
@@ -194,14 +199,21 @@ interface P14ProductDao {
     @Query("""
         SELECT c.entry_id AS entryId, c.conversation_id AS conversationId,
                e.body_text AS bodyText, c.created_at_epoch_ms AS createdAtEpochMs,
-               c.pinned AS pinned, c.archived AS archived
+               c.pinned AS pinned, c.archived AS archived,
+               (SELECT group_concat(v.view_name, ',') FROM p14_entry_views v WHERE v.entry_id=c.entry_id AND v.enabled=1) AS views,
+               (SELECT a.local_locator FROM p14_attachments a WHERE a.conversation_id=c.conversation_id AND a.mime_type LIKE 'image/%' ORDER BY a.created_at_epoch_ms ASC LIMIT 1) AS thumbnailLocator,
+               (SELECT a.local_attachment_id FROM p14_attachments a WHERE a.conversation_id=c.conversation_id AND a.mime_type LIKE 'image/%' ORDER BY a.created_at_epoch_ms ASC LIMIT 1) AS thumbnailAttachmentId,
+               (SELECT count(*) FROM p14_attachments a WHERE a.conversation_id=c.conversation_id) AS attachmentCount,
+               (SELECT coalesce(sum(m.revision),0) FROM p14_messages m WHERE m.conversation_id=c.conversation_id) AS messageVersion
         FROM p14_conversations c
         INNER JOIN p14_entries e ON e.entry_id = c.entry_id
         WHERE c.archived = :archived
+          AND (:view = '' OR EXISTS (SELECT 1 FROM p14_entry_views v WHERE v.entry_id=c.entry_id AND v.view_name=:view AND v.enabled=1))
+          AND (:query = '' OR instr(lower(e.body_text),lower(:query))>0 OR EXISTS (SELECT 1 FROM p14_messages m WHERE m.conversation_id=c.conversation_id AND instr(lower(m.body_text),lower(:query))>0))
         ORDER BY c.pinned DESC, c.created_at_epoch_ms DESC, c.entry_id DESC
         LIMIT :limit
     """)
-    fun observeInboxRows(archived:Boolean,limit:Int):Flow<List<P14InboxRow>>
+    fun observeInboxRows(archived:Boolean,limit:Int,query:String="",view:String=""):Flow<List<P14InboxRow>>
     @Query("SELECT * FROM p14_entries ORDER BY created_at_epoch_ms DESC") fun observeEntries(): Flow<List<P14EntryEntity>>
     @Query("SELECT * FROM p14_conversations ORDER BY pinned DESC, created_at_epoch_ms DESC, entry_id DESC LIMIT :limit OFFSET :offset") suspend fun directoryPage(limit:Int,offset:Int):List<P14ProductConversationEntity>
     @Query("SELECT * FROM p14_conversations WHERE :coverageAfter IS NULL OR local_conversation_id IS NOT NULL OR created_at_epoch_ms > :coverageAfter ORDER BY pinned DESC, created_at_epoch_ms DESC, entry_id DESC LIMIT :limit OFFSET :offset") suspend fun coveredDirectoryPage(limit:Int,offset:Int,coverageAfter:Long?):List<P14ProductConversationEntity>
@@ -214,6 +226,12 @@ interface P14ProductDao {
     @Query("SELECT * FROM p14_conversations WHERE local_conversation_id=:localId LIMIT 1") suspend fun conversationByLocalId(localId: String): P14ProductConversationEntity?
     @Query("SELECT * FROM p14_conversations WHERE local_conversation_id IS NOT NULL ORDER BY created_at_epoch_ms DESC") suspend fun localConversations(): List<P14ProductConversationEntity>
     @Query("SELECT * FROM p14_messages WHERE message_id=:messageId LIMIT 1") suspend fun message(messageId: String): P14ProductMessageEntity?
+    @Query("SELECT * FROM p14_messages WHERE conversation_id=:conversationId AND role='user' ORDER BY created_at_epoch_ms ASC,message_id ASC LIMIT 1") fun observeFirstUser(conversationId:String):Flow<P14ProductMessageEntity?>
+    @Query("SELECT * FROM p14_chat_outbox WHERE entry_id=:entryId AND operation_type='CREATE_ENTRY_WITH_MESSAGE' ORDER BY created_at_epoch_ms ASC LIMIT 1") suspend fun captureOperation(entryId:String):P14ChatOutboxEntity?
+    @Query("SELECT * FROM p14_chat_outbox WHERE message_id=:messageId AND operation_type='EDIT_SOURCE_MESSAGE' AND state NOT IN ('ACKED','SUPERSEDED') ORDER BY created_at_epoch_ms ASC,rowid ASC") suspend fun messageEdits(messageId:String):List<P14ChatOutboxEntity>
+    @Query("SELECT * FROM p14_chat_outbox WHERE conversation_id=:conversationId AND state='CONFLICT' ORDER BY created_at_epoch_ms DESC") fun observeConflicts(conversationId:String):Flow<List<P14ChatOutboxEntity>>
+    @Query("UPDATE p14_chat_outbox SET state=:state,last_error_class=:error WHERE client_operation_id=:id") suspend fun setMutationState(id:String,state:String,error:String?=null)
+
     @Query("SELECT * FROM (SELECT * FROM p14_messages WHERE conversation_id=:conversationId ORDER BY created_at_epoch_ms DESC, message_id DESC LIMIT :limit) ORDER BY created_at_epoch_ms ASC, message_id ASC") fun observeMessagesPaged(conversationId:String,limit:Int):Flow<List<P14ProductMessageEntity>>
     @Query("SELECT * FROM p14_messages WHERE conversation_id=:conversationId ORDER BY created_at_epoch_ms ASC, message_id ASC") suspend fun listMessages(conversationId: String): List<P14ProductMessageEntity>
     @Query("SELECT * FROM p14_attachments WHERE message_id=:messageId ORDER BY created_at_epoch_ms ASC") suspend fun attachmentsForMessage(messageId: String): List<P14ProductAttachmentEntity>

@@ -5,6 +5,8 @@ import android.net.Uri
 import androidx.room.withTransaction
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.builtins.ListSerializer
@@ -107,7 +109,77 @@ internal class P14ProductRepository(
     private val credentialStore = P14RuntimeCredentialStore(appContext)
 
     val entries: Flow<List<P14EntryEntity>> = dao.observeEntries()
-    fun inboxRows(archived:Boolean=false,limit:Int=60):Flow<List<P14InboxRow>> = dao.observeInboxRows(archived,limit)
+    private val sourceIndex = appContext.getSharedPreferences("p14-entry-source-index-v1", Context.MODE_PRIVATE)
+    private val sourceIndexVersion = MutableStateFlow(0L)
+    private val editLock = Mutex()
+    fun inboxRows(archived:Boolean=false,limit:Int=60,query:String="",view:String=""):Flow<List<P14InboxRow>> =
+        combine(dao.observeInboxRows(archived,limit,query,view),sourceIndexVersion) { rows,_ ->
+            rows.map { row -> verifiedSource(row.conversationId)?.let { row.copy(bodyText=it.bodyText) } ?: row }
+        }
+    fun sourceMessage(conversationId:String):Flow<P14ProductMessageEntity?> =
+        combine(dao.observeFirstUser(conversationId),sourceIndexVersion) { _,_ -> verifiedSource(conversationId) }
+    fun editConflicts(conversationId:String) = dao.observeConflicts(conversationId)
+    private fun indexSource(entryId:String,messageId:String) {
+        if(sourceIndex.getString(entryId,null)!=messageId) {
+            check(sourceIndex.edit().putString(entryId,messageId).commit())
+            sourceIndexVersion.value++
+        }
+    }
+    private suspend fun verifiedSource(conversationId:String):P14ProductMessageEntity? {
+        val conversation=dao.conversation(conversationId) ?: return null
+        val id=dao.captureOperation(conversation.entryId)?.messageId ?: sourceIndex.getString(conversation.entryId,null) ?: return null
+        return dao.message(id)?.takeIf { it.conversationId==conversationId && it.role=="user" }
+    }
+    /** Discover the original through authoritative create events or complete server history, never a guessed recent user turn. */
+    suspend fun ensureEntrySource(conversationId:String):P14ProductMessageEntity? = withContext(Dispatchers.IO) {
+        verifiedSource(conversationId)?.let { return@withContext it }
+        val conversation=dao.conversation(conversationId) ?: return@withContext null
+        if(credentialStore.activeConnection()==null) return@withContext null
+        var offset=0
+        while(true) {
+            val count=loadEntryHistory(conversation.entryId,offset,100)
+            offset+=count
+            if(count<100) break
+        }
+        val source=dao.listMessages(conversationId).firstOrNull { it.role=="user" } ?: return@withContext null
+        indexSource(conversation.entryId,source.messageId)
+        source
+    }
+    /** A revision of the source Message; Entry.body_text and CREATE payload remain immutable evidence. */
+    suspend fun acceptEntryRevision(conversationId:String,text:String,expectedRevision:Int?=null):P14AcceptedMutation = withContext(Dispatchers.IO) {
+        editLock.withLock {
+            val normalized=text.trim();require(normalized.isNotEmpty()) { "记录内容不能为空" }
+            val source=verifiedSource(conversationId) ?: error("原始记录尚未恢复，编辑草稿已保留")
+            require(!source.tombstone) { "已删除的来源不能修改" }
+            val conversation=requireNotNull(dao.conversation(conversationId))
+            val operationId=UUID.randomUUID().toString()
+            database.withTransaction {
+                val current=requireNotNull(dao.message(source.messageId))
+                require(expectedRevision==null || current.revision==expectedRevision) { "记录已被其他设备修改，编辑草稿已保留" }
+                if(current.bodyText==normalized) return@withTransaction
+                dao.upsertMessage(current.copy(bodyText=normalized,revision=current.revision+1,deliveryState="EDIT_PENDING"))
+                dao.insertOutbox(P14ChatOutboxEntity(operationId,"EDIT_SOURCE_MESSAGE",source.messageId,conversationId,
+                    conversation.entryId,conversation.externalSessionId,buildJsonObject {
+                        put("text",normalized);put("base_revision",current.revision)
+                    }.toString(),createdAtEpochMs=System.currentTimeMillis()))
+            }
+            P14AcceptedMutation(conversation.entryId,conversationId,source.messageId,operationId)
+        }
+    }
+    /** Existing pin/archive protocol, now durably queued before showing the state. */
+    suspend fun acceptOrganization(conversationId:String,pinned:Boolean?=null,archived:Boolean?=null) = withContext(Dispatchers.IO) {
+        editLock.withLock {
+            database.withTransaction {
+                val current=requireNotNull(dao.conversation(conversationId));val operationId=UUID.randomUUID().toString()
+                dao.upsertConversation(current.copy(pinned=pinned ?: current.pinned,archived=archived ?: current.archived,stateRevision=current.stateRevision+1))
+                dao.insertOutbox(P14ChatOutboxEntity(operationId,"SET_CONVERSATION_STATE","state:$conversationId",conversationId,
+                    current.entryId,current.externalSessionId,buildJsonObject {
+                        put("base_revision",current.stateRevision);pinned?.let { put("pinned",it) };archived?.let { put("archived",it) }
+                    }.toString(),createdAtEpochMs=System.currentTimeMillis()))
+            }
+        }
+    }
+
     /** A first-page Room projection alone does not prove server history is exhausted. */
     fun inboxHasOlderServerEntries():Boolean = bootstrapPrefs.getBoolean("more",false)
     suspend fun directoryPage(offset:Int,limit:Int=20,view:String="chat"):List<P14EntryDirectoryItem> = withContext(Dispatchers.IO) {
@@ -250,7 +322,13 @@ internal class P14ProductRepository(
             dao.insertOutbox(
                 P14ChatOutboxEntity(
                     operationId, "SEND_MESSAGE", messageId, conversationId, conversation.entryId,
-                    conversation.externalSessionId, buildJsonObject { put("text", normalized) }.toString(), createdAtEpochMs = now,
+                    conversation.externalSessionId, buildJsonObject {
+                        put("text", normalized)
+                        verifiedSource(conversationId)?.takeIf { it.revision>1 }?.let { source ->
+                            put("reply_to_message_id",source.messageId)
+                            put("quote",buildJsonObject { put("text",source.bodyText) })
+                        }
+                    }.toString(), createdAtEpochMs = now,
                 )
             )
         }
@@ -512,19 +590,21 @@ internal class P14ProductRepository(
         val messageId = item.requiredString("message_id")
         val conversationId = item.requiredString("conversation_id")
         val existingMessage = dao.message(messageId)
+        payload["entry"]?.jsonObject?.get("entry_id")?.jsonPrimitive?.contentOrNull?.let { indexSource(it,messageId) }
+        val preserveRevision=existingMessage?.deliveryState=="EDIT_PENDING" && dao.messageEdits(messageId).isNotEmpty()
         dao.upsertMessage(
             P14ProductMessageEntity(
                 messageId,
                 conversationId,
                 item.requiredString("role").lowercase(),
-                item.stringOrEmpty("body_text"),
-                item["revision"]?.jsonPrimitive?.intOrNull ?: existingMessage?.revision ?: 1,
+                if(preserveRevision) existingMessage!!.bodyText else item.stringOrEmpty("body_text"),
+                if(preserveRevision) existingMessage!!.revision else item["revision"]?.jsonPrimitive?.intOrNull ?: existingMessage?.revision ?: 1,
                 item["tombstone"]?.jsonPrimitive?.contentOrNull?.toBooleanStrictOrNull() ?: false,
-                "SYNCED",
+                if(preserveRevision) "EDIT_PENDING" else "SYNCED",
                 item.epochMs("created_at", event.occurred_at),
             )
         )
-        dao.markMessageSynced(messageId)
+        if(!preserveRevision) dao.markMessageSynced(messageId)
         if (item.requiredString("role").lowercase() == "assistant") {
             // Server outbound events already carry this authoritative relation.
             // Both rows and the sync cursor advance atomically in applyEvents().
@@ -631,7 +711,13 @@ internal class P14ProductRepository(
         val p = event.payload
         val id = p["message_id"]?.jsonPrimitive?.contentOrNull ?: event.entity_id
         val existing = dao.message(id) ?: return
-        dao.upsertMessage(existing.copy(bodyText = p["body_text"]?.jsonPrimitive?.contentOrNull ?: existing.bodyText, revision = p["revision"]?.jsonPrimitive?.intOrNull ?: existing.revision))
+        val pending=dao.messageEdits(id)
+        val revision=p["revision"]?.jsonPrimitive?.intOrNull ?: existing.revision
+        // An acknowledgement of an earlier local edit must not replace a later offline revision.
+        if(pending.isNotEmpty() && pending.last().clientOperationId!=event.caused_by_operation_id) return
+        if(revision<existing.revision) return
+        dao.upsertMessage(existing.copy(bodyText=p["body_text"]?.jsonPrimitive?.contentOrNull ?: existing.bodyText,
+            revision=revision,deliveryState="SYNCED"))
     }
 
     private suspend fun applyMessageDeleted(event: P14SyncEventDto) {
@@ -645,6 +731,7 @@ internal class P14ProductRepository(
         val p=event.payload
         val id=p["conversation_id"]?.jsonPrimitive?.contentOrNull ?: event.entity_id
         val existing=dao.conversation(id) ?: return
+        if((p["revision"]?.jsonPrimitive?.intOrNull ?: 0)<existing.stateRevision) return
         dao.upsertConversation(existing.copy(
             pinned=p["pinned"]?.jsonPrimitive?.contentOrNull?.toBooleanStrictOrNull() ?: existing.pinned,
             archived=p["archived"]?.jsonPrimitive?.contentOrNull?.toBooleanStrictOrNull() ?: existing.archived,
@@ -761,6 +848,19 @@ internal class P14ProductRepository(
             dao.markOutboxInFlight(operation.clientOperationId)
             try {
                 val payload = json.parseToJsonElement(operation.payloadJson).jsonObject
+                if(operation.operationType in setOf("EDIT_SOURCE_MESSAGE","SET_CONVERSATION_STATE")) {
+                    val mutation=buildJsonObject {
+                        put("client_operation_id",operation.clientOperationId)
+                        payload.forEach { (key,value) -> put(key,value) }
+                    }
+                    val path=if(operation.operationType=="EDIT_SOURCE_MESSAGE") {
+                        require("edit" in manifest.messageCapabilities) { "服务端未启用修订功能" }
+                        "conversations/${operation.conversationId}/messages/${operation.messageId}/edit"
+                    } else "conversations/${operation.conversationId}/state"
+                    post(connection,path,mutation.toString())
+                    dao.markOutboxAcked(operation.clientOperationId,System.currentTimeMillis())
+                    continue
+                }
                 if (payload["reply_to_message_id"]?.jsonPrimitive?.contentOrNull != null) {
                     require("reply" in manifest.messageCapabilities) { "P14 Manifest disabled reply" }
                 }
@@ -786,6 +886,10 @@ internal class P14ProductRepository(
                 dao.markOutboxAcked(operation.clientOperationId, System.currentTimeMillis())
             } catch (error: P14RemoteHttpException) {
                 if (error.status == 409) {
+                    if(operation.operationType in setOf("EDIT_SOURCE_MESSAGE","SET_CONVERSATION_STATE")) {
+                        dao.setMutationState(operation.clientOperationId,"CONFLICT","REVISION_CONFLICT")
+                        continue
+                    }
                     replay(connection)
                 }
                 val stillPending = dao.pendingOutbox().any { it.clientOperationId == operation.clientOperationId }
