@@ -1,6 +1,7 @@
 package me.rerere.rikkahub.ui.activity
 
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertDoesNotExist
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
@@ -58,5 +59,42 @@ class P14InboxReplicaUiInstrumentedTest {
         compose.onNodeWithTag("p14-inbox-add").performClick()
         compose.onNodeWithTag("p14-inbox-quick-input").performTextInput("记录一个新想法")
         compose.runOnIdle { assertTrue(draft.contains("记录")) }
+    }
+
+    @Test fun entryIsUsefulWithoutAiAndConversationRequiresExplicitTap() {
+        var backedOut=false
+        compose.setContent {
+            RikkahubTheme {
+                P14TickTickEntryDetailScreen(
+                    entryBody="一条独立保存的旅行观察",createdAt=1_790_000_000_000L,
+                    conversationId="conversation-synthetic-1",messages=emptyList(),
+                    input="",onInputChange={},onSend={},sending=false,canChat=true,
+                    status=null,onBack={backedOut=true},onAdvanced={},
+                )
+            }
+        }
+        compose.onNodeWithText("一条独立保存的旅行观察").assertIsDisplayed()
+        compose.onNodeWithTag("p14-entry-message-input").assertDoesNotExist()
+        compose.onNodeWithTag("p14-inbox-open-ai").performClick()
+        compose.onNodeWithTag("p14-entry-message-input").assertIsDisplayed()
+        compose.onNodeWithText("与 AI 讨论").assertIsDisplayed()
+        compose.runOnIdle { assertTrue(!backedOut) }
+    }
+
+    @Test fun archivedChipUsesRealArchiveStateNotFakeTaskCompletion() {
+        var archivedChosen=false
+        compose.setContent {
+            RikkahubTheme {
+                P14TickTickInboxScreen(
+                    rows=listOf(entry),archived=false,
+                    onShowArchived={archivedChosen=it},
+                    draftText="",onDraftChange={},saving=false,status=null,
+                    onQuickSave={},onRichCapture={},onOpen={},onToggleArchive={},
+                    onMore={},onLoadMore={},hasMore=false,onBack={},
+                )
+            }
+        }
+        compose.onNodeWithTag("p14-inbox-archived-tab").performClick()
+        compose.runOnIdle { assertTrue(archivedChosen) }
     }
 }
