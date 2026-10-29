@@ -1,6 +1,7 @@
 package me.rerere.rikkahub.ui.activity
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -26,6 +27,7 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Divider
 import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -67,10 +69,40 @@ import java.util.Locale
 
 // Reference: TickTick Android Inbox's quiet list hierarchy, row affordances and quick add.
 // Product identity is P14 Entry, never a second TickTick task model or a new Hermes session.
-private val inboxBlue = Color(0xFF4777D5)
-private val inboxBackground = Color(0xFFF6F7FB)
-private val inboxMuted = Color(0xFF8B92A1)
-private val inboxInk = Color(0xFF252B36)
+// Visual baseline approved by the user: a restrained Inbox, readable detail, optional AI,
+// and system-following light/dark appearances. No invented task completion or tag data.
+private data class InboxPalette(
+    val blue: Color,
+    val background: Color,
+    val surface: Color,
+    val muted: Color,
+    val ink: Color,
+    val divider: Color,
+    val userBubble: Color,
+    val disabled: Color,
+)
+private val inboxLight = InboxPalette(
+    blue = Color(0xFF4777D5),
+    background = Color(0xFFF6F7FB),
+    surface = Color.White,
+    muted = Color(0xFF747F90),
+    ink = Color(0xFF252B36),
+    divider = Color(0xFFF0F1F5),
+    userBubble = Color(0xFFE8F0FF),
+    disabled = Color(0xFFE9ECF2),
+)
+private val inboxDark = InboxPalette(
+    blue = Color(0xFF78A2FF),
+    background = Color(0xFF0E1727),
+    surface = Color(0xFF182438),
+    muted = Color(0xFF9CAAC0),
+    ink = Color(0xFFF2F5FA),
+    divider = Color(0xFF28374A),
+    userBubble = Color(0xFF233E67),
+    disabled = Color(0xFF314054),
+)
+@Composable
+private fun inboxColors(): InboxPalette = if (isSystemInDarkTheme()) inboxDark else inboxLight
 
 internal fun p14InboxTitle(body: String, entryId: String): String =
     body.lineSequence().map { it.trim() }.firstOrNull { it.isNotBlank() }
@@ -108,13 +140,14 @@ private fun inboxDate(epoch: Long): String =
 
 @Composable
 private fun InboxGroupTitle(name: String, count: Int) {
+    val colors = inboxColors()
     Row(
         Modifier.fillMaxWidth().padding(start = 6.dp, end = 7.dp, top = 8.dp, bottom = 8.dp),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Text(name, color = Color(0xFF697181), style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.SemiBold)
-        Text(count.toString(), color = inboxMuted, style = MaterialTheme.typography.labelSmall)
+        Text(name, color = colors.muted, style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.SemiBold)
+        Text(count.toString(), color = colors.muted, style = MaterialTheme.typography.labelSmall)
     }
 }
 
@@ -125,6 +158,7 @@ private fun InboxItemRow(
     onOpen: () -> Unit,
     onToggleArchive: () -> Unit,
 ) {
+    val colors = inboxColors()
     Row(
         Modifier.fillMaxWidth().clickable(onClick = onOpen).padding(start = 10.dp, end = 12.dp, top = 11.dp, bottom = 11.dp)
             .testTag("p14-inbox-item-${row.entryId}"),
@@ -136,7 +170,7 @@ private fun InboxItemRow(
         ) {
             Box(
                 Modifier.size(21.dp).background(
-                    color = if (archived) inboxBlue else Color.Transparent,
+                    color = if (archived) colors.blue else Color.Transparent,
                     shape = RoundedCornerShape(5.dp),
                 ),
                 contentAlignment = Alignment.Center,
@@ -160,21 +194,21 @@ private fun InboxItemRow(
         Column(Modifier.weight(1f).padding(top = 2.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
             Text(
                 text = p14InboxTitle(row.bodyText, row.entryId),
-                color = if (archived) inboxMuted else inboxInk,
+                color = if (archived) colors.muted else colors.ink,
                 style = MaterialTheme.typography.bodyLarge,
                 lineHeight = 23.sp,
                 maxLines = 2, overflow = TextOverflow.Ellipsis,
             )
             val preview = p14InboxPreview(row.bodyText)
             if (preview.isNotBlank()) Text(
-                preview, color = inboxMuted, style = MaterialTheme.typography.bodySmall,
+                preview, color = colors.muted, style = MaterialTheme.typography.bodySmall,
                 maxLines = 1, overflow = TextOverflow.Ellipsis,
             )
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(inboxDate(row.createdAtEpochMs), color = inboxBlue, style = MaterialTheme.typography.labelSmall)
+                Text(inboxDate(row.createdAtEpochMs), color = colors.blue, style = MaterialTheme.typography.labelSmall)
                 if (row.pinned) {
                     Spacer(Modifier.width(9.dp))
-                    Text("置顶", color = inboxMuted, style = MaterialTheme.typography.labelSmall)
+                    Text("置顶", color = colors.muted, style = MaterialTheme.typography.labelSmall)
                 }
             }
         }
@@ -189,9 +223,10 @@ private fun InboxGroup(
     onOpen: (String) -> Unit,
     onToggleArchive: (P14InboxRow) -> Unit,
 ) {
+    val colors = inboxColors()
     if (rows.isEmpty()) return
     InboxGroupTitle(title, rows.size)
-    Surface(shape = RoundedCornerShape(12.dp), color = Color.White, modifier = Modifier.fillMaxWidth()) {
+    Surface(shape = RoundedCornerShape(12.dp), color = colors.surface, modifier = Modifier.fillMaxWidth()) {
         Column {
             rows.forEachIndexed { index, row ->
                 InboxItemRow(
@@ -201,7 +236,7 @@ private fun InboxGroup(
                 )
                 if (index < rows.lastIndex) HorizontalDivider(
                     modifier = Modifier.padding(start = 56.dp),
-                    color = Color(0xFFF0F1F5),
+                    color = colors.divider,
                     thickness = 0.7.dp,
                 )
             }
@@ -229,6 +264,7 @@ internal fun P14TickTickInboxScreen(
     onBack: () -> Unit,
     resumeQuickDraft: Boolean = false,
 ) {
+    val colors = inboxColors()
     val scope = rememberCoroutineScope()
     val drawer = rememberDrawerState(DrawerValue.Closed)
     var searchOpen by remember { mutableStateOf(false) }
@@ -265,30 +301,30 @@ internal fun P14TickTickInboxScreen(
         },
     ) {
         Scaffold(
-            containerColor = inboxBackground,
+            containerColor = colors.background,
             topBar = {
                 TopAppBar(
                     colors = androidx.compose.material3.TopAppBarDefaults.topAppBarColors(
-                        containerColor = inboxBackground,
+                        containerColor = colors.background,
                     ),
                     navigationIcon = {
                         IconButton(onClick = { scope.launch { drawer.open() } }) {
-                            Text("☰", color = inboxInk, fontSize = 22.sp)
+                            Text("☰", color = colors.ink, fontSize = 22.sp)
                         }
                     },
                     title = {
                         Text(
                             if (archived) "已归档" else "收件箱",
                             style = MaterialTheme.typography.titleLarge,
-                            fontWeight = FontWeight.Bold, color = inboxInk,
+                            fontWeight = FontWeight.Bold, color = colors.ink,
                         )
                     },
                     actions = {
                         IconButton(onClick = { searchOpen = !searchOpen; if (!searchOpen) query = "" }) {
-                            Text(if (searchOpen) "×" else "⌕", color = inboxInk, fontSize = 25.sp)
+                            Text(if (searchOpen) "×" else "⌕", color = colors.ink, fontSize = 25.sp)
                         }
                         IconButton(onClick = onMore) {
-                            Text("⋮", color = inboxInk, fontSize = 25.sp)
+                            Text("⋮", color = colors.ink, fontSize = 25.sp)
                         }
                     },
                 )
@@ -296,7 +332,7 @@ internal fun P14TickTickInboxScreen(
             floatingActionButton = {
                 if (!archived) FloatingActionButton(
                     onClick = { addOpen = true },
-                    containerColor = inboxBlue, contentColor = Color.White,
+                    containerColor = colors.blue, contentColor = Color.White,
                     shape = CircleShape,
                     modifier = Modifier.testTag("p14-inbox-add"),
                 ) { Text("+", color = Color.White, fontSize = 29.sp, fontWeight = FontWeight.Light) }
@@ -309,19 +345,37 @@ internal fun P14TickTickInboxScreen(
                         .testTag("p14-inbox-search"),
                     placeholder = { Text("搜索收件箱") }, singleLine = true,
                 )
+                // Archive is not task completion. Expose only states P14 actually persists.
+                Row(
+                    Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    FilterChip(
+                        selected = !archived,
+                        onClick = { onShowArchived(false) },
+                        label = { Text("全部") },
+                        modifier = Modifier.testTag("p14-inbox-all-tab"),
+                    )
+                    FilterChip(
+                        selected = archived,
+                        onClick = { onShowArchived(true) },
+                        label = { Text("已归档") },
+                        modifier = Modifier.testTag("p14-inbox-archived-tab"),
+                    )
+                }
                 LazyColumn(
                     modifier = Modifier.fillMaxSize().testTag("p14-inbox-list"),
                     contentPadding = PaddingValues(start = 14.dp, end = 14.dp, bottom = 96.dp, top = 6.dp),
                     verticalArrangement = Arrangement.spacedBy(3.dp),
                 ) {
                     if (status != null) item(key = "inbox-status") {
-                        Text(status, color = inboxBlue, modifier = Modifier.padding(horizontal = 6.dp, vertical = 4.dp),
+                        Text(status, color = colors.blue, modifier = Modifier.padding(horizontal = 6.dp, vertical = 4.dp),
                             style = MaterialTheme.typography.labelSmall)
                     }
                     if (display.isEmpty()) item(key = "inbox-empty") {
                         Box(Modifier.fillMaxWidth().padding(vertical = 100.dp), contentAlignment = Alignment.Center) {
                             Text(if (archived) "还没有已归档的条目" else "收件箱是空的，点 + 随时记录想法",
-                                color = inboxMuted, style = MaterialTheme.typography.bodyMedium)
+                                color = colors.muted, style = MaterialTheme.typography.bodyMedium)
                         }
                     }
                     if (pinned.isNotEmpty()) item(key = "pinned") {
@@ -381,26 +435,40 @@ internal fun P14TickTickEntryDetailScreen(
     onBack: () -> Unit,
     onAdvanced: () -> Unit,
 ) {
+    val colors = inboxColors()
+    // A saved Entry is useful on its own. Conversation is an explicit secondary choice.
+    var aiOpen by remember(conversationId) { mutableStateOf(false) }
     val source = entryBody.orEmpty()
     val visibleMessages = p14InboxConversationMessages(messages, source, createdAt ?: 0L)
     Scaffold(
-        containerColor = inboxBackground,
+        containerColor = colors.background,
         topBar = {
             TopAppBar(
-                colors = androidx.compose.material3.TopAppBarDefaults.topAppBarColors(containerColor = inboxBackground),
+                colors = androidx.compose.material3.TopAppBarDefaults.topAppBarColors(containerColor = colors.background),
                 navigationIcon = {
-                    IconButton(onClick = onBack) {
-                        Text("‹", color = inboxInk, fontSize = 32.sp)
+                    IconButton(onClick = { if (aiOpen) aiOpen = false else onBack() }) {
+                        Text("‹", color = colors.ink, fontSize = 32.sp)
                     }
                 },
-                title = { Text("条目详情", fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.titleLarge) },
+                title = { Text(if (aiOpen) "与 AI 讨论" else "条目详情",
+                    fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.titleLarge) },
                 actions = {
-                    IconButton(onClick = onAdvanced) { Text("⋮", color = inboxInk, fontSize = 25.sp) }
+                    if (!aiOpen) IconButton(onClick = onAdvanced) {
+                        Text("⋮", color = colors.ink, fontSize = 25.sp)
+                    }
                 },
             )
         },
         bottomBar = {
-            Surface(shadowElevation = 8.dp, color = Color.White) {
+            if (!aiOpen) {
+                Surface(shadowElevation = 4.dp, color = colors.surface) {
+                    Button(
+                        onClick = { aiOpen = true },
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp)
+                            .testTag("p14-inbox-open-ai"),
+                    ) { Text("与 AI 讨论（可选）") }
+                }
+            } else Surface(shadowElevation = 8.dp, color = colors.surface) {
                 Row(
                     modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 12.dp),
                     verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(10.dp),
@@ -415,11 +483,11 @@ internal fun P14TickTickEntryDetailScreen(
                         onClick = onSend,
                         enabled = input.isNotBlank() && !sending && canChat,
                         modifier = Modifier.size(52.dp).background(
-                            if (input.isNotBlank() && canChat) inboxBlue else Color(0xFFE9ECF2),
+                            if (input.isNotBlank() && canChat) colors.blue else colors.disabled,
                             CircleShape,
                         ).testTag("p14-inbox-ai-send"),
                     ) {
-                        Text("➤", color = if (input.isNotBlank() && canChat) Color.White else inboxMuted,
+                        Text("➤", color = if (input.isNotBlank() && canChat) Color.White else colors.muted,
                             fontSize = 22.sp)
                     }
                 }
@@ -433,58 +501,73 @@ internal fun P14TickTickEntryDetailScreen(
         ) {
             item(key = "source-card") {
                 Surface(
-                    color = Color.White, shape = RoundedCornerShape(14.dp),
+                    color = colors.surface, shape = RoundedCornerShape(14.dp),
                     modifier = Modifier.fillMaxWidth().testTag("p14-entry-body"),
                 ) {
                     Column(Modifier.padding(17.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                        Text("原始内容", color = inboxBlue, fontWeight = FontWeight.SemiBold,
+                        Text(if (aiOpen) "当前记录 · AI 上下文" else "原始内容",
+                            color = colors.blue, fontWeight = FontWeight.SemiBold,
                             style = MaterialTheme.typography.labelMedium)
-                        Text(source.ifBlank { "正在恢复原始 Entry…" }, color = inboxInk,
-                            style = MaterialTheme.typography.bodyLarge, lineHeight = 25.sp)
+                        if (!aiOpen) {
+                            Text(p14InboxTitle(source, conversationId), color = colors.ink,
+                                style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
+                        }
+                        Text(
+                            if (aiOpen) source.take(220) else source.ifBlank { "正在恢复原始 Entry…" },
+                            color = colors.ink, style = MaterialTheme.typography.bodyLarge,
+                            lineHeight = 25.sp, maxLines = if (aiOpen) 5 else Int.MAX_VALUE,
+                        )
                         if (createdAt != null) Text(inboxDate(createdAt),
-                            style = MaterialTheme.typography.labelSmall, color = inboxMuted)
+                            style = MaterialTheme.typography.labelSmall, color = colors.muted)
                     }
                 }
             }
-            item(key = "conversation-title") {
+            if (!aiOpen) item(key = "detail-independent") {
+                Text(
+                    "这条记录已独立保存。你可以直接返回收件箱，也可以选择与 AI 讨论。",
+                    color = colors.muted, style = MaterialTheme.typography.bodyMedium,
+                    modifier = Modifier.fillMaxWidth().padding(6.dp),
+                )
+            }
+            if (aiOpen) item(key = "conversation-title") {
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.SpaceBetween) {
-                    Text("AI 对话", color = inboxInk, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-                    Text("此 Entry 专属上下文", color = inboxMuted, style = MaterialTheme.typography.labelSmall)
+                    Text("AI 对话", color = colors.ink, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                    Text("此 Entry 专属上下文", color = colors.muted, style = MaterialTheme.typography.labelSmall)
                 }
             }
-            if (visibleMessages.isEmpty()) item(key = "conversation-empty") {
-                Surface(color = Color.White, shape = RoundedCornerShape(14.dp), modifier = Modifier.fillMaxWidth()) {
+            if (aiOpen && visibleMessages.isEmpty()) item(key = "conversation-empty") {
+                Surface(color = colors.surface, shape = RoundedCornerShape(14.dp), modifier = Modifier.fillMaxWidth()) {
                     Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Text("从这里继续讨论", style = MaterialTheme.typography.titleMedium, color = inboxInk)
+                        Text("从这里继续讨论", style = MaterialTheme.typography.titleMedium, color = colors.ink)
                         Text("AI 会围绕上方的原始内容和此 Entry 的历史对话回复。",
-                            style = MaterialTheme.typography.bodySmall, color = inboxMuted)
+                            style = MaterialTheme.typography.bodySmall, color = colors.muted)
                     }
                 }
             }
-            items(visibleMessages, key = { it.messageId }) { message ->
+            if (aiOpen) items(visibleMessages, key = { it.messageId }) { message ->
                 val user = message.role.equals("user", ignoreCase = true)
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = if (user) Arrangement.End else Arrangement.Start) {
                     Surface(
-                        color = if (user) Color(0xFFE8F0FF) else Color.White,
+                        color = if (user) colors.userBubble else colors.surface,
                         shape = RoundedCornerShape(14.dp),
                         modifier = Modifier.fillMaxWidth(if (user) 0.88f else 0.94f),
                     ) {
                         Column(Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
                             verticalArrangement = Arrangement.spacedBy(5.dp)) {
                             Text(if (user) "我" else "AI",
-                                color = if (user) inboxBlue else inboxMuted,
+                                color = if (user) colors.blue else colors.muted,
                                 style = MaterialTheme.typography.labelSmall)
                             Text(if (message.tombstone) "消息已删除" else message.bodyText,
-                                color = inboxInk, style = MaterialTheme.typography.bodyMedium)
+                                color = colors.ink, style = MaterialTheme.typography.bodyMedium)
                             if (message.deliveryState != "SYNCED") Text(message.deliveryState,
-                                color = inboxMuted, style = MaterialTheme.typography.labelSmall)
+                                color = colors.muted, style = MaterialTheme.typography.labelSmall)
                         }
                     }
                 }
             }
-            if (status != null) item(key = "detail-status") {
-                Text(status, color = inboxBlue, style = MaterialTheme.typography.labelSmall)
+            if (status != null && aiOpen) item(key = "detail-status") {
+                Text(status, color = colors.blue, style = MaterialTheme.typography.labelSmall)
             }
         }
     }
