@@ -49,7 +49,7 @@ class P14HighFidelityVisualInstrumentedTest {
     private val prefs get()=context.getSharedPreferences("p14-visual-synthetic",Context.MODE_PRIVATE)
     private val output:File get() {
         val root=InstrumentationRegistry.getArguments().getString("additionalTestOutputDir")
-        return File(root ?: context.getExternalFilesDir(null)!!.absolutePath,"p14-high-fidelity").apply {mkdirs()}
+        return File(context.getExternalFilesDir(null),"ci-additional/p14-high-fidelity").apply {check(mkdirs() || isDirectory) {"Screenshot output directory unavailable: $absolutePath"}}
     }
     private fun guard() {
         assertEquals("true",InstrumentationRegistry.getArguments().getString("p14SyntheticFixture"))
