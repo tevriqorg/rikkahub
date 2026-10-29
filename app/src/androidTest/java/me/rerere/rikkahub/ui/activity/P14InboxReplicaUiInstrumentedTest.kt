@@ -8,11 +8,11 @@ import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.test.captureToImage
 import androidx.compose.ui.test.onRoot
 import androidx.test.platform.app.InstrumentationRegistry
-import androidx.test.espresso.Espresso.pressBack
+import androidx.activity.ComponentActivity
 import java.io.File
 import me.rerere.rikkahub.data.remote.p14.P14ProductMessageEntity
 import androidx.compose.ui.test.assertIsDisplayed
-import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
@@ -29,7 +29,7 @@ import org.junit.runner.RunWith
 /** Synthetic, offline Inbox reproduction. Does not access user data, P14 Server or Hermes. */
 @RunWith(AndroidJUnit4::class)
 class P14InboxReplicaUiInstrumentedTest {
-    @get:Rule val compose=createComposeRule()
+    @get:Rule val compose=createAndroidComposeRule<ComponentActivity>()
     private val entry=P14InboxRow(
         entryId="synthetic-1",conversationId="conversation-synthetic-1",
         bodyText="北海道旅行计划\n预订札幌酒店",createdAtEpochMs=1_790_000_000_000L,
@@ -148,7 +148,7 @@ class P14InboxReplicaUiInstrumentedTest {
         compose.onNodeWithText("与 AI 讨论").assertIsDisplayed()
         screenshot("03-ai-conversation-light")
         compose.runOnIdle { assertTrue(!backedOut) }
-        pressBack()
+        compose.runOnUiThread { compose.activity.onBackPressedDispatcher.onBackPressed() }
         compose.onNodeWithTag("p14-entry-message-input").assertDoesNotExist()
         compose.onNodeWithTag("p14-entry-body").assertIsDisplayed()
         compose.onNodeWithTag("p14-entry-back").performClick()
@@ -210,7 +210,7 @@ class P14InboxReplicaUiInstrumentedTest {
         screenshot("05-classification-existing-views")
         compose.onNodeWithTag("p14-entry-view-todo").performClick()
         compose.runOnIdle { assertEquals("todo", chosen) }
-        pressBack()
+        compose.runOnUiThread { compose.activity.onBackPressedDispatcher.onBackPressed() }
         compose.onNodeWithTag("p14-entry-body").assertIsDisplayed()
     }
 
