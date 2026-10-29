@@ -143,6 +143,8 @@ import org.koin.compose.koinInject
 import kotlin.uuid.Uuid
 
 private const val TAG = "RouteActivity"
+internal const val P14_ACTION_CONNECTION_SETTINGS = "me.rerere.rikkahub.action.P14_CONNECTION_SETTINGS"
+
 private const val ACTION_TRANSLATE = "me.rerere.rikkahub.action.TRANSLATE"
 private const val ACTION_MEDIA_CREATION = "me.rerere.rikkahub.action.MEDIA_CREATION"
 
@@ -238,6 +240,7 @@ class RouteActivity : ComponentActivity() {
             return
         }
         val destination = when (intent.action) {
+            P14_ACTION_CONNECTION_SETTINGS -> Screen.SettingProvider
             ACTION_TRANSLATE -> Screen.Translator
             ACTION_MEDIA_CREATION -> {
                 openNewMediaCreation(backStack)

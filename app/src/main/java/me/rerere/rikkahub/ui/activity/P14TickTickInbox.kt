@@ -249,6 +249,7 @@ internal fun P14TickTickInboxScreen(
     hasMore: Boolean,
     onBack: () -> Unit,
     resumeQuickDraft: Boolean = false,
+    onSettings: () -> Unit = onBack,
 ) {
     val colors = inboxColors()
     val scope = rememberCoroutineScope()
@@ -279,7 +280,7 @@ internal fun P14TickTickInboxScreen(
                 )
                 NavigationDrawerItem(
                     label = { Text("连接与设置") }, selected = false,
-                    onClick = onBack,
+                    onClick = onSettings,
                     modifier = Modifier.padding(horizontal = 12.dp),
                 )
                 HorizontalDivider(Modifier.padding(vertical = 14.dp))

@@ -391,6 +391,11 @@ private fun P14EntryScreen(
                     inboxRows.size, inboxLimit, product.inboxHasOlderServerEntries(),
                 ),
                 onBack = onBack,
+                onSettings = {
+                    context.startActivity(Intent(context, me.rerere.rikkahub.RouteActivity::class.java)
+                        .setAction(me.rerere.rikkahub.P14_ACTION_CONNECTION_SETTINGS)
+                        .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP))
+                },
                 resumeQuickDraft = savedDraft.text.isNotBlank(),
             )
         } else {

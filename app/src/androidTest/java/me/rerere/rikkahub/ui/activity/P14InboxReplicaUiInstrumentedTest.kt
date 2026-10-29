@@ -60,6 +60,21 @@ class P14InboxReplicaUiInstrumentedTest {
             }
             compose.onNodeWithTag("p14-inbox-list").assertIsDisplayed()
             compose.onNodeWithTag("p14-inbox-add").assertIsDisplayed()
+            compose.onNodeWithText("☰").performClick()
+            compose.onNodeWithText("连接与设置").performClick()
+            compose.onNodeWithText(context.getString(me.rerere.rikkahub.R.string.setting_page_providers))
+                .assertIsDisplayed()
+            // A warm launcher intent must return from settings to records as well.
+            context.startActivity(android.content.Intent(context, me.rerere.rikkahub.RouteActivity::class.java)
+                .setAction(android.content.Intent.ACTION_MAIN)
+                .addCategory(android.content.Intent.CATEGORY_LAUNCHER)
+                .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK or
+                    android.content.Intent.FLAG_ACTIVITY_CLEAR_TOP or android.content.Intent.FLAG_ACTIVITY_SINGLE_TOP))
+            compose.waitUntil(timeoutMillis = 20_000L) {
+                compose.onAllNodes(androidx.compose.ui.test.hasTestTag("p14-inbox-add"))
+                    .fetchSemanticsNodes().isNotEmpty()
+            }
+            compose.onNodeWithTag("p14-inbox-add").assertIsDisplayed()
             androidx.test.espresso.Espresso.pressBackUnconditionally()
             val deadline = android.os.SystemClock.uptimeMillis() + 5_000L
             while (scenario.state != androidx.lifecycle.Lifecycle.State.DESTROYED &&
