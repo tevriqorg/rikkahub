@@ -446,7 +446,10 @@ internal fun P14TickTickEntryDetailScreen(
             TopAppBar(
                 colors = androidx.compose.material3.TopAppBarDefaults.topAppBarColors(containerColor = colors.background),
                 navigationIcon = {
-                    IconButton(onClick = { if (aiOpen) aiOpen = false else onBack() }) {
+                    IconButton(
+                        onClick = { if (aiOpen) aiOpen = false else onBack() },
+                        modifier = Modifier.testTag("p14-entry-back"),
+                    ) {
                         Text("‹", color = colors.ink, fontSize = 32.sp)
                     }
                 },
@@ -512,8 +515,12 @@ internal fun P14TickTickEntryDetailScreen(
                             Text(p14InboxTitle(source, conversationId), color = colors.ink,
                                 style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
                         }
-                        Text(
-                            if (aiOpen) source.take(220) else source.ifBlank { "正在恢复原始 Entry…" },
+                        // A one-line Entry is a title, not two identical paragraphs.
+                        val detailText = if (aiOpen) source else
+                            source.lineSequence().drop(1).joinToString("\n").trim()
+                        if (detailText.isNotBlank() || source.isBlank()) Text(
+                            if (aiOpen) detailText.take(220)
+                            else detailText.ifBlank { "正在恢复原始 Entry…" },
                             color = colors.ink, style = MaterialTheme.typography.bodyLarge,
                             lineHeight = 25.sp, maxLines = if (aiOpen) 5 else Int.MAX_VALUE,
                         )
