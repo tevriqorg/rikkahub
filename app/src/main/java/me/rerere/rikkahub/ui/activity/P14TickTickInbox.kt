@@ -442,11 +442,36 @@ internal fun P14TickTickEntryDetailScreen(
     onAdvanced: () -> Unit,
     attachments: List<P14ProductAttachmentEntity> = emptyList(),
     onOpenAttachment: (P14ProductAttachmentEntity) -> Unit = {},
+    availableViews: List<String> = emptyList(),
+    selectedViews: Set<String> = emptySet(),
+    onToggleView: (String) -> Unit = {},
 ) {
     val colors = inboxColors()
     // A saved Entry is useful on its own. Conversation is an explicit secondary choice.
     var aiOpen by rememberSaveable(conversationId) { mutableStateOf(false) }
-    BackHandler { if (aiOpen) aiOpen = false else onBack() }
+    var categoriesOpen by rememberSaveable(conversationId) { mutableStateOf(false) }
+    BackHandler { if (categoriesOpen) categoriesOpen = false else if (aiOpen) aiOpen = false else onBack() }
+    if (categoriesOpen) {
+        Scaffold(containerColor = colors.background, topBar = {
+            TopAppBar(title = { Text("标签与分类", color = colors.ink) },
+                navigationIcon = { TextButton(onClick = { categoriesOpen = false }) { Text("返回") } })
+        }) { padding ->
+            Column(Modifier.padding(padding).padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text("分类视图", color = colors.ink, style = MaterialTheme.typography.titleMedium)
+                Text("同一记录可以出现在多个视图中。", color = colors.muted)
+                availableViews.forEach { view ->
+                    FilterChip(selected = view in selectedViews, onClick = { onToggleView(view) },
+                        label = { Text(when(view) { "todo" -> "待办"; "idea" -> "想法"; "research" -> "研究"; "execute" -> "执行"; else -> view }) },
+                        modifier = Modifier.fillMaxWidth().testTag("p14-entry-view-$view"))
+                }
+                if (availableViews.isEmpty()) Text("当前配置没有可用分类视图", color = colors.muted)
+                HorizontalDivider()
+                Text("自定义标签、日历和提醒：待实现", color = colors.muted)
+                Text("仅展示当前协议支持的分类能力。", color = colors.muted)
+            }
+        }
+        return
+    }
     val source = entryBody.orEmpty()
     val visibleMessages = p14InboxConversationMessages(messages, source, createdAt ?: 0L)
     Scaffold(
@@ -549,6 +574,11 @@ internal fun P14TickTickEntryDetailScreen(
                             }
                         }
                     }
+                }
+            }
+            if (!aiOpen) item(key = "entry-organization") {
+                TextButton(onClick = { categoriesOpen = true }, modifier = Modifier.testTag("p14-entry-categories")) {
+                    Text("标签与分类")
                 }
             }
             if (!aiOpen) item(key = "detail-independent") {

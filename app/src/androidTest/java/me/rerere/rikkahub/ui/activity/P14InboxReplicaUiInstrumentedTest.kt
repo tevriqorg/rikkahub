@@ -149,4 +149,27 @@ class P14InboxReplicaUiInstrumentedTest {
         screenshot("04-inbox-dark")
     }
 
+    @Test fun classificationReusesExistingViewIdentity() {
+        var chosen: String? = null
+        compose.setContent {
+            RikkahubTheme {
+                P14TickTickEntryDetailScreen(
+                    entryBody="分类测试记录", createdAt=1_790_000_000_000L,
+                    conversationId="conversation-synthetic-1", messages=emptyList(),
+                    input="", onInputChange={}, onSend={}, sending=false, canChat=true,
+                    status=null, onBack={}, onAdvanced={},
+                    availableViews=listOf("todo", "idea"), selectedViews=setOf("idea"),
+                    onToggleView={chosen=it},
+                )
+            }
+        }
+        compose.onNodeWithTag("p14-entry-categories").performClick()
+        compose.onNodeWithText("自定义标签、日历和提醒：待实现").assertIsDisplayed()
+        screenshot("05-classification-existing-views")
+        compose.onNodeWithTag("p14-entry-view-todo").performClick()
+        compose.runOnIdle { assertEquals("todo", chosen) }
+        pressBack()
+        compose.onNodeWithTag("p14-entry-body").assertIsDisplayed()
+    }
+
 }

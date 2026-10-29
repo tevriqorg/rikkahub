@@ -392,6 +392,15 @@ private fun P14EntryScreen(
                 createdAt = entry?.createdAtEpochMs,
                 conversationId = conversationId!!,
                 messages = messages,
+                availableViews = listOf("todo", "idea", "research", "execute").filter { it in manifest.enabledViews },
+                selectedViews = viewMemberships.filter { it.enabled }.map { it.viewName }.toSet(),
+                onToggleView = { view -> entry?.let { current -> scope.launch {
+                    status = runCatching {
+                        product.assignEntryView(current.entryId, view, !viewMemberships.any { it.viewName == view && it.enabled })
+                        P14RemoteWork.enqueue(context)
+                        "分类已保存"
+                    }.getOrElse { it.message ?: "分类保存失败" }
+                } } },
                 attachments = attachments,
                 onOpenAttachment = { attachment -> scope.launch {
                     status = runCatching {
