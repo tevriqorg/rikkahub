@@ -186,8 +186,8 @@ internal class P14ProductRepository(
         val connection=credentialStore.activeConnection() ?: error("请连接服务端后处理冲突")
         val snapshot=verifiedSource(conversationId)
         val conversation=requireNotNull(dao.conversation(conversationId))
-        val edits=snapshot?.let {dao.messageEdits(it.messageId)}.orEmpty().filter {it.state=="CONFLICT"}
-        if(edits.isNotEmpty()&&snapshot!=null) {
+        val edits=snapshot?.let {dao.messageEdits(it.messageId)}.orEmpty()
+        if(edits.any {it.state=="CONFLICT"}&&snapshot!=null) {
             val state=json.parseToJsonElement(get(connection,"${connection.baseUrl}/conversations/$conversationId/messages/${snapshot.messageId}")).jsonObject
             check(state["deleted"]?.jsonPrimitive?.booleanOrNull!=true) {"云端来源已删除；本机修订仍然保留"}
             val base=state["revision"]?.jsonPrimitive?.intOrNull ?: error("服务端未返回修订号")
@@ -204,8 +204,8 @@ internal class P14ProductRepository(
                 } else dao.upsertMessage(current.copy(bodyText=remoteText,revision=base,deliveryState="SYNCED"))
             }}
         }
-        val states=dao.pendingStateConflicts(conversationId)
-        if(states.isNotEmpty()) {
+        val states=dao.pendingStateMutations(conversationId)
+        if(states.any {it.state=="CONFLICT"}) {
             val state=json.parseToJsonElement(get(connection,"${connection.baseUrl}/conversations/$conversationId/state")).jsonObject
             val base=state["revision"]?.jsonPrimitive?.intOrNull ?: error("服务端未返回状态版本")
             editLock.withLock {database.withTransaction {

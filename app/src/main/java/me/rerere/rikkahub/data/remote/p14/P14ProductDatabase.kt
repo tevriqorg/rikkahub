@@ -231,6 +231,7 @@ interface P14ProductDao {
     @Query("SELECT * FROM p14_chat_outbox WHERE message_id=:messageId AND operation_type='EDIT_SOURCE_MESSAGE' AND state NOT IN ('ACKED','SUPERSEDED') ORDER BY created_at_epoch_ms ASC,rowid ASC") suspend fun messageEdits(messageId:String):List<P14ChatOutboxEntity>
     @Query("SELECT * FROM p14_chat_outbox WHERE conversation_id=:conversationId AND state='CONFLICT' ORDER BY created_at_epoch_ms DESC") fun observeConflicts(conversationId:String):Flow<List<P14ChatOutboxEntity>>
     @Query("SELECT * FROM p14_chat_outbox WHERE conversation_id=:conversationId AND operation_type='SET_CONVERSATION_STATE' AND state='CONFLICT' ORDER BY created_at_epoch_ms ASC,rowid ASC") suspend fun pendingStateConflicts(conversationId:String):List<P14ChatOutboxEntity>
+    @Query("SELECT * FROM p14_chat_outbox WHERE conversation_id=:conversationId AND operation_type='SET_CONVERSATION_STATE' AND state NOT IN ('ACKED','SUPERSEDED') ORDER BY created_at_epoch_ms ASC,rowid ASC") suspend fun pendingStateMutations(conversationId:String):List<P14ChatOutboxEntity>
     @Query("UPDATE p14_chat_outbox SET state=:state,last_error_class=:error WHERE client_operation_id=:id") suspend fun setMutationState(id:String,state:String,error:String?=null)
 
     @Query("SELECT * FROM (SELECT * FROM p14_messages WHERE conversation_id=:conversationId ORDER BY created_at_epoch_ms DESC, message_id DESC LIMIT :limit) ORDER BY created_at_epoch_ms ASC, message_id ASC") fun observeMessagesPaged(conversationId:String,limit:Int):Flow<List<P14ProductMessageEntity>>

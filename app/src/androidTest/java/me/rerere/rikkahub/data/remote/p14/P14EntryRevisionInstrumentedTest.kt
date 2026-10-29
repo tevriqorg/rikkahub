@@ -158,12 +158,15 @@ class P14EntryRevisionInstrumentedTest {
     private suspend fun conflict(keepLocal:Boolean)=fixture { c,db,_ ->
         val calls=mutableListOf<Call>()
         val repository=P14ProductRepository(c,network(c,calls){if(it["base_revision"]!!.jsonPrimitive.int==1)409 else 200},db)
-        val (_,a)=capture(repository);repository.acceptEntryRevision(a.conversationId,"本机修订",1)
+        val (_,a)=capture(repository);repository.acceptEntryRevision(a.conversationId,"较早本机修订",1)
+        repository.acceptEntryRevision(a.conversationId,"本机修订",2)
         repository.syncAndFlushActive()
         assertEquals("本机修订",repository.message(a.messageId)!!.bodyText)
         assertEquals(1,repository.editConflicts(a.conversationId).first().size)
+        assertEquals(listOf("CONFLICT","PENDING"),db.dao().messageEdits(a.messageId).map {it.state})
         repository.resolveConflicts(a.conversationId,keepLocal)
         assertTrue(repository.editConflicts(a.conversationId).first().isEmpty())
+        assertEquals(if(keepLocal)1 else 0,db.dao().messageEdits(a.messageId).size)
         if(keepLocal) {
             assertEquals("本机修订",repository.message(a.messageId)!!.bodyText)
             assertEquals(4,repository.message(a.messageId)!!.revision)
