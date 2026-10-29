@@ -890,9 +890,20 @@ internal class P14ProductRepository(
     }
 
     private suspend fun flush(connection: P14RuntimeConnection, manifest: P14EffectiveManifest) {
+        // Later revisions and turns must not overtake an unaccepted capture/revision.
+        // Independent conversations can continue syncing when one is blocked.
+        val blockedConversations=mutableSetOf<String>()
         for (operation in dao.pendingOutbox()) {
+            if(operation.conversationId in blockedConversations) continue
+            if(dao.observeConflicts(operation.conversationId).first().isNotEmpty()) {
+                blockedConversations+=operation.conversationId
+                continue
+            }
             val attachments = dao.attachmentsForMessage(operation.messageId)
-            if (attachments.any { it.state != "SYNCED" || it.remoteAttachmentId == null }) continue
+            if (attachments.any { it.state != "SYNCED" || it.remoteAttachmentId == null }) {
+                blockedConversations+=operation.conversationId
+                continue
+            }
             dao.markOutboxInFlight(operation.clientOperationId)
             try {
                 val payload = json.parseToJsonElement(operation.payloadJson).jsonObject
@@ -933,6 +944,7 @@ internal class P14ProductRepository(
                 post(connection, path, body.toString())
                 dao.markOutboxAcked(operation.clientOperationId, System.currentTimeMillis())
             } catch (error: P14RemoteHttpException) {
+                blockedConversations+=operation.conversationId
                 if (error.status == 409) {
                     if(operation.operationType in setOf("EDIT_SOURCE_MESSAGE","SET_CONVERSATION_STATE")) {
                         dao.setMutationState(operation.clientOperationId,"CONFLICT","REVISION_CONFLICT")
@@ -943,6 +955,7 @@ internal class P14ProductRepository(
                 val stillPending = dao.pendingOutbox().any { it.clientOperationId == operation.clientOperationId }
                 if (stillPending) dao.markOutboxRetry(operation.clientOperationId, "HTTP_${error.status}")
             } catch (error: Throwable) {
+                blockedConversations+=operation.conversationId
                 dao.markOutboxRetry(operation.clientOperationId, error.javaClass.simpleName.take(80))
             }
         }

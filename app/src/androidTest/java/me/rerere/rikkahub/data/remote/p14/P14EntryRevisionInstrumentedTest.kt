@@ -142,11 +142,17 @@ class P14EntryRevisionInstrumentedTest {
         val calls=mutableListOf<Call>();var attempts=0
         val repository=P14ProductRepository(c,network(c,calls){attempts++;if(attempts==1)503 else 200},db)
         val (_,a)=capture(repository);val edit=repository.acceptEntryRevision(a.conversationId,"离线修订",1)
-        repository.syncAndFlushActive();assertEquals("RETRY",db.dao().messageEdits(a.messageId).single().state)
+        val later=repository.acceptEntryRevision(a.conversationId,"第二次离线修订",2)
+        repository.syncAndFlushActive()
+        assertEquals(listOf("RETRY","PENDING"),db.dao().messageEdits(a.messageId).map {it.state})
+        assertEquals(1,calls.count {it.path.endsWith("/edit")})
         repository.syncAndFlushActive();assertTrue(db.dao().pendingOutbox().isEmpty())
-        assertEquals(listOf("/v1/entries/capture","/v1/conversations/${a.conversationId}/messages/${a.messageId}/edit","/v1/conversations/${a.conversationId}/messages/${a.messageId}/edit"),calls.map {it.path})
+        assertEquals(listOf("/v1/entries/capture")+List(3){"/v1/conversations/${a.conversationId}/messages/${a.messageId}/edit"},calls.map {it.path})
         val edits=calls.filter {it.path.endsWith("/edit")};assertEquals(edits[0].payload,edits[1].payload)
         assertEquals(edit.clientOperationId,edits[0].payload["client_operation_id"]!!.jsonPrimitive.content)
+        assertEquals(later.clientOperationId,edits[2].payload["client_operation_id"]!!.jsonPrimitive.content)
+        assertEquals(listOf(1,1,2),edits.map {it.payload["base_revision"]!!.jsonPrimitive.int})
+        assertEquals("第二次离线修订",repository.message(a.messageId)!!.bodyText)
         assertEquals("原始标题\n原始内容",repository.entry(a.entryId)!!.bodyText)
     }}
     private suspend fun conflict(keepLocal:Boolean)=fixture { c,db,_ ->
