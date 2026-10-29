@@ -73,12 +73,17 @@ class P14InboxReplicaUiInstrumentedTest {
                 )
             }
         }
-        compose.onNodeWithText("一条独立保存的旅行观察").assertIsDisplayed()
+        compose.onNodeWithTag("p14-entry-body").assertIsDisplayed()
         compose.onNodeWithTag("p14-entry-message-input").assertDoesNotExist()
         compose.onNodeWithTag("p14-inbox-open-ai").performClick()
         compose.onNodeWithTag("p14-entry-message-input").assertIsDisplayed()
         compose.onNodeWithText("与 AI 讨论").assertIsDisplayed()
         compose.runOnIdle { assertTrue(!backedOut) }
+        compose.onNodeWithTag("p14-entry-back").performClick()
+        compose.onNodeWithTag("p14-entry-message-input").assertDoesNotExist()
+        compose.onNodeWithText("条目详情").assertIsDisplayed()
+        compose.onNodeWithTag("p14-entry-back").performClick()
+        compose.runOnIdle { assertTrue(backedOut) }
     }
 
     @Test fun archivedChipUsesRealArchiveStateNotFakeTaskCompletion() {
