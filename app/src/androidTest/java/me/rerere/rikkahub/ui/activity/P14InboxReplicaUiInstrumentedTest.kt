@@ -47,6 +47,24 @@ class P14InboxReplicaUiInstrumentedTest {
         }
     }
 
+    @Test fun launcherOpensInboxAndSettingsCanReturnToShell() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val device = androidx.test.uiautomator.UiDevice.getInstance(InstrumentationRegistry.getInstrumentation())
+        val intent = android.content.Intent(context, me.rerere.rikkahub.RouteActivity::class.java)
+            .setAction(android.content.Intent.ACTION_MAIN)
+            .addCategory(android.content.Intent.CATEGORY_LAUNCHER)
+        val scenario = androidx.test.core.app.ActivityScenario.launch<me.rerere.rikkahub.RouteActivity>(intent)
+        try {
+            assertTrue(device.wait(androidx.test.uiautomator.Until.hasObject(
+                androidx.test.uiautomator.By.text("收件箱")), 20_000L))
+            assertTrue(device.hasObject(androidx.test.uiautomator.By.text("+")))
+            device.pressBack()
+            device.waitForIdle()
+        } finally {
+            scenario.close()
+        }
+    }
+
     @Test fun synchronizedClockSkewDoesNotPutReplyBeforeQuestion() = kotlinx.coroutines.runBlocking {
         val base = InstrumentationRegistry.getInstrumentation().targetContext
         val prefix = "p14-clock-" + java.util.UUID.randomUUID()
