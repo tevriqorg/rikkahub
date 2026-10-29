@@ -316,10 +316,9 @@ private fun P14EntryScreen(
                                     val settings = settingsStore.awaitLoaded()
                                     val model = settings.providers.flatMap { it.models }
                                         .firstOrNull { it.modelId == "p14-hermes" }
-                                        ?: error("请先配置 p14-hermes")
-                                    val assistant = settings.assistants.firstOrNull {
-                                        settings.findModelById(it.chatModelId ?: settings.chatModelId)?.id == model.id
-                                    } ?: error("请先选择 P14 Assistant")
+                                    val assistant = model?.let { target -> settings.assistants.firstOrNull {
+                                        settings.findModelById(it.chatModelId ?: settings.chatModelId)?.id == target.id
+                                    } }
                                     val draft = savedDraft
                                     val localId = kotlin.uuid.Uuid.parse(draft.draftId)
                                     val message = UIMessage(
@@ -331,7 +330,7 @@ private fun P14EntryScreen(
                                     // before clearing the draft or acknowledging the UI.
                                     product.acceptRikkaMessage(
                                         localId.toString(), localId.toString(), message,
-                                        assistant.id.toString(), model.id.toString(), deferAi = true,
+                                        assistant?.id?.toString(), model?.id?.toString(), deferAi = true,
                                     )
                                     withContext(Dispatchers.IO) { draftStore.clearAfterAccept() }
                                     savedDraft = P14CaptureDraft()
@@ -554,10 +553,9 @@ private fun P14EntryScreen(
                                         status=runCatching {
                                             val settings=settingsStore.awaitLoaded()
                                             val model=settings.providers.flatMap{it.models}.firstOrNull{it.modelId=="p14-hermes"}
-                                                ?: error("Set up p14-hermes first")
-                                            val assistant=settings.assistants.firstOrNull{
-                                                settings.findModelById(it.chatModelId ?: settings.chatModelId)?.id==model.id
-                                            } ?: error("Select a P14 assistant before Capture")
+                                            val assistant=model?.let { target -> settings.assistants.firstOrNull{
+                                                settings.findModelById(it.chatModelId ?: settings.chatModelId)?.id==target.id
+                                            } }
                                             val parts=buildList<UIMessagePart> {
                                                 if(!initialSharedText.isNullOrBlank() || initialSharedFile!=null) {
                                                     check(profileStore.captureEnabled("share")) { "Profile disabled Share Capture" }
@@ -602,7 +600,7 @@ private fun P14EntryScreen(
                                             // happens after Room commit but before draft-clear/UI navigation.
                                             val localId=kotlin.uuid.Uuid.parse(savedDraft.draftId)
                                             val userMessage=UIMessage(id=kotlin.uuid.Uuid.parse(savedDraft.messageId),role=MessageRole.USER,parts=parts)
-                                            val result=product.acceptRikkaMessage(localId.toString(),localId.toString(),userMessage,assistant.id.toString(),model.id.toString(),deferAi=true)
+                                            val result=product.acceptRikkaMessage(localId.toString(),localId.toString(),userMessage,assistant?.id?.toString(),model?.id?.toString(),deferAi=true)
                                             runCatching { withContext(Dispatchers.IO) { draftStore.clearAfterAccept() } }
                                             savedDraft=P14CaptureDraft()
                                             conversationId=result.conversationId

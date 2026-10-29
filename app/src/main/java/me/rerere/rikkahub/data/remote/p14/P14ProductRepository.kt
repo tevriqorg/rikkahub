@@ -173,8 +173,8 @@ internal class P14ProductRepository(
         externalSessionId: String,
         localConversationId: String,
         message: UIMessage,
-        assistantId: String,
-        modelId: String,
+        assistantId: String?,
+        modelId: String?,
         deferAi: Boolean = false,
     ): P14AcceptedMutation = withContext(Dispatchers.IO) {
         require(message.role == MessageRole.USER) { "P14 local acceptance only accepts user messages" }
