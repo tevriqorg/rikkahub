@@ -13,6 +13,11 @@ import me.rerere.ai.core.MessageRole
 import me.rerere.ai.ui.UIMessage
 import me.rerere.ai.ui.UIMessagePart
 import okhttp3.OkHttpClient
+import okhttp3.Protocol
+import okhttp3.Response
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.ResponseBody.Companion.toResponseBody
+import okio.Buffer
 import org.junit.Assert.*
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -46,6 +51,9 @@ class P14EntryRevisionInstrumentedTest {
         assertEquals(3,repo.message(a.messageId)!!.revision)
         val queued=db.dao().pendingOutbox();assertEquals(3,queued.size)
         assertEquals(3,queued.map { it.clientOperationId }.toSet().size)
+        repo.acceptEntryRevision(a.conversationId,"修订标题\n第二版正文",1)
+        assertEquals(3,db.dao().pendingOutbox().size) // recovery after commit/before draft-clear is idempotent
+
         assertTrue(queued.all { it.conversationId==a.conversationId && it.entryId==a.entryId })
         assertTrue(queued.first().payloadJson.contains("原始内容"))
         assertEquals("修订标题\n第二版正文",repo.inboxRows().first().single().bodyText)
@@ -98,4 +106,80 @@ class P14EntryRevisionInstrumentedTest {
         assertEquals("原始标题\n原始内容",repo.entry(a.entryId)!!.bodyText)
         assertEquals(1,repo.message(a.messageId)!!.revision)
     } }
+    @Test fun pinAndArchiveUseDurableOrganizationNotTaskCompletion()=runBlocking { fixture { _,db,repo ->
+        val (_,a)=capture(repo);repo.acceptOrganization(a.conversationId,pinned=true,archived=true)
+        assertTrue(repo.conversation(a.conversationId)!!.pinned);assertTrue(repo.conversation(a.conversationId)!!.archived)
+        val operation=db.dao().pendingOutbox().last();assertEquals("SET_CONVERSATION_STATE",operation.operationType)
+        assertFalse(operation.payloadJson.contains("completed"))
+        repo.acceptOrganization(a.conversationId,archived=false)
+        assertEquals(2,repo.conversation(a.conversationId)!!.stateRevision)
+        assertEquals(1,repo.inboxRows().first().size);assertTrue(repo.inboxRows(true).first().isEmpty())
+        assertEquals("原始标题\n原始内容",repo.entry(a.entryId)!!.bodyText)
+    } }
+    private data class Call(val path:String,val payload:JsonObject)
+    private fun network(c:Scoped,calls:MutableList<Call>,edit:(JsonObject)->Int):OkHttpClient {
+        P14RuntimeCredentialStore(c).apply {save("synthetic-provider","http://127.0.0.1:1/v1","synthetic-device-token-only");markActive("synthetic-provider","http://127.0.0.1:1/v1")}
+        return OkHttpClient.Builder().addInterceptor { chain ->
+            val request=chain.request();check(request.url.host=="127.0.0.1")
+            var status=200
+            val path=request.url.encodedPath
+            val response=if(request.method=="POST") {
+                val buffer=Buffer();request.body!!.writeTo(buffer);val payload=Json.parseToJsonElement(buffer.readUtf8()).jsonObject
+                calls.add(Call(path,payload));if(path.endsWith("/edit"))status=edit(payload)
+                else check(path=="/v1/entries/capture") {"Unexpected mutation route: $path"}
+                "{}"
+            } else when {
+                path.endsWith("/remote-manifest")->"""{"schema_version":"p14.remote-manifest/v1","manifest_version":1,"minimum_client_protocol":1,"maximum_client_protocol":1,"compatibility":"COMPATIBLE","enabled_views":["chat","inbox","todo","idea"],"message_capabilities":["text","reply","edit"]}"""
+                path.endsWith("/sync/events")->"""{"events":[],"next_after":0,"watermark":0,"has_more":false}"""
+                path.endsWith("/bootstrap/entries")->"""{"items":[],"watermark":0,"has_more":false}"""
+                "/messages/" in path->"""{"revision":3,"body_text":"其他设备的修订","deleted":false}"""
+                else->error("Unexpected synthetic GET: $path")
+            }
+            Response.Builder().request(request).protocol(Protocol.HTTP_1_1).code(status).message("synthetic").body(response.toResponseBody("application/json".toMediaType())).build()
+        }.build()
+    }
+    @Test fun retryUsesSameEditIdentityAndNeverPostsAnAiTurn()=runBlocking {fixture { c,db,_ ->
+        val calls=mutableListOf<Call>();var attempts=0
+        val repository=P14ProductRepository(c,network(c,calls){attempts++;if(attempts==1)503 else 200},db)
+        val (_,a)=capture(repository);val edit=repository.acceptEntryRevision(a.conversationId,"离线修订",1)
+        repository.syncAndFlushActive();assertEquals("RETRY",db.dao().messageEdits(a.messageId).single().state)
+        repository.syncAndFlushActive();assertTrue(db.dao().pendingOutbox().isEmpty())
+        assertEquals(listOf("/v1/entries/capture","/v1/conversations/${a.conversationId}/messages/${a.messageId}/edit","/v1/conversations/${a.conversationId}/messages/${a.messageId}/edit"),calls.map {it.path})
+        val edits=calls.filter {it.path.endsWith("/edit")};assertEquals(edits[0].payload,edits[1].payload)
+        assertEquals(edit.clientOperationId,edits[0].payload["client_operation_id"]!!.jsonPrimitive.content)
+        assertEquals("原始标题\n原始内容",repository.entry(a.entryId)!!.bodyText)
+    }}
+    private suspend fun conflict(keepLocal:Boolean)=fixture { c,db,_ ->
+        val calls=mutableListOf<Call>()
+        val repository=P14ProductRepository(c,network(c,calls){if(it["base_revision"]!!.jsonPrimitive.int==1)409 else 200},db)
+        val (_,a)=capture(repository);repository.acceptEntryRevision(a.conversationId,"本机修订",1)
+        repository.syncAndFlushActive()
+        assertEquals("本机修订",repository.message(a.messageId)!!.bodyText)
+        assertEquals(1,repository.editConflicts(a.conversationId).first().size)
+        repository.resolveConflicts(a.conversationId,keepLocal)
+        assertTrue(repository.editConflicts(a.conversationId).first().isEmpty())
+        if(keepLocal) {
+            assertEquals("本机修订",repository.message(a.messageId)!!.bodyText)
+            assertEquals(4,repository.message(a.messageId)!!.revision)
+            repository.syncAndFlushActive();assertEquals(3,calls.last().payload["base_revision"]!!.jsonPrimitive.int)
+        } else {assertEquals("其他设备的修订",repository.message(a.messageId)!!.bodyText);assertEquals("SYNCED",repository.message(a.messageId)!!.deliveryState)}
+        assertEquals("原始标题\n原始内容",repository.entry(a.entryId)!!.bodyText)
+    }
+    @Test fun conflictPreservesLocalAndExplicitRebaseUsesRemoteRevision()=runBlocking {conflict(true)}
+    @Test fun adoptingRemoteVersionIsExplicitAndOriginalRemains()=runBlocking {conflict(false)}
+
+    @Test fun searchFiltersWholeCacheBeforePagingAndRetainsIdentities()=runBlocking {fixture { _,db,repo ->
+        for(i in 0 until 250) {
+            db.dao().upsertEntry(P14EntryEntity("entry-$i","记录 $i\n目标关键词 $i",1000L+i))
+            db.dao().upsertConversation(P14ProductConversationEntity("conversation-$i","entry-$i","external-$i",null,1000L+i,pinned=i==3))
+        }
+        db.dao().upsertEntryView(P14EntryViewEntity("entry-200","research",true))
+        assertEquals(60,repo.inboxRows().first().size)
+        val found=repo.inboxRows(query="目标关键词 200",view="research").first().single()
+        assertEquals("entry-200",found.entryId);assertEquals("conversation-200",found.conversationId)
+        assertEquals("research",found.views)
+        val ids=mutableListOf<String>();for(offset in 0 until 250 step 20)ids+=repo.directoryPage(offset,20).map {it.entryId}
+        assertEquals(250,ids.size);assertEquals(250,ids.toSet().size)
+    }}
+
 }

@@ -180,6 +180,48 @@ internal class P14ProductRepository(
         }
     }
 
+    /** Explicit user resolution, never silent last-writer-wins. Original Capture remains unchanged. */
+    suspend fun resolveConflicts(conversationId:String,keepLocal:Boolean) = withContext(Dispatchers.IO) {
+        val connection=credentialStore.activeConnection() ?: error("请连接服务端后处理冲突")
+        val snapshot=verifiedSource(conversationId)
+        val conversation=requireNotNull(dao.conversation(conversationId))
+        val edits=snapshot?.let {dao.messageEdits(it.messageId)}.orEmpty().filter {it.state=="CONFLICT"}
+        if(edits.isNotEmpty()&&snapshot!=null) {
+            val state=json.parseToJsonElement(get(connection,"${connection.baseUrl}/conversations/$conversationId/messages/${snapshot.messageId}")).jsonObject
+            check(state["deleted"]?.jsonPrimitive?.booleanOrNull!=true) {"云端来源已删除；本机修订仍然保留"}
+            val base=state["revision"]?.jsonPrimitive?.intOrNull ?: error("服务端未返回修订号")
+            val remoteText=state.stringOrEmpty("body_text")
+            editLock.withLock {database.withTransaction {
+                val current=requireNotNull(dao.message(snapshot.messageId))
+                check(current.bodyText==snapshot.bodyText&&current.revision==snapshot.revision) {"本机内容已变化，请重新处理冲突"}
+                edits.forEach {dao.setMutationState(it.clientOperationId,"SUPERSEDED")}
+                if(keepLocal) {
+                    val id=UUID.randomUUID().toString()
+                    dao.upsertMessage(current.copy(revision=base+1,deliveryState="EDIT_PENDING"))
+                    dao.insertOutbox(P14ChatOutboxEntity(id,"EDIT_SOURCE_MESSAGE",current.messageId,conversationId,conversation.entryId,conversation.externalSessionId,
+                        buildJsonObject {put("base_revision",base);put("text",current.bodyText)}.toString(),createdAtEpochMs=System.currentTimeMillis()))
+                } else dao.upsertMessage(current.copy(bodyText=remoteText,revision=base,deliveryState="SYNCED"))
+            }}
+        }
+        val states=dao.pendingStateConflicts(conversationId)
+        if(states.isNotEmpty()) {
+            val state=json.parseToJsonElement(get(connection,"${connection.baseUrl}/conversations/$conversationId/state")).jsonObject
+            val base=state["revision"]?.jsonPrimitive?.intOrNull ?: error("服务端未返回状态版本")
+            editLock.withLock {database.withTransaction {
+                val current=requireNotNull(dao.conversation(conversationId))
+                check(current.stateRevision==conversation.stateRevision) {"本机整理状态已变化，请重试"}
+                states.forEach {dao.setMutationState(it.clientOperationId,"SUPERSEDED")}
+                if(keepLocal) {
+                    val id=UUID.randomUUID().toString()
+                    dao.upsertConversation(current.copy(stateRevision=base+1))
+                    dao.insertOutbox(P14ChatOutboxEntity(id,"SET_CONVERSATION_STATE","state:$conversationId",conversationId,current.entryId,current.externalSessionId,
+                        buildJsonObject {put("base_revision",base);put("pinned",current.pinned);put("archived",current.archived)}.toString(),createdAtEpochMs=System.currentTimeMillis()))
+                } else dao.upsertConversation(current.copy(pinned=state["pinned"]?.jsonPrimitive?.booleanOrNull ?: current.pinned,
+                    archived=state["archived"]?.jsonPrimitive?.booleanOrNull ?: current.archived,stateRevision=base))
+            }}
+        }
+    }
+
     /** A first-page Room projection alone does not prove server history is exhausted. */
     fun inboxHasOlderServerEntries():Boolean = bootstrapPrefs.getBoolean("more",false)
     suspend fun directoryPage(offset:Int,limit:Int=20,view:String="chat"):List<P14EntryDirectoryItem> = withContext(Dispatchers.IO) {

@@ -14,6 +14,7 @@ import me.rerere.rikkahub.data.remote.p14.P14ProductMessageEntity
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTextInput
@@ -43,7 +44,7 @@ class P14InboxLauncherInstrumentedTest {
             }
             compose.onNodeWithTag("p14-inbox-list").assertIsDisplayed()
             compose.onNodeWithTag("p14-inbox-add").assertIsDisplayed()
-            compose.onNodeWithText("☰").performClick()
+            compose.onNodeWithContentDescription("打开侧边栏").performClick()
             compose.onNodeWithText("连接与设置").performClick()
             compose.onNodeWithText(context.getString(me.rerere.rikkahub.R.string.setting_page_providers))
                 .assertIsDisplayed()

@@ -101,7 +101,7 @@ class P14InboxReplicaUiInstrumentedTest {
             }
         }
         compose.onNodeWithTag("p14-inbox-list").assertIsDisplayed()
-        compose.onNodeWithText("归档").assertIsDisplayed()
+        compose.onNodeWithText("已完成").assertDoesNotExist()
         compose.onNodeWithText("北海道旅行计划").assertIsDisplayed()
         screenshot("01-inbox-light")
         compose.onNodeWithText("北海道旅行计划").performClick()
@@ -150,7 +150,7 @@ class P14InboxReplicaUiInstrumentedTest {
         compose.runOnIdle { assertTrue(!backedOut) }
         pressBack()
         compose.onNodeWithTag("p14-entry-message-input").assertDoesNotExist()
-        compose.onNodeWithText("条目详情").assertIsDisplayed()
+        compose.onNodeWithTag("p14-entry-body").assertIsDisplayed()
         compose.onNodeWithTag("p14-entry-back").performClick()
         compose.runOnIdle { assertTrue(backedOut) }
     }

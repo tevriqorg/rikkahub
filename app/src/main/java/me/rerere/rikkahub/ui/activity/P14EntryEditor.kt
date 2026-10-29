@@ -32,14 +32,14 @@ import me.rerere.rikkahub.data.remote.p14.*
 /** Full-screen in-place title/body editor. Only Back/Done accepts a revision into the durable Outbox. */
 @Composable internal fun P14EntryEditor(
     initial:P14EntryEditDraft,store:P14EntryEditDraftStore,status:String?,attachments:List<P14ProductAttachmentEntity>,onAttachment:(P14ProductAttachmentEntity)->Unit,
-    availableViews:List<String>,selectedViews:Set<String>,onToggleView:(String)->Unit,onSave:(P14EntryEditDraft,()->Unit)->Unit,onDiscard:()->Unit,
+    availableViews:List<String>,selectedViews:Set<String>,onToggleView:(String)->Unit,onSave:(P14EntryEditDraft,(Boolean)->Unit)->Unit,onDiscard:()->Unit,currentRevision:Int=initial.baseRevision,currentBody:String?=null,
 ) {
     val c=p14Palette();val keyboard=LocalSoftwareKeyboardController.current
     var draft by remember(initial.entryId) {mutableStateOf(store.read(initial.entryId) ?: initial)}
     var title by rememberSaveable(stateSaver=TextFieldValue.Saver){mutableStateOf(TextFieldValue(draft.snapshot.title,TextRange(draft.snapshot.titleStart.coerceIn(0,draft.snapshot.title.length),draft.snapshot.titleEnd.coerceIn(0,draft.snapshot.title.length))))}
     var body by rememberSaveable(stateSaver=TextFieldValue.Saver){mutableStateOf(TextFieldValue(draft.snapshot.body,TextRange(draft.snapshot.bodyStart.coerceIn(0,draft.snapshot.body.length),draft.snapshot.bodyEnd.coerceIn(0,draft.snapshot.body.length))))}
     val titleFocus=remember {FocusRequester()};val bodyFocus=remember {FocusRequester()};val scroll=rememberScrollState(draft.scrollOffset)
-    var submitting by remember {mutableStateOf(false)};var error by remember {mutableStateOf<String?>(null)};var menu by remember {mutableStateOf(false)};var viewMenu by remember {mutableStateOf(false)};var attachmentMenu by remember {mutableStateOf(false)};var formatMenu by remember {mutableStateOf(false)};var lastUndoAt by remember {mutableLongStateOf(0L)}
+    var submitting by remember {mutableStateOf(false)};var error by remember {mutableStateOf<String?>(null)};var menu by remember {mutableStateOf(false)};var viewMenu by remember {mutableStateOf(false)};var attachmentMenu by remember {mutableStateOf(false)};var formatMenu by remember {mutableStateOf(false)};var lastUndoAt by remember {mutableLongStateOf(0L)};var compare by remember {mutableStateOf(false)}
     fun persist(next:P14EntryEditDraft) {runCatching {store.save(next)}.onSuccess {draft=next;error=null}.onFailure {error="草稿写入失败，请暂勿关闭"}}
     fun snapshot(focus:String=draft.snapshot.focused)=P14EditorSnapshot(title.text,body.text,title.selection.start,title.selection.end,body.selection.start,body.selection.end,focus)
     fun changed(nextTitle:TextFieldValue=title,nextBody:TextFieldValue=body,focus:String=draft.snapshot.focused) {
@@ -70,9 +70,14 @@ import me.rerere.rikkahub.data.remote.p14.*
         if(submitting)return
         if(title.text==initial.snapshot.title&&body.text==initial.snapshot.body&&draft.baseRevision==initial.baseRevision&&draft.undo.isEmpty()){store.clear(initial.entryId);keyboard?.hide();onDiscard();return}
         if(draft.text.isBlank()){error="记录内容不能为空，草稿仍会保留";return}
+        if(draft.baseRevision!=currentRevision&&draft.text!=currentBody){compare=true;return}
         submitting=true;store.save(draft.copy(snapshot=snapshot(),scrollOffset=scroll.value))
-        onSave(draft.copy(snapshot=snapshot(),scrollOffset=scroll.value)){submitting=false;keyboard?.hide()}
+        onSave(draft.copy(snapshot=snapshot(),scrollOffset=scroll.value)){accepted->submitting=false;if(accepted)keyboard?.hide() else error="修改未提交，编辑草稿已保留"}
     }
+    if(compare)AlertDialog(onDismissRequest={compare=false},title={Text("记录已有更新")},text={Column(Modifier.heightIn(max=320.dp).verticalScroll(rememberScrollState())) {
+        Text("本机草稿",fontWeight=FontWeight.SemiBold);Text(draft.text,fontSize=13.sp);Spacer(Modifier.height(16.dp))
+        Text("当前修订 v$currentRevision",fontWeight=FontWeight.SemiBold);Text(currentBody.orEmpty(),fontSize=13.sp)
+    }},confirmButton={TextButton(onClick={compare=false;persist(draft.copy(baseRevision=currentRevision));finish()}){Text("保留本机并产生新修订")}},dismissButton={TextButton(onClick={compare=false;store.clear(initial.entryId);keyboard?.hide();onDiscard()}){Text("采用当前修订")}})
     BackHandler {finish()}
     LaunchedEffect(Unit){withFrameNanos {};if(draft.snapshot.focused=="title")titleFocus.requestFocus() else bodyFocus.requestFocus();delay(100);keyboard?.show()}
     LaunchedEffect(scroll){snapshotFlow {scroll.value}.collect {offset->if(offset!=draft.scrollOffset)persist(draft.copy(scrollOffset=offset))}}

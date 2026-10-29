@@ -391,6 +391,14 @@ private fun P14EntryScreen(
     // A single low-friction inbox is the new home; the existing Entry detail, Hermes
     // continuation, mixed-material Capture and diagnostics remain reachable and unchanged.
     if (!legacyWorkbench && !profileOpen && !captureOpen) {
+        if(conversationId!=null&&(productConversation==null||entry==null)) {
+            androidx.activity.compose.BackHandler {conversationId=null}
+            Column(Modifier.fillMaxSize().padding(24.dp),verticalArrangement=Arrangement.Center) {
+                Text(status ?: "正在恢复记录…")
+                TextButton(onClick={conversationId=null;status=null}){Text("返回收件箱")}
+            }
+            return
+        }
         if (conversationId == null) {
             P14TickTickInboxScreen(
                 rows = inboxRows,
@@ -459,11 +467,15 @@ private fun P14EntryScreen(
                 sourceMessageId = sourceMessage?.messageId,
                 sourceRevision = sourceMessage?.revision ?: 1,
                 editConflict = editConflicts.isNotEmpty(),
+                onResolveConflict = {keep -> scope.launch {
+                    status=runCatching {product.resolveConflicts(conversationId!!,keep);P14RemoteWork.enqueue(context);"冲突已处理"}.getOrElse {it.message ?: "本机修改仍已保留，请重试"}
+                } },
                 onCommitEdit = { draft,done -> scope.launch {
-                    status=runCatching {
+                    runCatching {
                         product.acceptEntryRevision(conversationId!!,draft.text,draft.baseRevision)
-                        P14RemoteWork.enqueue(context);done();"修改已保存"
-                    }.getOrElse {it.message ?: "编辑草稿已保留，请重试"}
+                        P14RemoteWork.enqueue(context)
+                    }.onSuccess {status="修改已保存";done(true)}
+                        .onFailure {status=it.message ?: "编辑草稿已保留，请重试";done(false)}
                 } },
                 pinned = productConversation?.pinned ?: false,
                 archived = productConversation?.archived ?: false,
