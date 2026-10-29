@@ -185,7 +185,8 @@ class RouteActivity : ComponentActivity() {
         // Keep the shell underneath for the existing provider/settings flow.
         if (savedInstanceState == null && intent.action == Intent.ACTION_MAIN &&
             intent.hasCategory(Intent.CATEGORY_LAUNCHER)) {
-            startActivity(Intent(this, me.rerere.rikkahub.ui.activity.P14EntryActivity::class.java))
+            startActivity(Intent(this, me.rerere.rikkahub.ui.activity.P14EntryActivity::class.java)
+                .putExtra(me.rerere.rikkahub.ui.activity.P14EntryActivity.EXTRA_FROM_LAUNCHER, true))
         }
 
         setContent {
@@ -224,6 +225,10 @@ class RouteActivity : ComponentActivity() {
         super.onNewIntent(intent)
         setIntent(intent)
         handleIntent(intent)
+        if (intent.action == Intent.ACTION_MAIN && intent.hasCategory(Intent.CATEGORY_LAUNCHER)) {
+            startActivity(Intent(this, me.rerere.rikkahub.ui.activity.P14EntryActivity::class.java)
+                .putExtra(me.rerere.rikkahub.ui.activity.P14EntryActivity.EXTRA_FROM_LAUNCHER, true))
+        }
     }
 
     private fun handleIntent(intent: Intent) {

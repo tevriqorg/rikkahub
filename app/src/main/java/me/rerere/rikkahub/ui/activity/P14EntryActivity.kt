@@ -48,6 +48,13 @@ import org.koin.android.ext.android.get
 class P14EntryActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        if (intent.getBooleanExtra(EXTRA_FROM_LAUNCHER, false)) {
+            // Back at the record root exits the app. The explicit settings action
+            // still finishes only this surface and reveals the existing shell.
+            onBackPressedDispatcher.addCallback(this, object : androidx.activity.OnBackPressedCallback(true) {
+                override fun handleOnBackPressed() { finishAffinity() }
+            })
+        }
         val http = get<OkHttpClient>()
         val product = P14ProductRepository(applicationContext, http)
         val settingsStore = get<SettingsStore>()
@@ -81,6 +88,7 @@ class P14EntryActivity : ComponentActivity() {
     }
 
     companion object {
+        const val EXTRA_FROM_LAUNCHER = "p14_from_launcher"
         const val EXTRA_CONVERSATION_ID = "p14_conversation_id"
         const val EXTRA_EXTERNAL_SESSION_ID = "p14_external_session_id"
         const val EXTRA_NOTIFICATION_ID = "p14_notification_id"
