@@ -1,5 +1,8 @@
 package me.rerere.rikkahub.ui.activity
 
+import androidx.activity.compose.BackHandler
+import androidx.compose.runtime.saveable.rememberSaveable
+import me.rerere.rikkahub.data.remote.p14.P14ProductAttachmentEntity
 import androidx.compose.foundation.background
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.clickable
@@ -54,6 +57,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.input.ImeAction
@@ -166,7 +171,8 @@ private fun InboxItemRow(
     ) {
         IconButton(
             onClick = onToggleArchive,
-            modifier = Modifier.size(36.dp).testTag("p14-inbox-toggle-${row.entryId}"),
+            modifier = Modifier.size(48.dp).testTag("p14-inbox-toggle-${row.entryId}")
+                .semantics { contentDescription = if (archived) "移回收件箱" else "归档记录" },
         ) {
             Box(
                 Modifier.size(21.dp).background(
@@ -175,12 +181,12 @@ private fun InboxItemRow(
                 ),
                 contentAlignment = Alignment.Center,
             ) {
-                if (archived) Text("✓", color = Color.White, fontSize = 18.sp)
+                if (archived) Text("↶", color = Color.White, fontSize = 18.sp)
                 else Box(
                     Modifier.size(19.dp).background(Color.Transparent, RoundedCornerShape(5.dp)),
                     contentAlignment = Alignment.Center,
                 ) {
-                    // TickTick-style unfilled completion square. In P14 this explicitly means archive.
+                    // P14 archive is never a task completion state.
                     Surface(
                         color = Color.Transparent,
                         shape = RoundedCornerShape(4.dp),
@@ -434,10 +440,13 @@ internal fun P14TickTickEntryDetailScreen(
     status: String?,
     onBack: () -> Unit,
     onAdvanced: () -> Unit,
+    attachments: List<P14ProductAttachmentEntity> = emptyList(),
+    onOpenAttachment: (P14ProductAttachmentEntity) -> Unit = {},
 ) {
     val colors = inboxColors()
     // A saved Entry is useful on its own. Conversation is an explicit secondary choice.
-    var aiOpen by remember(conversationId) { mutableStateOf(false) }
+    var aiOpen by rememberSaveable(conversationId) { mutableStateOf(false) }
+    BackHandler { if (aiOpen) aiOpen = false else onBack() }
     val source = entryBody.orEmpty()
     val visibleMessages = p14InboxConversationMessages(messages, source, createdAt ?: 0L)
     Scaffold(
@@ -453,7 +462,7 @@ internal fun P14TickTickEntryDetailScreen(
                         Text("‹", color = colors.ink, fontSize = 32.sp)
                     }
                 },
-                title = { Text(if (aiOpen) "与 AI 讨论" else "条目详情",
+                title = { Text(if (aiOpen) "与 AI 讨论" else "条目详情", color = colors.ink,
                     fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.titleLarge) },
                 actions = {
                     if (!aiOpen) IconButton(onClick = onAdvanced) {
@@ -526,6 +535,19 @@ internal fun P14TickTickEntryDetailScreen(
                         )
                         if (createdAt != null) Text(inboxDate(createdAt),
                             style = MaterialTheme.typography.labelSmall, color = colors.muted)
+                    }
+                }
+            }
+            if (!aiOpen && attachments.isNotEmpty()) item(key = "entry-attachments") {
+                Surface(color = colors.surface, shape = RoundedCornerShape(14.dp), modifier = Modifier.fillMaxWidth()) {
+                    Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text("附件", color = colors.ink, style = MaterialTheme.typography.titleMedium)
+                        attachments.forEach { attachment ->
+                            TextButton(onClick = { onOpenAttachment(attachment) },
+                                modifier = Modifier.testTag("p14-entry-attachment-${attachment.localAttachmentId}")) {
+                                Text("${attachment.fileName} · ${attachment.kind.lowercase()}")
+                            }
+                        }
                     }
                 }
             }

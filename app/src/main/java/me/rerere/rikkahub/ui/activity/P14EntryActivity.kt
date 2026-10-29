@@ -392,6 +392,16 @@ private fun P14EntryScreen(
                 createdAt = entry?.createdAtEpochMs,
                 conversationId = conversationId!!,
                 messages = messages,
+                attachments = attachments,
+                onOpenAttachment = { attachment -> scope.launch {
+                    status = runCatching {
+                        val file = withContext(Dispatchers.IO) { product.materializeAttachment(attachment.localAttachmentId) }
+                        val content = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", File(requireNotNull(file.path)))
+                        context.startActivity(Intent(Intent.ACTION_VIEW).setDataAndType(content, attachment.mimeType)
+                            .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION))
+                        "已打开 ${attachment.fileName}"
+                    }.getOrElse { it.message ?: "附件暂不可用，请联网后重试" }
+                } },
                 input = input,
                 onInputChange = { input = it },
                 sending = sendingContinuation,
