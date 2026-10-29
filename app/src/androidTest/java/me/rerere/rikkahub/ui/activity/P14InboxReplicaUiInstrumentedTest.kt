@@ -58,7 +58,7 @@ class P14InboxReplicaUiInstrumentedTest {
                 compose.onAllNodes(androidx.compose.ui.test.hasTestTag("p14-inbox-add"))
                     .fetchSemanticsNodes().isNotEmpty()
             }
-            compose.onNodeWithText("收件箱").assertIsDisplayed()
+            compose.onNodeWithTag("p14-inbox-list").assertIsDisplayed()
             compose.onNodeWithTag("p14-inbox-add").assertIsDisplayed()
             androidx.test.espresso.Espresso.pressBackUnconditionally()
             val deadline = android.os.SystemClock.uptimeMillis() + 5_000L
@@ -66,6 +66,11 @@ class P14InboxReplicaUiInstrumentedTest {
                 android.os.SystemClock.uptimeMillis() < deadline) android.os.SystemClock.sleep(50L)
             assertEquals(androidx.lifecycle.Lifecycle.State.DESTROYED, scenario.state)
         } finally {
+            InstrumentationRegistry.getInstrumentation().runOnMainSync {
+                val monitor = androidx.test.runner.lifecycle.ActivityLifecycleMonitorRegistry.getInstance()
+                androidx.test.runner.lifecycle.Stage.values().flatMap { monitor.getActivitiesInStage(it) }
+                    .filterIsInstance<P14EntryActivity>().distinct().forEach { it.finish() }
+            }
             scenario.close()
         }
     }
