@@ -157,7 +157,31 @@ class P14HighFidelityVisualInstrumentedTest {
         db.dao().upsertMessage(P14ProductMessageEntity("b1400030-1000-4000-8000-000000000001",main.conversationId,"user","这家小店的模式有什么值得深入研究的地方？",deliveryState="SYNCED",createdAtEpochMs=now-60_000))
         db.dao().upsertMessage(P14ProductMessageEntity("b1400030-1000-4000-8000-000000000002",main.conversationId,"assistant","这是一条很有价值的观察，可以从三个方向继续研究：\n\n1. **本地化差异供给**\n如何利用本地食材建立独特价值。\n\n2. **社区关系建设**\n如何通过日常互动建立长期关系。\n\n3. **可持续经营模式**\n观察复购和产品组合。",deliveryState="SYNCED",createdAtEpochMs=now-30_000))
         prefs.edit().putString("primary",main.conversationId).putString("editor",accepted[11].conversationId).putString("editor-entry",accepted[11].entryId).putString("editor-source",accepted[11].messageId).putString("voice",accepted[7].conversationId).commit()
-        File(output,"fixture.json").writeText(buildJsonObject {put("synthetic",true);put("entry_count",accepted.size);put("inbox_count",12);put("archived_count",1);put("records",buildJsonArray {accepted.forEachIndexed {i,a->add(buildJsonObject {put("entry_id",a.entryId);put("conversation_id",a.conversationId);put("title",contents[i].substringBefore('\n'))})});put("attachments",buildJsonArray {listOf(shop,books,meal,document,audio).forEach {file->add(buildJsonObject {put("file_name",file.name);put("byte_size",file.length());put("sha256",sha(file.readBytes()))})}})}.toString())
+        val manifest=buildJsonObject {
+            put("synthetic",true)
+            put("entry_count",accepted.size)
+            put("inbox_count",12)
+            put("archived_count",1)
+            put("records",buildJsonArray {
+                accepted.forEachIndexed { i,a ->
+                    add(buildJsonObject {
+                        put("entry_id",a.entryId)
+                        put("conversation_id",a.conversationId)
+                        put("title",contents[i].substringBefore('\n'))
+                    })
+                }
+            })
+            put("attachments",buildJsonArray {
+                listOf(shop,books,meal,document,audio).forEach { file ->
+                    add(buildJsonObject {
+                        put("file_name",file.name)
+                        put("byte_size",file.length())
+                        put("sha256",sha(file.readBytes()))
+                    })
+                }
+            })
+        }
+        File(output,"fixture.json").writeText(manifest.toString())
         return accepted
     }
     @Test fun visualJourney():Unit=runBlocking {
