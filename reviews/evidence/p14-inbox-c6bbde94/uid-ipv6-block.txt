@@ -1,0 +1,7 @@
+Chain OUTPUT (policy ACCEPT 254 packets, 43099 bytes)
+ pkts bytes target     prot opt in     out     source               destination         
+    0     0 REJECT     all  --  *      *       ::/0                 ::/0                 owner UID match 10211 reject-with icmp6-port-unreachable
+  254 43099 oem_out    all  --  *      *       ::/0                 ::/0                
+  254 43099 fw_OUTPUT  all  --  *      *       ::/0                 ::/0                
+  254 43099 st_OUTPUT  all  --  *      *       ::/0                 ::/0                
+  254 43099 bw_OUTPUT  all  --  *      *       ::/0                 ::/0                

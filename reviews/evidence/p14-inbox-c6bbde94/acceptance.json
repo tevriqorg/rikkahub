@@ -1,0 +1,84 @@
+{
+  "authority": "tevriqorg/P14-Entry#51",
+  "implementation_sha": "c6bbde942a89b2d0c6c2443472c6d387afb98604",
+  "server_sha": "f805b994ef995ca8592b2176269d9f26a845870e",
+  "arm64_ci": "https://github.com/tevriqorg/public-ci/actions/runs/40859674875",
+  "emulator_ci": "https://github.com/tevriqorg/public-ci/actions/runs/40864835331",
+  "compose_ui_tests": {
+    "passed": 6,
+    "failed": 0
+  },
+  "instrumentation_checks": {
+    "passed": 7,
+    "failed": 0,
+    "names": [
+      "networkOnline",
+      "networkOffline",
+      "saveQuickCaptureWithoutProvider",
+      "localContracts",
+      "seedOffline",
+      "verifyOffline",
+      "verifyQuickCaptureAfterRestart"
+    ]
+  },
+  "network_proof": {
+    "app_uid": 10211,
+    "method": "IPv4/IPv6 owner-UID OUTPUT REJECT in disposable emulator",
+    "online": "HTTP 200 from loopback-only synthetic probe",
+    "offline": "same App UID ConnectException; host probe still HTTP 200",
+    "global_device_network_may_remain_connected": true
+  },
+  "server_regression": {
+    "passed": 95,
+    "skipped": 0,
+    "warnings": 5,
+    "method": "isolated existing runtime + ephemeral PostgreSQL17"
+  },
+  "server_github_ci": {
+    "status": "not_started_billing_block",
+    "url": "https://github.com/tevriqorg/P14-Entry/actions/runs/40857225286"
+  },
+  "apk": {
+    "package": "me.rerere.rikkahub.debug",
+    "version_code": 191,
+    "version_name": "2.5.6-p14-c6bbde94",
+    "sha256": "33106dc26a5aa1e947b3084ae2127ee89d838c391365c4b971ba2c14cb94ab72",
+    "signing": "temporary CI Android Debug certificate; NOT fixed P14 signing",
+    "ci_certificate_sha256": "2fb0624d057a4cb25f66592e63be020e1477c47ce267619c2126dba6578ccc90"
+  },
+  "not_performed": [
+    "Hermes runtime invocation",
+    "live Server deployment",
+    "real data or credential mutation",
+    "merge",
+    "fixed signing",
+    "release",
+    "P20/QQ distribution"
+  ],
+  "limits": [
+    "Current live Server does not implement capture-only endpoint; new records remain pending until approved upgrade",
+    "Search filters loaded records",
+    "Custom tags/calendar/reminders pending",
+    "Physical-device media and live Hermes/multi-device acceptance remain unclaimed"
+  ],
+  "files_sha256": {
+    "01-inbox-light.png": "314370110ad4c9dfac39c76b57e9da91c56047cf04c138f05657ea0d6561645d",
+    "02-entry-detail-light.png": "71a88d681be4a7819cd43ee5a9ecca29fd2f3654039db59b41a0ca0bb86d01c8",
+    "03-ai-conversation-light.png": "f73a527deae171a0ded425503bc31f1c35597a2abf6bea59f51908a45a12da39",
+    "04-inbox-dark.png": "20f3c35d2738a13bb8261a9bff397cbd71d3e6d5c206e36a575a65af91d8ba85",
+    "05-classification-existing-views.png": "f04303f943439ad75d79be20451f7b012c31fab9101cb6e1baa63abaa96be28c",
+    "compose-ui-results.xml": "9dfd0f45a0d796147129154a7b18ed897eb497039898f3dc981da9832d5b2902",
+    "durability-logcat.txt": "b5c88e91a9acad9194b6658e37a98735401a106e05cffc4344ca1c1eab65cc95",
+    "localContracts.txt": "91559c529875603e11b9823c4be07dbfa38bdd1b9e5f18e22534627e19698209",
+    "networkOffline.txt": "fc854fadb8edf43f7e7a32312dd5a6cffcd841ca886fc88ad104e81dd727b7dd",
+    "networkOnline.txt": "cf4f9d0794448f73f4d23ae5e2643f4a6f0f34dbe0d80def17ec988cb6c07398",
+    "probe-alive-after.txt": "5a153818af579ce32b2336a079a4c59b039412da6e7a30ee64ccc3701085bb1a",
+    "probe-alive-before.txt": "5a153818af579ce32b2336a079a4c59b039412da6e7a30ee64ccc3701085bb1a",
+    "saveQuickCaptureWithoutProvider.txt": "9c8ee3e9734be6675c62169b7b410f620c8fa22ac9739f08663103ad4a236021",
+    "seedOffline.txt": "6433d942db4e4be6b632d8fd5e84f9a09ef01083a175baf95f51bd9533142a4d",
+    "uid-ipv4-block.txt": "35c60acfd4e7573886683b323de89a9359ac779a2f94a5738dd0fa41bfd3a4c6",
+    "uid-ipv6-block.txt": "5eac5a1c123e5d27790894b42091c6ad18c4f3fb72880a62148e97b02be858aa",
+    "verifyOffline.txt": "a49e61417aec0ea1a55a70bd5f81a92bfdd59c7a77a27b576363d48f9f25cd02",
+    "verifyQuickCaptureAfterRestart.txt": "49ca4e47d8a319f75fb8b33781b887c0b2b42710b5e498f1685f89b9653ba27b"
+  }
+}
