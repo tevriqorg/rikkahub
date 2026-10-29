@@ -9,6 +9,7 @@ import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
@@ -174,6 +175,7 @@ internal class P14ProductRepository(
         message: UIMessage,
         assistantId: String,
         modelId: String,
+        deferAi: Boolean = false,
     ): P14AcceptedMutation = withContext(Dispatchers.IO) {
         require(message.role == MessageRole.USER) { "P14 local acceptance only accepts user messages" }
         val ids = compatIds(externalSessionId)
@@ -193,6 +195,7 @@ internal class P14ProductRepository(
         val reply = message.parts.asSequence().mapNotNull { it.metadata?.get("p14_reply") as? JsonObject }.firstOrNull()
         val payload = buildJsonObject {
             put("text", text)
+            if (existing == null && deferAi) put("defer_ai", true)
             reply?.get("message_id")?.jsonPrimitive?.contentOrNull?.let { put("reply_to_message_id", it) }
             (reply?.get("quote") as? JsonObject)?.let { put("quote", it) }
         }.toString()
@@ -775,7 +778,7 @@ internal class P14ProductRepository(
                     (payload["quote"] as? JsonObject)?.let { put("quote", it) }
                 }
                 val path = if (operation.operationType == "CREATE_ENTRY_WITH_MESSAGE") {
-                    "entries"
+                    if (payload["defer_ai"]?.jsonPrimitive?.booleanOrNull == true) "entries/capture" else "entries"
                 } else {
                     "conversations/${operation.conversationId}/messages"
                 }

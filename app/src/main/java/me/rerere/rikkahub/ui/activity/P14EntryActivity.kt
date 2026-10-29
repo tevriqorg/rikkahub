@@ -331,7 +331,7 @@ private fun P14EntryScreen(
                                     // before clearing the draft or acknowledging the UI.
                                     product.acceptRikkaMessage(
                                         localId.toString(), localId.toString(), message,
-                                        assistant.id.toString(), model.id.toString(),
+                                        assistant.id.toString(), model.id.toString(), deferAi = true,
                                     )
                                     withContext(Dispatchers.IO) { draftStore.clearAfterAccept() }
                                     savedDraft = P14CaptureDraft()
@@ -602,7 +602,7 @@ private fun P14EntryScreen(
                                             // happens after Room commit but before draft-clear/UI navigation.
                                             val localId=kotlin.uuid.Uuid.parse(savedDraft.draftId)
                                             val userMessage=UIMessage(id=kotlin.uuid.Uuid.parse(savedDraft.messageId),role=MessageRole.USER,parts=parts)
-                                            val result=product.acceptRikkaMessage(localId.toString(),localId.toString(),userMessage,assistant.id.toString(),model.id.toString())
+                                            val result=product.acceptRikkaMessage(localId.toString(),localId.toString(),userMessage,assistant.id.toString(),model.id.toString(),deferAi=true)
                                             runCatching { withContext(Dispatchers.IO) { draftStore.clearAfterAccept() } }
                                             savedDraft=P14CaptureDraft()
                                             conversationId=result.conversationId
