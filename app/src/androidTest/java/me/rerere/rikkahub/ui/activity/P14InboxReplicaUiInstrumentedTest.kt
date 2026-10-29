@@ -49,23 +49,17 @@ class P14InboxReplicaUiInstrumentedTest {
 
     @Test fun launcherOpensInboxAndSettingsCanReturnToShell() {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
-        val automation = InstrumentationRegistry.getInstrumentation().uiAutomation
-        fun awaitText(text: String): Boolean {
-            val deadline = android.os.SystemClock.uptimeMillis() + 20_000L
-            while (android.os.SystemClock.uptimeMillis() < deadline) {
-                val nodes = automation.rootInActiveWindow?.findAccessibilityNodeInfosByText(text).orEmpty()
-                if (nodes.any { it.text?.toString() == text }) return true
-                android.os.SystemClock.sleep(100L)
-            }
-            return false
-        }
         val intent = android.content.Intent(context, me.rerere.rikkahub.RouteActivity::class.java)
             .setAction(android.content.Intent.ACTION_MAIN)
             .addCategory(android.content.Intent.CATEGORY_LAUNCHER)
         val scenario = androidx.test.core.app.ActivityScenario.launch<me.rerere.rikkahub.RouteActivity>(intent)
         try {
-            assertTrue("Launcher should open record Inbox", awaitText("收件箱"))
-            assertTrue("Record capture must be immediately available", awaitText("+"))
+            compose.waitUntil(timeoutMillis = 20_000L) {
+                compose.onAllNodes(androidx.compose.ui.test.hasTestTag("p14-inbox-add"))
+                    .fetchSemanticsNodes().isNotEmpty()
+            }
+            compose.onNodeWithText("收件箱").assertIsDisplayed()
+            compose.onNodeWithTag("p14-inbox-add").assertIsDisplayed()
             pressBack()
             InstrumentationRegistry.getInstrumentation().waitForIdleSync()
         } finally {
