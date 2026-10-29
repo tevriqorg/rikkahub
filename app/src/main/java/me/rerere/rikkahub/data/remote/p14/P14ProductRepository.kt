@@ -155,8 +155,8 @@ internal class P14ProductRepository(
             val operationId=UUID.randomUUID().toString()
             database.withTransaction {
                 val current=requireNotNull(dao.message(source.messageId))
-                require(expectedRevision==null || current.revision==expectedRevision) { "记录已被其他设备修改，编辑草稿已保留" }
                 if(current.bodyText==normalized) return@withTransaction
+                require(expectedRevision==null || current.revision==expectedRevision) { "记录已被其他设备修改，编辑草稿已保留" }
                 dao.upsertMessage(current.copy(bodyText=normalized,revision=current.revision+1,deliveryState="EDIT_PENDING"))
                 dao.insertOutbox(P14ChatOutboxEntity(operationId,"EDIT_SOURCE_MESSAGE",source.messageId,conversationId,
                     conversation.entryId,conversation.externalSessionId,buildJsonObject {
@@ -220,7 +220,7 @@ internal class P14ProductRepository(
     fun entryFlow(entryId: String): Flow<P14EntryEntity?> = dao.observeEntry(entryId)
     fun messages(conversationId:String,limit:Int=50):Flow<List<P14ProductMessageEntity>> = dao.observeMessagesPaged(conversationId,limit)
     fun conversationFlow(conversationId: String): Flow<P14ProductConversationEntity?> = dao.observeConversation(conversationId)
-    fun attachments(conversationId:String,limit:Int=50):Flow<List<P14ProductAttachmentEntity>> = dao.observeAttachmentsPaged(conversationId,limit)
+    fun attachments(conversationId:String,limit:Int=50):Flow<List<P14ProductAttachmentEntity>> = dao.observeEntryAttachments(conversationId)
     suspend fun entry(entryId: String) = dao.entry(entryId)
     suspend fun conversation(conversationId: String) = dao.conversation(conversationId)
     suspend fun conversationForId(conversationId:String) = dao.conversation(conversationId)
@@ -248,6 +248,7 @@ internal class P14ProductRepository(
         assistantId: String?,
         modelId: String?,
         deferAi: Boolean = false,
+        initialViews: Set<String> = emptySet(),
     ): P14AcceptedMutation = withContext(Dispatchers.IO) {
         require(message.role == MessageRole.USER) { "P14 local acceptance only accepts user messages" }
         val ids = compatIds(externalSessionId)
@@ -306,6 +307,11 @@ internal class P14ProductRepository(
                     createdAtEpochMs = now,
                 )
             )
+            if(existing==null) initialViews.filter {it in setOf("todo","idea","research","execute")}.forEach {view ->
+                dao.upsertEntryView(P14EntryViewEntity(ids.entryId,view,true))
+                val viewOp=UUID.nameUUIDFromBytes("$operationId:view:$view".toByteArray()).toString()
+                dao.insertViewOutbox(P14ViewOutboxEntity(viewOp,ids.entryId,view,true))
+            }
         }
         P14AcceptedMutation(ids.entryId, ids.conversationId, message.id.toString(), operationId)
     }

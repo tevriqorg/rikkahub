@@ -25,6 +25,7 @@ internal data class P14EntryEditDraft(
     val snapshot: P14EditorSnapshot,
     val undo: List<P14EditorSnapshot> = emptyList(),
     val redo: List<P14EditorSnapshot> = emptyList(),
+    val scrollOffset: Int = 0,
 ) {
     val text: String get() = listOf(snapshot.title.trim(),snapshot.body.trimEnd()).filter { it.isNotBlank() }.joinToString("\n")
 }
