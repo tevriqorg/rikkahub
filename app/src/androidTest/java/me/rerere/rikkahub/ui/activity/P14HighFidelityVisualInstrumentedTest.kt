@@ -108,7 +108,7 @@ class P14HighFidelityVisualInstrumentedTest {
         conversationId?.let {intent.putExtra(P14EntryActivity.EXTRA_CONVERSATION_ID,it)}
         return ActivityScenario.launch(intent)
     }
-    private fun awaitTag(tag:String) {compose.waitUntil(20_000) {compose.onAllNodesWithTag(tag).fetchSemanticsNodes(atLeastOneRootRequired=false).isNotEmpty()};compose.onNodeWithTag(tag).assertIsDisplayed()}
+    private fun awaitTag(tag:String) {compose.waitUntil(20_000) {compose.onAllNodesWithTag(tag).fetchSemanticsNodes(atLeastOneRootRequired=false).isNotEmpty()&&runCatching {compose.onNodeWithTag(tag).assertIsDisplayed()}.isSuccess};compose.onNodeWithTag(tag).assertIsDisplayed()}
     private fun enterEditor() {
         awaitTag("p14-entry-body")
         compose.waitUntil(15_000){compose.onAllNodes(hasTestTag("p14-entry-body").and(hasClickAction())).fetchSemanticsNodes(atLeastOneRootRequired=false).isNotEmpty()}
