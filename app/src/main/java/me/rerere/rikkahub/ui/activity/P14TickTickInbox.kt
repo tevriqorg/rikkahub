@@ -230,11 +230,11 @@ internal fun p14ViewTitle(view:String)=when(view){"todo"->"待办";"idea"->"想�
     val c=p14Palette();val focus=remember {FocusRequester()};val keyboard=LocalSoftwareKeyboardController.current
     var value by rememberSaveable(stateSaver=TextFieldValue.Saver){mutableStateOf(TextFieldValue(text,TextRange(text.length)))}
     var more by remember {mutableStateOf(false)};var viewMenu by remember {mutableStateOf(false)};var requested by remember {mutableStateOf(false)}
-    LaunchedEffect(Unit){withFrameNanos {};focus.requestFocus();delay(100);keyboard?.show()}
     LaunchedEffect(text){if(value.text!=text)value=TextFieldValue(text,TextRange(text.length))}
     LaunchedEffect(saving,text,materials.size){if(requested&&!saving&&text.isBlank()&&materials.isEmpty())onDismiss()}
     ModalBottomSheet(onDismissRequest=onDismiss,sheetState=rememberModalBottomSheetState(skipPartiallyExpanded=true),shape=RoundedCornerShape(topStart=20.dp,topEnd=20.dp),containerColor=c.surface,scrimColor=Color.Black.copy(alpha=.32f),dragHandle=null,contentWindowInsets={WindowInsets(0,0,0,0)}) {
         Column(Modifier.fillMaxWidth().navigationBarsPadding().testTag("p14-quick-sheet")) {
+            LaunchedEffect(Unit){withFrameNanos {};delay(300);focus.requestFocus();delay(150);keyboard?.show()}
             BasicTextField(value=value,onValueChange={value=it;onText(it.text)},textStyle=TextStyle(color=c.ink,fontSize=17.sp,lineHeight=24.sp),cursorBrush=SolidColor(c.blue),modifier=Modifier.fillMaxWidth().padding(start=18.dp,end=18.dp,top=17.dp,bottom=3.dp).heightIn(min=76.dp,max=200.dp).focusRequester(focus).testTag("p14-inbox-quick-input"),keyboardOptions=KeyboardOptions(imeAction=ImeAction.Default),decorationBox={inner->Box {if(value.text.isBlank())Text("例如：下午 3 点组织大家开会",color=c.muted.copy(alpha=.55f),fontSize=16.sp);inner()}})
             if(materials.isNotEmpty())Row(Modifier.fillMaxWidth().padding(horizontal=18.dp),horizontalArrangement=Arrangement.spacedBy(8.dp)){materials.take(3).forEach {m->Text(m.originalName.take(18)+" ×",fontSize=11.sp,color=c.blue,modifier=Modifier.clip(RoundedCornerShape(6.dp)).background(c.chip).clickable {onRemove(m)}.padding(6.dp))}}
             if(selectedViews.isNotEmpty())Row(Modifier.padding(horizontal=18.dp,vertical=3.dp),horizontalArrangement=Arrangement.spacedBy(6.dp)){selectedViews.forEach {ClassificationPill(p14ViewTitle(it))}}
