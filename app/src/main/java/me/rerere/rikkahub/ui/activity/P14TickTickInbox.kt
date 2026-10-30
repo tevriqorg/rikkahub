@@ -39,6 +39,8 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.scale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalWindowInfo
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.contentDescription
@@ -234,7 +236,9 @@ internal fun p14ViewTitle(view:String)=when(view){"todo"->"待办";"idea"->"想�
     LaunchedEffect(saving,text,materials.size){if(requested&&!saving&&text.isBlank()&&materials.isEmpty())onDismiss()}
     ModalBottomSheet(onDismissRequest=onDismiss,sheetState=rememberModalBottomSheetState(skipPartiallyExpanded=true),shape=RoundedCornerShape(topStart=20.dp,topEnd=20.dp),containerColor=c.surface,scrimColor=Color.Black.copy(alpha=.32f),dragHandle=null,contentWindowInsets={WindowInsets(0,0,0,0)}) {
         Column(Modifier.fillMaxWidth().imePadding().navigationBarsPadding()) {
-            LaunchedEffect(Unit){withFrameNanos {};delay(300);focus.requestFocus();delay(150);keyboard?.show()}
+            val orientation=LocalConfiguration.current.orientation
+            val windowFocused=LocalWindowInfo.current.isWindowFocused
+            LaunchedEffect(orientation,windowFocused){if(windowFocused){withFrameNanos {};delay(350);focus.requestFocus();delay(150);keyboard?.show()}}
             BasicTextField(value=value,onValueChange={value=it;onText(it.text)},textStyle=TextStyle(color=c.ink,fontSize=17.sp,lineHeight=24.sp),cursorBrush=SolidColor(c.blue),modifier=Modifier.fillMaxWidth().padding(start=18.dp,end=18.dp,top=17.dp,bottom=3.dp).heightIn(min=76.dp,max=200.dp).focusRequester(focus).testTag("p14-inbox-quick-input"),keyboardOptions=KeyboardOptions(imeAction=ImeAction.Default),decorationBox={inner->Box {if(value.text.isBlank())Text("例如：下午 3 点组织大家开会",color=c.muted.copy(alpha=.55f),fontSize=16.sp);inner()}})
             if(materials.isNotEmpty())Row(Modifier.fillMaxWidth().padding(horizontal=18.dp),horizontalArrangement=Arrangement.spacedBy(8.dp)){materials.take(3).forEach {m->Text(m.originalName.take(18)+" ×",fontSize=11.sp,color=c.blue,modifier=Modifier.clip(RoundedCornerShape(6.dp)).background(c.chip).clickable {onRemove(m)}.padding(6.dp))}}
             if(selectedViews.isNotEmpty())Row(Modifier.padding(horizontal=18.dp,vertical=3.dp),horizontalArrangement=Arrangement.spacedBy(6.dp)){selectedViews.forEach {ClassificationPill(p14ViewTitle(it))}}

@@ -17,6 +17,8 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.platform.LocalWindowInfo
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.TextRange
@@ -79,7 +81,9 @@ import me.rerere.rikkahub.data.remote.p14.*
         Text("当前修订 v$currentRevision",fontWeight=FontWeight.SemiBold);Text(currentBody.orEmpty(),fontSize=13.sp)
     }},confirmButton={TextButton(onClick={compare=false;persist(draft.copy(baseRevision=currentRevision));finish()}){Text("保留本机并产生新修订")}},dismissButton={TextButton(onClick={compare=false;store.clear(initial.entryId);keyboard?.hide();onDiscard()}){Text("采用当前修订")}})
     BackHandler {finish()}
-    LaunchedEffect(Unit){withFrameNanos {};if(draft.snapshot.focused=="title")titleFocus.requestFocus() else bodyFocus.requestFocus();delay(100);keyboard?.show()}
+    val orientation=LocalConfiguration.current.orientation
+    val windowFocused=LocalWindowInfo.current.isWindowFocused
+    LaunchedEffect(orientation,windowFocused){if(windowFocused){withFrameNanos {};delay(350);if(draft.snapshot.focused=="title")titleFocus.requestFocus() else bodyFocus.requestFocus();delay(150);keyboard?.show()}}
     LaunchedEffect(scroll){snapshotFlow {scroll.value}.collect {offset->if(offset!=draft.scrollOffset)persist(draft.copy(scrollOffset=offset))}}
     Column(Modifier.fillMaxSize().background(c.background).imePadding().testTag("p14-entry-editor")) {
         Row(Modifier.fillMaxWidth().statusBarsPadding().height(61.dp).padding(horizontal=12.dp),verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(8.dp)) {
