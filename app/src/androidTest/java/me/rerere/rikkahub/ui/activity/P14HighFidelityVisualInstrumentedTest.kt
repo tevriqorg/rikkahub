@@ -279,7 +279,12 @@ class P14HighFidelityVisualInstrumentedTest {
                 File(output,"native-chat-exchange.json").writeText(buildJsonObject {
                     put("real_activity",true);put("loopback_http",true);put("first_send_503",true);put("same_message_retry",true);put("two_turns",true);put("delayed_draft_and_final",true);put("same_conversation",true);put("hermes_invoked",false)
                 }.toString())
-            }} finally {credential.clear("synthetic-native-chat")}
+            }} finally {
+                credential.clear("synthetic-native-chat")
+                // The next method is a separate instrumentation process. Flush the
+                // preceding asynchronous removal before this runner can terminate.
+                check(context.getSharedPreferences("p14-rikkahub-runtime",Context.MODE_PRIVATE).edit().commit())
+            }
         }
         assertNull(P14RuntimeCredentialStore(context).activeConnection())
         assertEquals(14,db.dao().directoryPage(100,0).size)
