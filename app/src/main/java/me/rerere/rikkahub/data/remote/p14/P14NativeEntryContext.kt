@@ -72,13 +72,23 @@ internal suspend fun prepareNativeEntryChat(
 }
 
 /**
- * The P14 OpenAI facade consumes only the most recent user message. On the
- * first native remote turn, attach the Entry source to that outgoing turn,
- * leaving the locally saved messages and all subsequent native turns intact.
- * Normal providers receive the source through ordinary chat history.
+ * Display Entry source as a compact context card rather than a user question.
+ * The complete original content remains in the native chat history for providers.
+ */
+internal fun nativeEntrySourceOrNull(message: UIMessage): String? {
+    val text = message.toText()
+    if (!text.startsWith(SOURCE_PREFIX) || !text.contains(SOURCE_END)) return null
+    return text.substringAfter('\n', "").substringAfter('\n', "")
+        .substringBefore("\n$SOURCE_END")
+}
+
+/**
+ * The P14 OpenAI facade consumes only the most recent user message, not the
+ * native conversation's message history. Attach current Entry source to each
+ * outgoing remote turn so even an edited Entry is reflected immediately.
+ * Do not mutate locally saved messages. Normal providers use ordinary history.
  */
 internal fun withEntryContextForFirstRemoteTurn(messages: List<UIMessage>): List<UIMessage> {
-    if (messages.any { it.role == MessageRole.ASSISTANT }) return messages
     val context = messages.firstOrNull {
         it.role == MessageRole.USER && it.toText().startsWith(SOURCE_PREFIX) &&
             it.toText().contains(SOURCE_END)

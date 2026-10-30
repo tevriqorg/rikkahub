@@ -44,13 +44,23 @@ class P14NativeEntryContextTest {
         assertTrue(outgoing.last().toText().contains("问路"))
     }
 
-    @Test fun laterRemoteTurnsDoNotReinsertContext() {
+    @Test fun editedSourceReachesLaterRemoteTurnsWithoutChangingChatHistory() {
         val source = UIMessage.user(entryContextMessage("entry-abc", "原始行程"))
         val question = UIMessage.user("今天天气怎样")
         val answer = UIMessage.assistant("可能下雨")
         val followup = UIMessage.user("那明天呢")
         val history = listOf(source, question, answer, followup)
-        assertEquals(history, withEntryContextForFirstRemoteTurn(history))
+        val outgoing = withEntryContextForFirstRemoteTurn(history)
+        assertTrue(outgoing.last().toText().contains("原始行程"))
+        assertTrue(outgoing.last().toText().contains("那明天呢"))
+        assertEquals(followup, history.last())
+        assertEquals(followup.id, outgoing.last().id)
+    }
+
+    @Test fun entryPreviewDoesNotLeakControlMarkers() {
+        val source = UIMessage.user(entryContextMessage("entry-abc", "松本酒店\n入住两晚"))
+        assertEquals("松本酒店\n入住两晚", nativeEntrySourceOrNull(source))
+        assertEquals(null, nativeEntrySourceOrNull(UIMessage.user("普通消息")))
     }
 
     @Test fun ordinaryChatsRemainUnchanged() {
