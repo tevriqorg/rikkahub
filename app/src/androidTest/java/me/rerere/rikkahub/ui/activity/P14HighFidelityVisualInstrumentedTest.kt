@@ -71,7 +71,16 @@ class P14HighFidelityVisualInstrumentedTest {
     private fun awaitIme(shown:Boolean) {compose.waitUntil(20_000) {val v=ime();v.shown==shown&&(!shown||v.bottom>100)}}
     private fun keyboard(show:Boolean) {instrumentation.runOnMainSync {WindowInspector.getGlobalWindowViews().lastOrNull {it.hasWindowFocus()}?.windowInsetsController?.let {if(show)it.show(WindowInsets.Type.ime()) else it.hide(WindowInsets.Type.ime())}};awaitIme(show)}
     private fun capture(name:String,keyboardRequired:Boolean=false,toolbar:String?=null) {
-        compose.waitForIdle();if(keyboardRequired)awaitIme(true);SystemClock.sleep(350)
+        compose.waitForIdle();if(keyboardRequired)awaitIme(true)
+        if(keyboardRequired&&toolbar!=null)compose.waitUntil(20_000) {
+            val state=ime()
+            val node=compose.onAllNodesWithTag(toolbar).fetchSemanticsNodes(atLeastOneRootRequired=false).singleOrNull()
+            val bitmap=instrumentation.uiAutomation.takeScreenshot()
+            val height=bitmap?.height;bitmap?.recycle()
+            state.shown&&state.bottom>100&&node!=null&&height!=null&&
+                kotlin.math.abs(node.boundsInWindow.bottom-(height-state.bottom))<context.resources.displayMetrics.density*16
+        }
+        SystemClock.sleep(350)
         val native=ime();val screenshot=requireNotNull(instrumentation.uiAutomation.takeScreenshot())
         File(output,"$name.png").outputStream().use {screenshot.compress(Bitmap.CompressFormat.PNG,100,it)}
         val toolbarBottom=toolbar?.let {compose.onNodeWithTag(it).fetchSemanticsNode().boundsInWindow.bottom}
