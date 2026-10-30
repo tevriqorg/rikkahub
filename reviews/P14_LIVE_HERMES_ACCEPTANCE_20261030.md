@@ -28,7 +28,7 @@ Test source `64aa50b58ef27c16cbf98c0b744296aafee6b484`, existing PR13 branch. Na
 - Run41041382689 failed before Android: official Tailscale action adds `--accept-routes` internally; an explicit duplicate option was rejected. Read the failure log, removed the duplicate, and dispatched replacement.
 - Current run: https://github.com/tevriqorg/public-ci/actions/runs/41041603757
 
-The previously passed six-screen/IME/rotation/attachments/force-stop/strict-UID regression is run again before the live test. Native live screenshots and the correlated adapter journal are required before updating this row to PASS.
+The previously passed six-screen/IME/rotation/attachments/force-stop/strict-UID regression is run again before the live test. Native live screenshots and the correlated adapter journal are required before updating this row to PASS. The native harness uses the stock `GatewayInboundMixin._prepend_inbound_reply_context` for quote injection, rather than adding a test-only instruction to prefer the new revision. The existing gateway implementation already preserves the full quoted content; no Core change is required.
 
 ## Drift check
 
