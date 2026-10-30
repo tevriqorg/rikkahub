@@ -162,7 +162,7 @@ class P14EntryRevisionInstrumentedTest {
         fixture { c,db,_ ->
             val calls=mutableListOf<Call>();val events=mutableListOf<JsonObject>();var failures=1
             val base=network(c,calls){200}
-            val client=base.newBuilder().interceptors().let { _ -> OkHttpClient.Builder().addInterceptor { chain ->
+            val client=OkHttpClient.Builder().addInterceptor { chain ->
                 val r=chain.request();val path=r.url.encodedPath;check(r.url.host=="127.0.0.1")
                 var code=200
                 val body=if(r.method=="POST" && path.endsWith("/messages")) {
@@ -183,7 +183,7 @@ class P14EntryRevisionInstrumentedTest {
                     buildJsonObject {put("events",JsonArray(events.filter {it["sync_seq"]!!.jsonPrimitive.long>after}));put("has_more",false);put("next_after",events.size);put("watermark",events.size)}.toString()
                 } else return@addInterceptor base.newCall(r).execute()
                 Response.Builder().request(r).protocol(Protocol.HTTP_1_1).code(code).message("synthetic").body(body.toResponseBody("application/json".toMediaType())).build()
-            }.build() }
+            }.build()
             val repository=P14ProductRepository(c,client,db)
             val (_,capture)=capture(repository)
             repository.acceptEntryRevision(capture.conversationId,"修改后的标题与正文",1)

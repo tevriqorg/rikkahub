@@ -259,6 +259,7 @@ class P14HighFidelityVisualInstrumentedTest {
                 for(question in listOf("今天下午怎么去东京站？","然后怎么回来？")) {
                     compose.onNodeWithTag("p14-entry-message-input").performTextInput(question)
                     compose.onNodeWithTag("p14-inbox-ai-send").performClick()
+                    compose.waitUntil(30_000){compose.onAllNodesWithText("正在组织合成回复…",substring=true).fetchSemanticsNodes(atLeastOneRootRequired=false).isNotEmpty()}
                     compose.waitUntil(45_000){compose.onAllNodesWithText("合成回复：$question",substring=true).fetchSemanticsNodes(atLeastOneRootRequired=false).isNotEmpty()}
                 }
                 keyboard(false);capture("09-native-chat-exchange")
