@@ -27,7 +27,7 @@ Full isolated emulator: https://github.com/tevriqorg/public-ci/actions/runs/4099
 
 [Six actual Android screens](evidence/p14-high-fidelity-d42f225d/six-screen-actual.png)
 
-[Reference above / actual below](evidence/p14-high-fidelity-d42f225d/design-vs-actual.png)
+[Reference above / actual below](evidence/p14-high-fidelity-d42f225d/design-vs-actual.jpg)
 
 Raw full-resolution screenshots and keyboard/rotation metadata are in `visual-output/p14-high-fidelity/`. All fixture records and files are synthetic, not production data. The initial13 records become14 after quick-add; dark Inbox count changes accordingly. Native Android keyboard differs from the iOS keyboard in supplied real screenshots. Note checkboxes and fake Completed were deliberately omitted per the user requirement. Existing View names replace invented custom tags. Flat hierarchy, compact rows, blue add action, bottom input panel, full editor, independent detail and secondary discussion are present. The supplied real editor/quick-add references were inspected as the interaction baseline; the collage is included for overall layout comparison. This is a functional candidate self-check, not a claim of pixel-identical rendering or physical-device acceptance.
 
