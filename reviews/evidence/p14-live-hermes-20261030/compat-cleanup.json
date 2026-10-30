@@ -1,0 +1,6 @@
+{
+  "isolated_compatibility_container_stopped": true,
+  "installed_adapter_unchanged": true,
+  "production_gateway_not_restarted": true,
+  "production_server_unchanged": true
+}

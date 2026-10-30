@@ -15,7 +15,8 @@ Existing remote chat in `ChatService` already accepts into `P14ProductRepository
 | Real Server HTTP → stock Hermes CLI → Server | `evidence/p14-live-hermes-20261030/result.json` | PASS: three turns; revised v2 context, prior-turn recall, revised v3 context; same Conversation and Hermes Session |
 | Actual P14 Platform Adapter and BasePlatform dispatch → stock Hermes CLI | `evidence/p14-live-hermes-20261030/platform-result.json` | PASS: two turns, 14 real streamed updates, same Conversation/Session, retry dedupe |
 | Actual Android Activity → isolated Server → actual adapter/real Hermes → native reply | Actions41043503058; `native-7d36b6c5/native-live-result.json` and `adapter-journal.json` | PASS: two displayed real replies, revised context, same Conversation/Session, 14 streamed updates, source preserved and return navigation |
-| Owner physical device, existing production gateway/deployment | No substitution by these isolated tests | PENDING |
+| Existing production adapter compatibility | `compat-old-result.json` vs `compat-patched-result.json` | **RED: deployed old adapter drops quote fields; minimal patch tested, deployment approval required** |
+| Owner physical device | No substitution by isolated tests | PENDING after adapter repair |
 
 Hermes checkout `dce1e9b37581dd62e480a9064dc04a709c2940d3`; existing configured remote provider, no tools enabled for these acceptance queries. Backend test handler is the stock CLI wrapper attached to the actual adapter, not the existing production GatewayRunner. This distinction is intentional and must not be hidden by an end-to-end claim.
 
@@ -40,3 +41,13 @@ No Requirement/schema/architecture or P2 expansion; original Entry remains immut
 Application production code is unchanged from tested/signed `837d06fe59ea8e5bdde6b84b64a0d5742581c03e` (`git diff 837d06fe..7d36b6c5 -- app/src/main` is empty). Existing fixed-sign ARM64 candidate SHA256 remains `5f2d25cc032a34e2191caf0c49649aee5af918128bb34d329359a354845d544c`; no reinstall/reset is needed for the test-only commits. Cover-install preserves owner pairing/data. Owner physical-device and existing production GatewayRunner acceptance remain pending; the isolated adapter/stock CLI path is explicitly distinguished above.
 
 Temporary CI secrets and key were removed/revoked; disposable node logged out and isolated Server was stopped. Production Server and Hermes Core remain unchanged. See `cleanup-result.json`. No merge, formal Release or P20/QQ distribution.
+
+## Production compatibility blocker — do not hand off as fully accepted
+
+Read-only comparison after native PASS found the installed P14 Platform adapter differs from the tested PR adapter. Installed SHA256 `ea342b0ba4cfc9e435278b4cc979138142e2f244684ff814a49e3e0c3846aeeb` omits `reply_to_message_id`, `reply_to_text`, and `reply_to_is_own_message` when creating Hermes MessageEvent. The stock gateway already injects quoted text correctly, but cannot inject fields the old adapter discards. This is not an Android model/setup problem.
+
+A localhost-only negative control loaded the **unchanged installed adapter** against an isolated fresh Server. After revising source from OLD-OBSOLETE to a random PLUM value, real Hermes answered **OLD-OBSOLETE**; both reply pointer fields were null. A copy with **only the three missing fields added** correctly answered its revised PLUM value and delivered the full current quote. Evidence: `compat-old-result.json`, `compat-patched-result.json`, `production-adapter-quote-only.patch`, `adapter-patch-manifest.json` under the live evidence directory. No installed plugin, Core or production Server was changed. The compatibility test container is stopped.
+
+The minimal patch is concrete and reviewable. Applying it to the installed P14 adapter and reloading/restarting the production Hermes gateway requires fresh owner authorization because the task permits isolated testing, but does not authorize production changes. Preserve a checksum-verified adapter backup and existing sessions; do not deploy P14 Server, alter Hermes Core or change credentials. The running production gateway remains PID2647676, started2026-10-27.
+
+**Acceptance remains RED for edited-source context on the current production adapter.** Android/isolated native AI acceptance is PASS; that does not authorize claiming the owner's current live path is accepted. Ordinary original-source conversations can still work while edited context is lost. Resolve this blocker before asking the owner to accept AI correctness.

@@ -1,0 +1,12 @@
+{
+  "installed_adapter_sha256": "ea342b0ba4cfc9e435278b4cc979138142e2f244684ff814a49e3e0c3846aeeb",
+  "prepared_adapter_sha256": "d5a889b060b49beaf16bce5737dc2df08e6e5c1b9b9a7afbbb2bb768e691924d",
+  "fields_added": [
+    "reply_to_message_id",
+    "reply_to_text",
+    "reply_to_is_own_message"
+  ],
+  "installed_plugin_changed": false,
+  "hermes_core_changed": false,
+  "deployment_requires_owner_approval": true
+}
