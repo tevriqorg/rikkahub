@@ -351,6 +351,7 @@ internal fun p14ViewTitle(view:String)=when(view){"todo"->"待办";"idea"->"想�
                         Text(when(message.deliveryState){"STREAMING"->"正在回复…";"LOCAL_PENDING","EDIT_PENDING"->"正在发送…";else->SimpleDateFormat("HH:mm",Locale.CHINA).format(Date(message.createdAtEpochMs))},color=c.muted,fontSize=9.sp)
                     }
                 }}
+                if(status==null&&visible.lastOrNull()?.let {it.role.equals("user",true)&&it.deliveryState=="SYNCED"}==true)item("awaiting-reply"){Text("已发送，等待 AI 回复…",color=c.muted,fontSize=12.sp)}
                 if(status!=null)item("chat-status"){Row(verticalAlignment=Alignment.CenterVertically){Text(status,color=c.muted,fontSize=12.sp,modifier=Modifier.weight(1f));TextButton(onClick=onRetryChat){Text("重试")}}}
             }
         }

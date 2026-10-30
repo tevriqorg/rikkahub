@@ -264,6 +264,7 @@ private fun P14EntryScreen(
                     val connected=product.syncAndFlushActive()
                     chatStatus=if(!connected) "尚未连接服务器，请检查连接设置" else product.pendingChatDelivery(id)
                 } catch(cancelled:CancellationException) {throw cancelled}
+                catch(error:P14RemoteHttpException) {chatStatus=when(error.status){401,403->"连接凭据已失效，请检查连接设置";404->"服务器不支持当前接口，请检查连接设置";else->"服务器暂时不可用，正在重试；消息已保留"}}
                 catch(_:Exception) {chatStatus="暂时无法连接，正在重试；消息已保留"}
                 delay(2_000)
             }
@@ -549,7 +550,7 @@ private fun P14EntryScreen(
                                 chatRefresh++
                                 P14RemoteWork.enqueue(context)
                             } catch (e: Exception) {
-                                status = e.message ?: "消息尚未发送，请重试"
+                                chatStatus = "消息未能保存，请重试"
                             } finally {
                                 sendingContinuation = false
                             }
