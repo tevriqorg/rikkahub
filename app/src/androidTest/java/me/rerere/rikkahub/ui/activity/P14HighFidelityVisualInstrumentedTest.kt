@@ -78,18 +78,24 @@ class P14HighFidelityVisualInstrumentedTest {
         if(keyboardRequired&&toolbar!=null)compose.waitUntil(20_000) {
             val state=ime()
             val node=compose.onAllNodesWithTag(toolbar).fetchSemanticsNodes(atLeastOneRootRequired=false).singleOrNull()
+            // Reading lazy node geometry may synchronously measure Compose. Keep it on UI,
+            // just like the AndroidX semantics selector; never measure on the runner thread.
+            val bounds=compose.runOnUiThread {node?.boundsInWindow}
             val bitmap=instrumentation.uiAutomation.takeScreenshot()
             val height=bitmap?.height;bitmap?.recycle()
-            val valid=state.shown&&state.bottom>100&&node!=null&&height!=null&&
-                kotlin.math.abs(node.boundsInWindow.bottom-(height-state.bottom))<context.resources.displayMetrics.density*16
-            val geometry="${state.width}:${state.height}:${state.bottom}:${node?.boundsInWindow}"
+            val valid=state.shown&&state.bottom>100&&bounds!=null&&height!=null&&
+                kotlin.math.abs(bounds.bottom-(height-state.bottom))<context.resources.displayMetrics.density*16
+            val geometry="${state.width}:${state.height}:${state.bottom}:${bounds}"
             val now=SystemClock.uptimeMillis()
             if(!valid||geometry!=lastGeometry){stableSince=now;lastGeometry=geometry}
             valid&&now-stableSince>=600
         }
         val native=ime();val screenshot=requireNotNull(instrumentation.uiAutomation.takeScreenshot())
         File(output,"$name.png").outputStream().use {screenshot.compress(Bitmap.CompressFormat.PNG,100,it)}
-        val toolbarBottom=toolbar?.let {compose.onNodeWithTag(it).fetchSemanticsNode().boundsInWindow.bottom}
+        val toolbarBottom=toolbar?.let {
+            val node=compose.onNodeWithTag(it).fetchSemanticsNode()
+            compose.runOnUiThread {node.boundsInWindow.bottom}
+        }
         val keyboardTop=screenshot.height-native.bottom
         if(keyboardRequired) {
             assertTrue("Real Android IME must be visible",native.shown&&native.bottom>100)
