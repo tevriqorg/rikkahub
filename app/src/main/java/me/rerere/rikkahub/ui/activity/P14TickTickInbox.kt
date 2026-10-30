@@ -275,10 +275,11 @@ internal fun p14ViewTitle(view:String)=when(view){"todo"->"待办";"idea"->"想�
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable internal fun P14TickTickEntryDetailScreen(
     entryBody:String?,createdAt:Long?,conversationId:String,messages:List<P14ProductMessageEntity>,input:String,onInputChange:(String)->Unit,onSend:()->Unit,sending:Boolean,canChat:Boolean,status:String?,onBack:()->Unit,onAdvanced:()->Unit,attachments:List<P14ProductAttachmentEntity> = emptyList(),onOpenAttachment:(P14ProductAttachmentEntity)->Unit={},availableViews:List<String> = emptyList(),selectedViews:Set<String> = emptySet(),onToggleView:(String)->Unit={},
-    entryId:String=conversationId,displayBody:String?=null,sourceMessageId:String?=null,sourceRevision:Int=1,onCommitEdit:((P14EntryEditDraft,(Boolean)->Unit)->Unit)?=null,onToggleArchive:()->Unit={},onTogglePin:()->Unit={},pinned:Boolean=false,archived:Boolean=false,onLoadThumbnail:(String)->Unit={},editConflict:Boolean=false,onResolveConflict:(Boolean)->Unit={},
+    entryId:String=conversationId,displayBody:String?=null,sourceMessageId:String?=null,sourceRevision:Int=1,onCommitEdit:((P14EntryEditDraft,(Boolean)->Unit)->Unit)?=null,onToggleArchive:()->Unit={},onTogglePin:()->Unit={},pinned:Boolean=false,archived:Boolean=false,onLoadThumbnail:(String)->Unit={},editConflict:Boolean=false,onResolveConflict:(Boolean)->Unit={},onChatActive:(Boolean)->Unit={},onRetryChat:()->Unit={},
 ) {
     val c=p14Palette();val context=LocalContext.current;val raw=entryBody.orEmpty();val body=displayBody ?: raw
     var ai by rememberSaveable(entryId){mutableStateOf(false)};var edit by rememberSaveable(entryId){mutableStateOf(false)};var categories by rememberSaveable(entryId){mutableStateOf(false)};var more by remember {mutableStateOf(false)};var original by remember {mutableStateOf(false)};var attachmentMenu by remember {mutableStateOf(false)};var conflictDialog by remember {mutableStateOf(false)}
+    DisposableEffect(ai) {onChatActive(ai);onDispose {onChatActive(false)}}
     val store=remember(context){P14EntryEditDraftStore(context)}
     if(edit) {
         val initial=store.read(entryId) ?: P14EntryEditDraft(entryId,sourceMessageId.orEmpty(),sourceRevision,P14EditorSnapshot(body.substringBefore('\n'),body.substringAfter('\n',"")))
@@ -337,7 +338,7 @@ internal fun p14ViewTitle(view:String)=when(view){"todo"->"待办";"idea"->"想�
         } else Column(Modifier.padding(pad).consumeWindowInsets(pad).fillMaxSize().testTag("p14-inbox-detail")) {
             Row(Modifier.padding(horizontal=15.dp,vertical=9.dp).fillMaxWidth().clip(RoundedCornerShape(10.dp)).background(c.surface).padding(10.dp).testTag("p14-ai-source"),horizontalArrangement=Arrangement.spacedBy(9.dp),verticalAlignment=Alignment.CenterVertically) {
                 images.firstOrNull()?.let {AttachmentThumbnail(it.localLocator,39)}
-                Column(Modifier.weight(1f),verticalArrangement=Arrangement.spacedBy(4.dp)){Text(p14InboxTitle(body,entryId),color=c.ink,fontSize=12.sp,maxLines=2,overflow=TextOverflow.Ellipsis);Text(if(sourceRevision>1)"当前修订 v$sourceRevision · 原始 Capture 保留" else "当前记录 · 独立上下文",fontSize=10.sp,color=c.muted)}
+                Column(Modifier.weight(1f),verticalArrangement=Arrangement.spacedBy(4.dp)){Text(p14InboxTitle(body,entryId),color=c.ink,fontSize=12.sp,maxLines=2,overflow=TextOverflow.Ellipsis);Text("正在讨论这条记录",fontSize=10.sp,color=c.muted)}
             }
             val list=rememberLazyListState();var initialScroll by remember(entryId){mutableStateOf(true)}
             LaunchedEffect(visible.lastOrNull()?.messageId,visible.lastOrNull()?.bodyText?.length) {if(visible.isNotEmpty()&&(initialScroll||(list.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0) >= visible.size-3)){list.animateScrollToItem(visible.lastIndex);initialScroll=false}}
@@ -347,10 +348,10 @@ internal fun p14ViewTitle(view:String)=when(view){"todo"->"待办";"idea"->"想�
                     if(!user){Box(Modifier.size(25.dp).clip(CircleShape).background(c.blue),contentAlignment=Alignment.Center){Text("AI",color=Color.White,fontSize=10.sp,fontWeight=FontWeight.SemiBold)};Spacer(Modifier.width(8.dp))}
                     Column(Modifier.fillMaxWidth(if(user).84f else .91f),verticalArrangement=Arrangement.spacedBy(4.dp),horizontalAlignment=if(user)Alignment.End else Alignment.Start) {
                         me.rerere.ui.markdown.Markdown(if(message.tombstone)"消息已删除" else message.bodyText,style=TextStyle(color=c.ink,fontSize=14.sp,lineHeight=23.sp),modifier=Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(if(user)c.user else c.surface.copy(alpha=.55f)).padding(12.dp))
-                        Text(when(message.deliveryState){"STREAMING"->"正在回复…";"LOCAL_PENDING","EDIT_PENDING"->"待同步";else->SimpleDateFormat("HH:mm",Locale.CHINA).format(Date(message.createdAtEpochMs))},color=c.muted,fontSize=9.sp)
+                        Text(when(message.deliveryState){"STREAMING"->"正在回复…";"LOCAL_PENDING","EDIT_PENDING"->"正在发送…";else->SimpleDateFormat("HH:mm",Locale.CHINA).format(Date(message.createdAtEpochMs))},color=c.muted,fontSize=9.sp)
                     }
                 }}
-                if(status!=null)item("chat-status"){Text(status,color=c.blue,fontSize=11.sp)}
+                if(status!=null)item("chat-status"){Row(verticalAlignment=Alignment.CenterVertically){Text(status,color=c.muted,fontSize=12.sp,modifier=Modifier.weight(1f));TextButton(onClick=onRetryChat){Text("重试")}}}
             }
         }
     }

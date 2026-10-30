@@ -144,9 +144,12 @@ class P14EntryRevisionInstrumentedTest {
         val (_,a)=capture(repository);val edit=repository.acceptEntryRevision(a.conversationId,"离线修订",1)
         val later=repository.acceptEntryRevision(a.conversationId,"第二次离线修订",2)
         repository.syncAndFlushActive()
+        assertTrue(repository.hasPendingDelivery())
+        assertTrue(repository.pendingChatDelivery(a.conversationId)!!.contains("重试"))
         assertEquals(listOf("RETRY","PENDING"),db.dao().messageEdits(a.messageId).map {it.state})
         assertEquals(1,calls.count {it.path.endsWith("/edit")})
         repository.syncAndFlushActive();assertTrue(db.dao().pendingOutbox().isEmpty())
+        assertFalse(repository.hasPendingDelivery());assertNull(repository.pendingChatDelivery(a.conversationId))
         assertEquals(listOf("/v1/entries/capture")+List(3){"/v1/conversations/${a.conversationId}/messages/${a.messageId}/edit"},calls.map {it.path})
         val edits=calls.filter {it.path.endsWith("/edit")};assertEquals(edits[0].payload,edits[1].payload)
         assertEquals(edit.clientOperationId,edits[0].payload["client_operation_id"]!!.jsonPrimitive.content)
@@ -154,7 +157,47 @@ class P14EntryRevisionInstrumentedTest {
         assertEquals(listOf(1,1,2),edits.map {it.payload["base_revision"]!!.jsonPrimitive.int})
         assertEquals("第二次离线修订",repository.message(a.messageId)!!.bodyText)
         assertEquals("原始标题\n原始内容",repository.entry(a.entryId)!!.bodyText)
-    }}
+    }
+        fixture { c,db,_ ->
+            val calls=mutableListOf<Call>();val events=mutableListOf<JsonObject>();var failures=1
+            val base=network(c,calls){200}
+            val client=base.newBuilder().interceptors().let { _ -> OkHttpClient.Builder().addInterceptor { chain ->
+                val r=chain.request();val path=r.url.encodedPath;check(r.url.host=="127.0.0.1")
+                var code=200
+                val body=if(r.method=="POST" && path.endsWith("/messages")) {
+                    val buffer=Buffer();r.body!!.writeTo(buffer);val payload=Json.parseToJsonElement(buffer.readUtf8()).jsonObject
+                    calls.add(Call(path,payload))
+                    if(failures-->0) code=503 else {
+                        val cid=path.substringAfter("/conversations/").substringBefore('/')
+                        fun event(role:String,id:String,text:String)=buildJsonObject {
+                            put("event_id","exchange-${events.size+1}");put("sync_seq",events.size+1);put("event_type","conversation.message.created");put("entity_type","message");put("entity_id",id);put("occurred_at","2026-10-30T04:00:00Z")
+                            put("payload",buildJsonObject {put("message",buildJsonObject {put("message_id",id);put("conversation_id",cid);put("role",role);put("body_text",text)})})
+                        }
+                        events.add(event("user",payload["message_id"]!!.jsonPrimitive.content,payload["text"]!!.jsonPrimitive.content))
+                        events.add(event("assistant","answer-${events.size}","合成 AI 回复："+payload["text"]!!.jsonPrimitive.content))
+                    }
+                    "{}"
+                } else if(path.endsWith("/sync/events")) {
+                    val after=r.url.queryParameter("after")!!.toLong()
+                    buildJsonObject {put("events",JsonArray(events.filter {it["sync_seq"]!!.jsonPrimitive.long>after}));put("has_more",false);put("next_after",events.size);put("watermark",events.size)}.toString()
+                } else return@addInterceptor base.newCall(r).execute()
+                Response.Builder().request(r).protocol(Protocol.HTTP_1_1).code(code).message("synthetic").body(body.toResponseBody("application/json".toMediaType())).build()
+            }.build() }
+            val repository=P14ProductRepository(c,client,db)
+            val (_,capture)=capture(repository);repository.syncAndFlushActive()
+            val first=repository.acceptEntryContinuation(capture.conversationId,"怎么去东京站？")
+            repository.syncAndFlushActive();assertTrue(repository.hasPendingDelivery())
+            repository.syncAndFlushActive();assertFalse(repository.hasPendingDelivery())
+            assertEquals(calls.filter {it.path.endsWith("/messages")}[0].payload,calls.filter {it.path.endsWith("/messages")}[1].payload)
+            assertEquals("SYNCED",repository.message(first.messageId)!!.deliveryState)
+            repository.acceptEntryContinuation(capture.conversationId,"然后怎么回来？");repository.syncAndFlushActive()
+            val history=repository.messages(capture.conversationId,50).first()
+            assertEquals(2,history.count {it.role=="assistant"});assertEquals(5,history.size)
+            assertTrue(history.all {it.conversationId==capture.conversationId})
+            assertEquals(1,db.dao().directoryPage(20,0).size)
+            assertEquals("原始标题\n原始内容",repository.entry(capture.entryId)!!.bodyText)
+        }
+    }
     private suspend fun conflict(keepLocal:Boolean)=fixture { c,db,_ ->
         val calls=mutableListOf<Call>()
         val repository=P14ProductRepository(c,network(c,calls){if(it["base_revision"]!!.jsonPrimitive.int==1)409 else 200},db)

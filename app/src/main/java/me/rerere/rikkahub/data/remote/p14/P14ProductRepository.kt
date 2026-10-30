@@ -384,7 +384,7 @@ internal class P14ProductRepository(
         P14AcceptedMutation(conversation.entryId, conversationId, messageId, operationId)
     }
 
-    suspend fun syncAndFlushActive(): Boolean = withContext(Dispatchers.IO) {
+    suspend fun syncAndFlushActive(): Boolean = syncMutex.withLock { withContext(Dispatchers.IO) {
         val connection = credentialStore.activeConnection() ?: return@withContext false
         val manifest = P14ManifestPolicy.load(appContext, connection, http)
         P14ManifestPolicy.requireChat(manifest)
@@ -395,7 +395,21 @@ internal class P14ProductRepository(
         flushViewAssignments(connection)
         replay(connection)
         true
+    } }
+
+    suspend fun pendingChatDelivery(conversationId:String):String? = withContext(Dispatchers.IO) {
+        val pending=dao.pendingOutbox().firstOrNull {it.conversationId==conversationId}
+        when {
+            dao.observeConflicts(conversationId).first().isNotEmpty() -> "记录修改存在冲突，请返回详情处理后重试"
+            pending==null -> null
+            pending.lastErrorClass=="HTTP_401" || pending.lastErrorClass=="HTTP_403" -> "连接凭据已失效，请检查连接设置"
+            pending.lastErrorClass=="HTTP_404" -> "服务器不支持当前操作，消息尚未发出"
+            pending.lastErrorClass!=null -> "暂时无法发送，正在重试；请检查网络和服务器连接"
+            else -> "正在发送…"
+        }
     }
+
+    suspend fun hasPendingDelivery():Boolean = dao.pendingOutbox().isNotEmpty()
 
     /** Explicit policy-gated Location Observation: never a user Entry or Inbox Notification. */
     suspend fun acceptLocationObservation(latitude:Double,longitude:Double,accuracyM:Double?,permissionState:String="foreground"):String = withContext(Dispatchers.IO) {
@@ -1025,6 +1039,7 @@ internal class P14ProductRepository(
     companion object {
         private const val SYNC_SCOPE = "account"
         private const val MAX_DOWNLOAD_BYTES=512L*1024*1024
+        private val syncMutex=Mutex()
         private val directoryMutex=Mutex()
         private val mediaDownloadMutex=Mutex()
         private val JSON_MEDIA = "application/json; charset=utf-8".toMediaType()

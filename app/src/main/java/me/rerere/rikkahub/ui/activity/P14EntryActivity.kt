@@ -40,6 +40,12 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.CancellationException
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.repeatOnLifecycle
 import kotlinx.serialization.json.Json
 import me.rerere.rikkahub.data.datastore.SettingsStore
 import me.rerere.rikkahub.data.remote.p14.*
@@ -245,6 +251,25 @@ private fun P14EntryScreen(
     var directory by remember { mutableStateOf<List<P14EntryDirectoryItem>>(emptyList()) }
     var directoryHasMore by remember { mutableStateOf(false) }
     var refreshContext by remember { mutableIntStateOf(0) }
+    var chatActive by remember(conversationId) { mutableStateOf(false) }
+    var chatStatus by remember(conversationId) { mutableStateOf<String?>(null) }
+    var chatRefresh by remember { mutableIntStateOf(0) }
+    val chatLifecycle=LocalLifecycleOwner.current.lifecycle
+    LaunchedEffect(conversationId,chatActive,chatRefresh) {
+        val id=conversationId ?: return@LaunchedEffect
+        if(!chatActive) return@LaunchedEffect
+        chatLifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
+            while(isActive) {
+                try {
+                    val connected=product.syncAndFlushActive()
+                    chatStatus=if(!connected) "尚未连接服务器，请检查连接设置" else product.pendingChatDelivery(id)
+                } catch(cancelled:CancellationException) {throw cancelled}
+                catch(_:Exception) {chatStatus="暂时无法连接，正在重试；消息已保留"}
+                delay(2_000)
+            }
+        }
+    }
+
 
     LaunchedEffect(initialConversationId, externalSessionId) {
         if (conversationId == null && externalSessionId != null) {
@@ -508,7 +533,9 @@ private fun P14EntryScreen(
                 onInputChange = { input = it },
                 sending = sendingContinuation,
                 canChat = canText && !upgradeRequired,
-                status = status,
+                status = if(chatActive)chatStatus else status,
+                onChatActive = {chatActive=it;chatStatus=null},
+                onRetryChat = {chatRefresh++},
                 onSend = {
                     if (!sendingContinuation && input.isNotBlank() && canText && !upgradeRequired) {
                         val id = conversationId!!
@@ -518,6 +545,8 @@ private fun P14EntryScreen(
                             try {
                                 product.acceptEntryContinuation(id, text)
                                 input = ""
+                                chatStatus="正在发送…"
+                                chatRefresh++
                                 P14RemoteWork.enqueue(context)
                             } catch (e: Exception) {
                                 status = e.message ?: "消息尚未发送，请重试"
