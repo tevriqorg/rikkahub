@@ -83,6 +83,8 @@ class P14HighFidelityVisualInstrumentedTest {
             val bounds=compose.runOnUiThread {node?.boundsInWindow}
             val bitmap=instrumentation.uiAutomation.takeScreenshot()
             val height=bitmap?.height;bitmap?.recycle()
+            var nodeBottom:Float?=null
+            instrumentation.runOnMainSync {nodeBottom=node?.boundsInWindow?.bottom}
             val valid=state.shown&&state.bottom>100&&bounds!=null&&height!=null&&
                 kotlin.math.abs(bounds.bottom-(height-state.bottom))<context.resources.displayMetrics.density*16
             val geometry="${state.width}:${state.height}:${state.bottom}:${bounds}"
@@ -99,7 +101,7 @@ class P14HighFidelityVisualInstrumentedTest {
         val keyboardTop=screenshot.height-native.bottom
         if(keyboardRequired) {
             assertTrue("Real Android IME must be visible",native.shown&&native.bottom>100)
-            if(toolbarBottom!=null)assertTrue("Toolbar/panel must touch the actual keyboard: bottom=$toolbarBottom keyboardTop=$keyboardTop",kotlin.math.abs(toolbarBottom-keyboardTop)<context.resources.displayMetrics.density*16)
+            if(toolbarBottom!=null)assertTrue("Toolbar/panel must touch the actual keyboard: bottom=$toolbarBottom keyboardTop=$keyboardTop",kotlin.math.abs(requireNotNull(toolbarBottom)-keyboardTop)<context.resources.displayMetrics.density*16)
         }
         File(output,"$name.json").writeText(buildJsonObject {
             put("fixture","synthetic-only-production-activity");put("screen_width_px",screenshot.width);put("screen_height_px",screenshot.height)
@@ -254,12 +256,22 @@ class P14HighFidelityVisualInstrumentedTest {
             keyboard(false)
         }
         shell("cmd uimode night no")
-        // Production Activity, Room, Outbox and real HTTP; loopback only, never Hermes.
+        assertEquals(14,db.dao().directoryPage(100,0).size)
+        File(output,"journey-result.json").writeText("""{"visual_screens":6,"real_ime_verified":true,"rotation_verified":true,"source_preserved":true,"same_conversation":true,"hermes_invoked":false,"entry_count":14}""")
+    }
+    @Test fun nativeChatExchange():Unit=runBlocking {
+        // A fresh instrumentation process owns this Activity. Do not reuse owners
+        // that were rotated and re-themed during the six-screen visual journey.
+        guard()
         // Fixtures represent existing uploaded files; preserve local bytes for handoff tests.
-        entries.forEach { entry -> db.dao().attachmentsForMessage(entry.messageId).forEach { attachment ->
-            db.dao().setAttachmentState(attachment.localAttachmentId,"SYNCED","synthetic-"+attachment.localAttachmentId)
-        } }
-        val target=entries[0].conversationId
+        db.dao().directoryPage(100,0).forEach { conversation ->
+            repo.ensureEntrySource(conversation.conversationId)?.let { source ->
+                db.dao().attachmentsForMessage(source.messageId).forEach { attachment ->
+                    db.dao().setAttachmentState(attachment.localAttachmentId,"SYNCED","synthetic-"+attachment.localAttachmentId)
+                }
+            }
+        }
+        val target=requireNotNull(prefs.getString("primary",null))
         repo.acceptEntryRevision(target,"地方小店讨论记录\n编辑后的上下文内容",1)
         val credential=P14RuntimeCredentialStore(context)
         P14SyntheticChatServer(target).use { server ->
@@ -294,7 +306,6 @@ class P14HighFidelityVisualInstrumentedTest {
         }
         assertNull(P14RuntimeCredentialStore(context).activeConnection())
         assertEquals(14,db.dao().directoryPage(100,0).size)
-        File(output,"journey-result.json").writeText("""{"visual_screens":6,"real_ime_verified":true,"rotation_verified":true,"source_preserved":true,"same_conversation":true,"hermes_invoked":false,"entry_count":14}""")
     }
     @Test fun seedEditRecovery():Unit=runBlocking {
         guard();val conversation=requireNotNull(prefs.getString("editor",null));val entryId=requireNotNull(prefs.getString("editor-entry",null));val source=requireNotNull(prefs.getString("editor-source",null))

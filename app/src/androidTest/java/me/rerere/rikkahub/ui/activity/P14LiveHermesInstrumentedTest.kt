@@ -31,7 +31,7 @@ class P14LiveHermesInstrumentedTest {
     @Test fun remoteDiscussionKeepsEntryAndContext():Unit=runBlocking {
         val instrumentation=InstrumentationRegistry.getInstrumentation()
         val args=InstrumentationRegistry.getArguments()
-        assertEquals("true",args.getString("p14LiveHermes"))
+        org.junit.Assume.assumeTrue("Live backend requires explicit opt-in",args.getString("p14LiveHermes")=="true")
         assertEquals("true",args.getString("p14SyntheticFixture"))
         assertTrue("Disposable emulator required",Build.HARDWARE in setOf("ranchu","goldfish"))
         val context=instrumentation.targetContext
