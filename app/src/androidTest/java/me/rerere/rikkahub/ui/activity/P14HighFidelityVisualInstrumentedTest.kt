@@ -269,7 +269,13 @@ class P14HighFidelityVisualInstrumentedTest {
                 }
                 keyboard(false);capture("09-native-chat-exchange")
                 assertEquals(2,server.targetTurns);assertEquals(2,server.targetMessageIds.size);assertTrue(server.retries>=3)
-                assertFalse(repo.messages(target,100).first().any {it.deliveryState=="STREAMING"})
+                val history=repo.messages(target,100).first()
+                assertFalse(history.any {it.deliveryState=="STREAMING"})
+                for(question in listOf("今天下午怎么去东京站？","然后怎么回来？")) {
+                    val userAt=history.indexOfFirst {it.role=="user"&&it.bodyText==question}
+                    val replyAt=history.indexOfFirst {it.role=="assistant"&&it.bodyText=="合成回复：$question"}
+                    assertTrue("Question must precede its reply even when timestamps tie",userAt>=0&&replyAt>userAt)
+                }
                 File(output,"native-chat-exchange.json").writeText(buildJsonObject {
                     put("real_activity",true);put("loopback_http",true);put("first_send_503",true);put("same_message_retry",true);put("two_turns",true);put("delayed_draft_and_final",true);put("same_conversation",true);put("hermes_invoked",false)
                 }.toString())

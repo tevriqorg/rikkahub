@@ -65,6 +65,14 @@ class P14EntryRevisionInstrumentedTest {
         assertEquals("请讨论这条修订",payload["text"]!!.jsonPrimitive.content)
         assertEquals(3,payload["quote"]!!.jsonObject["source_revision"]!!.jsonPrimitive.int)
         assertEquals(1,db.dao().directoryPage(20,0).size)
+        // UUID lexical order must never put a reply before its same-millisecond question.
+        val sameTime=System.currentTimeMillis()+10_000
+        val question=P14ProductMessageEntity("zz-user",a.conversationId,"user","同毫秒问题",deliveryState="SYNCED",createdAtEpochMs=sameTime)
+        val answer=P14ProductMessageEntity("aa-assistant",a.conversationId,"assistant","同毫秒回复",deliveryState="SYNCED",createdAtEpochMs=sameTime)
+        db.dao().upsertMessage(question);db.dao().upsertMessage(answer)
+        assertEquals(listOf(question.messageId,answer.messageId),repo.messages(a.conversationId,2).first().map {it.messageId})
+        db.dao().upsertMessage(question.copy(bodyText="同毫秒问题已更新"))
+        assertEquals(listOf(question.messageId,answer.messageId),repo.messages(a.conversationId,2).first().map {it.messageId})
     } }
     @Test fun oldAcknowledgementsCannotEraseLaterOfflineEdit()=runBlocking { fixture { _,db,repo ->
         val (_,a)=capture(repo)
