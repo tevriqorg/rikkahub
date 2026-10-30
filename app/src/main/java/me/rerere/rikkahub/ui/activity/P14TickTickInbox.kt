@@ -233,14 +233,14 @@ internal fun p14ViewTitle(view:String)=when(view){"todo"->"待办";"idea"->"想�
     LaunchedEffect(text){if(value.text!=text)value=TextFieldValue(text,TextRange(text.length))}
     LaunchedEffect(saving,text,materials.size){if(requested&&!saving&&text.isBlank()&&materials.isEmpty())onDismiss()}
     ModalBottomSheet(onDismissRequest=onDismiss,sheetState=rememberModalBottomSheetState(skipPartiallyExpanded=true),shape=RoundedCornerShape(topStart=20.dp,topEnd=20.dp),containerColor=c.surface,scrimColor=Color.Black.copy(alpha=.32f),dragHandle=null,contentWindowInsets={WindowInsets(0,0,0,0)}) {
-        Column(Modifier.fillMaxWidth().navigationBarsPadding().testTag("p14-quick-sheet")) {
+        Column(Modifier.fillMaxWidth().imePadding().navigationBarsPadding()) {
             LaunchedEffect(Unit){withFrameNanos {};delay(300);focus.requestFocus();delay(150);keyboard?.show()}
             BasicTextField(value=value,onValueChange={value=it;onText(it.text)},textStyle=TextStyle(color=c.ink,fontSize=17.sp,lineHeight=24.sp),cursorBrush=SolidColor(c.blue),modifier=Modifier.fillMaxWidth().padding(start=18.dp,end=18.dp,top=17.dp,bottom=3.dp).heightIn(min=76.dp,max=200.dp).focusRequester(focus).testTag("p14-inbox-quick-input"),keyboardOptions=KeyboardOptions(imeAction=ImeAction.Default),decorationBox={inner->Box {if(value.text.isBlank())Text("例如：下午 3 点组织大家开会",color=c.muted.copy(alpha=.55f),fontSize=16.sp);inner()}})
             if(materials.isNotEmpty())Row(Modifier.fillMaxWidth().padding(horizontal=18.dp),horizontalArrangement=Arrangement.spacedBy(8.dp)){materials.take(3).forEach {m->Text(m.originalName.take(18)+" ×",fontSize=11.sp,color=c.blue,modifier=Modifier.clip(RoundedCornerShape(6.dp)).background(c.chip).clickable {onRemove(m)}.padding(6.dp))}}
             if(selectedViews.isNotEmpty())Row(Modifier.padding(horizontal=18.dp,vertical=3.dp),horizontalArrangement=Arrangement.spacedBy(6.dp)){selectedViews.forEach {ClassificationPill(p14ViewTitle(it))}}
             if(recording)Text("正在录音 · 点麦克风停止",color=Color(0xFFD34A50),fontSize=12.sp,modifier=Modifier.padding(horizontal=18.dp,vertical=5.dp))
             if(status!=null&&requested&&!saving)Text(status,color=c.blue,fontSize=11.sp,modifier=Modifier.padding(horizontal=18.dp))
-            Row(Modifier.fillMaxWidth().height(50.dp).padding(horizontal=8.dp),verticalAlignment=Alignment.CenterVertically) {
+            Row(Modifier.fillMaxWidth().height(50.dp).padding(horizontal=8.dp).testTag("p14-quick-sheet"),verticalAlignment=Alignment.CenterVertically) {
                 P14IconButton(P14Symbol.CALENDAR,"日期与提醒，待实现",{},enabled=false,pending=true,tint=c.muted)
                 P14IconButton(P14Symbol.FLAG,"优先级，待实现",{},enabled=false,pending=true,tint=c.muted)
                 Box {P14IconButton(P14Symbol.TAG,"选择分类视图",{viewMenu=true},enabled=availableViews.isNotEmpty(),tint=c.muted)
