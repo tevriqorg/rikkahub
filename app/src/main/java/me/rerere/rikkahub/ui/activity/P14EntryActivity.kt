@@ -3,6 +3,8 @@ package me.rerere.rikkahub.ui.activity
 import android.os.Bundle
 import android.content.Intent
 import android.net.Uri
+import androidx.activity.enableEdgeToEdge
+import androidx.compose.runtime.saveable.rememberSaveable
 import android.Manifest
 import android.os.Build
 import android.os.SystemClock
@@ -38,6 +40,12 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.CancellationException
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.repeatOnLifecycle
 import kotlinx.serialization.json.Json
 import me.rerere.rikkahub.data.datastore.SettingsStore
 import me.rerere.rikkahub.data.remote.p14.*
@@ -48,6 +56,15 @@ import org.koin.android.ext.android.get
 class P14EntryActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        enableEdgeToEdge()
+        if(Build.VERSION.SDK_INT>=29) window.isNavigationBarContrastEnforced=false
+        if (intent.getBooleanExtra(EXTRA_FROM_LAUNCHER, false)) {
+            // Back at the record root exits the app. The explicit settings action
+            // still finishes only this surface and reveals the existing shell.
+            onBackPressedDispatcher.addCallback(this, object : androidx.activity.OnBackPressedCallback(true) {
+                override fun handleOnBackPressed() { finishAffinity() }
+            })
+        }
         val http = get<OkHttpClient>()
         val product = P14ProductRepository(applicationContext, http)
         val settingsStore = get<SettingsStore>()
@@ -81,12 +98,17 @@ class P14EntryActivity : ComponentActivity() {
     }
 
     companion object {
+        const val EXTRA_FROM_LAUNCHER = "p14_from_launcher"
         const val EXTRA_CONVERSATION_ID = "p14_conversation_id"
         const val EXTRA_EXTERNAL_SESSION_ID = "p14_external_session_id"
         const val EXTRA_NOTIFICATION_ID = "p14_notification_id"
         const val EXTRA_INTERACTION_RESPONSE = "p14_interaction_response"
     }
 }
+
+/** Older Entry roots are server-keyset paged even when current Room pages are shorter. */
+internal fun p14InboxShouldOfferMore(localCount:Int,limit:Int,serverHasOlder:Boolean):Boolean =
+    serverHasOlder || localCount >= limit
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -103,11 +125,11 @@ private fun P14EntryScreen(
 ) {
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
-    var conversationId by remember { mutableStateOf(initialConversationId) }
+    var conversationId by rememberSaveable { mutableStateOf(initialConversationId) }
     var manifest by remember { mutableStateOf(fallbackP14Manifest()) }
     var notification by remember { mutableStateOf<P14NotificationEntity?>(null) }
     var interaction by remember { mutableStateOf<P14InteractionEntity?>(null) }
-    var input by remember { mutableStateOf("") }
+    var input by rememberSaveable { mutableStateOf("") }
     var sendingContinuation by remember { mutableStateOf(false) }
     var status by remember { mutableStateOf<String?>(null) }
     val profileStore=remember(context) { P14ProfileStore(context) }
@@ -135,7 +157,7 @@ private fun P14EntryScreen(
     }
     val draftStore=remember(context) { P14CaptureDraftStore(context) }
     var savedDraft by remember { mutableStateOf(draftStore.read()) }
-    var captureOpen by remember { mutableStateOf(!initialSharedText.isNullOrBlank() || initialSharedFile!=null || savedDraft.text.isNotBlank() || savedDraft.materials.isNotEmpty()) }
+    var captureOpen by remember { mutableStateOf(!initialSharedText.isNullOrBlank() || initialSharedFile!=null) }
     var captureText by remember { mutableStateOf(initialSharedText ?: savedDraft.text) }
     var captureFiles by remember { mutableStateOf(savedDraft.materials.map { Uri.parse(it.locator) }) }
     var recordedVoiceDurations by remember { mutableStateOf(savedDraft.materials.mapNotNull { m -> m.voiceDurationMs?.let { Uri.parse(m.locator) to it } }.toMap()) }
@@ -159,7 +181,6 @@ private fun P14EntryScreen(
                 captureFiles=next.materials.map { Uri.parse(it.locator) }
                 recordedVoiceDurations=next.materials.mapNotNull { m -> m.voiceDurationMs?.let { Uri.parse(m.locator) to it } }.toMap()
                 scanUris=next.materials.filter { it.scan }.map { Uri.parse(it.locator) }.toSet()
-                captureOpen=true
             }.onFailure { status=it.message ?: "Failed to preserve Capture source" }
             importsPending--
         }
@@ -208,6 +229,16 @@ private fun P14EntryScreen(
     DisposableEffect(Unit) {
         onDispose { runCatching { activeRecorder?.stop() };runCatching { activeRecorder?.release() };recordingFile?.takeIf{activeRecorder!=null}?.delete() }
     }
+    // Keep the original full workbench behind Advanced; Inbox is the default Entry-first home.
+    var legacyWorkbench by remember { mutableStateOf(false) }
+    var inboxArchived by rememberSaveable { mutableStateOf(false) }
+    var inboxQuery by rememberSaveable { mutableStateOf("") }
+    var inboxView by rememberSaveable { mutableStateOf("") }
+    var inboxLimit by remember { mutableIntStateOf(60) }
+    var inboxLoadingMore by remember { mutableStateOf(false) }
+    val inboxRows by remember(inboxArchived, inboxLimit,inboxQuery,inboxView) {
+        product.inboxRows(inboxArchived, inboxLimit,inboxQuery,inboxView)
+    }.collectAsState(initial = emptyList())
     var selectedView by remember { mutableStateOf("chat") }
     var workItems by remember { mutableStateOf<List<P14WorkItem>>(emptyList()) }
     var workError by remember { mutableStateOf<String?>(null) }
@@ -220,6 +251,26 @@ private fun P14EntryScreen(
     var directory by remember { mutableStateOf<List<P14EntryDirectoryItem>>(emptyList()) }
     var directoryHasMore by remember { mutableStateOf(false) }
     var refreshContext by remember { mutableIntStateOf(0) }
+    var chatActive by remember(conversationId) { mutableStateOf(false) }
+    var chatStatus by remember(conversationId) { mutableStateOf<String?>(null) }
+    var chatRefresh by remember { mutableIntStateOf(0) }
+    val chatLifecycle=LocalLifecycleOwner.current.lifecycle
+    LaunchedEffect(conversationId,chatActive,chatRefresh) {
+        val id=conversationId ?: return@LaunchedEffect
+        if(!chatActive) return@LaunchedEffect
+        chatLifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
+            while(isActive) {
+                try {
+                    val connected=product.syncAndFlushActive()
+                    chatStatus=if(!connected) "尚未连接服务器，请检查连接设置" else product.pendingChatDelivery(id)
+                } catch(cancelled:CancellationException) {throw cancelled}
+                catch(error:P14RemoteHttpException) {chatStatus=when(error.status){401,403->"连接凭据已失效，请检查连接设置";404->"服务器不支持当前接口，请检查连接设置";else->"服务器暂时不可用，正在重试；消息已保留"}}
+                catch(_:Exception) {chatStatus="暂时无法连接，正在重试；消息已保留"}
+                delay(2_000)
+            }
+        }
+    }
+
 
     LaunchedEffect(initialConversationId, externalSessionId) {
         if (conversationId == null && externalSessionId != null) {
@@ -256,6 +307,7 @@ private fun P14EntryScreen(
                 val loaded=product.loadEntryHistory(entryId,offset,count)
                 if(loaded<count) break
             }
+            product.ensureEntrySource(id)
             product.hydrateEntryState(entryId,id)
         }.onFailure { status=it.message ?: "Entry history unavailable" }
     }
@@ -274,15 +326,250 @@ private fun P14EntryScreen(
             }
         }
     }
+    val sourceMessage = if(conversationId!=null) remember(conversationId) {product.sourceMessage(conversationId!!)}.collectAsState(initial=null).value else null
+    val editConflicts = if(conversationId!=null) remember(conversationId) {product.editConflicts(conversationId!!)}.collectAsState(initial=emptyList()).value else emptyList()
     val viewMemberships = if (entry != null) product.entryViews(entry.entryId).collectAsState(initial=emptyList()).value else emptyList()
     val canText = "chat" in manifest.enabledViews && "text" in manifest.messageCapabilities
     val upgradeRequired = manifest.compatibility == "UPGRADE_REQUIRED"
+
+    fun saveInboxCapture() {
+        if(savingCapture||importsPending>0||(captureText.isBlank()&&captureFiles.isEmpty())) return
+        savingCapture=true
+        scope.launch {
+            status=runCatching {
+                                            val settings=settingsStore.awaitLoaded()
+                                            val model=settings.providers.flatMap{it.models}.firstOrNull{it.modelId=="p14-hermes"}
+                                            val assistant=model?.let { target -> settings.assistants.firstOrNull{
+                                                settings.findModelById(it.chatModelId ?: settings.chatModelId)?.id==target.id
+                                            } }
+                                            val parts=buildList<UIMessagePart> {
+                                                if(!initialSharedText.isNullOrBlank() || initialSharedFile!=null) {
+                                                    check(profileStore.captureEnabled("share")) { "Profile disabled Share Capture" }
+                                                }
+                                                if(captureText.isNotBlank()) {
+                                                    check(profileStore.captureEnabled("text")) { "Profile disabled text Capture" }
+                                                    add(UIMessagePart.Text(captureText.trim()))
+                                                }
+                                                captureFiles.forEach { source ->
+                                                    val originalMaterial=savedDraft.materials.firstOrNull { it.locator==source.toString() }
+                                                    val mime=originalMaterial?.mime ?: context.contentResolver.getType(source).orEmpty()
+                                                    val durable=withContext(Dispatchers.IO) {
+                                                        val dir=File(context.filesDir,"p14_capture").apply{mkdirs()}
+                                                        val extension=source.lastPathSegment?.substringAfterLast('.',"")
+                                                            ?.takeIf{it.length in 1..8 && it.all(Char::isLetterOrDigit)}.orEmpty()
+                                                        val output=File(dir,UUID.randomUUID().toString() + if(extension.isBlank()) "" else ".$extension")
+                                                        context.contentResolver.openInputStream(source)?.use{input->output.outputStream().use{input.copyTo(it)}}
+                                                            ?: error("Cannot import file")
+                                                        Uri.fromFile(output).toString()
+                                                    }
+                                                    val effectiveMime=if(source in recordedVoiceDurations) "audio/mp4" else mime
+                                                    val capability=when {
+                                                        source in scanUris -> "scan"
+                                                        effectiveMime.startsWith("image/")->"photo"
+                                                        effectiveMime.startsWith("audio/")->"voice"
+                                                        else->"file"
+                                                    }
+                                                    check(profileStore.captureEnabled(capability)) { "Profile disabled $capability Capture" }
+                                                    add(when {
+                                                        effectiveMime.startsWith("image/")->UIMessagePart.Image(durable,
+                                                            if(source in scanUris) buildJsonObject {put("p14_media_role","scan")} else null)
+                                                        effectiveMime.startsWith("audio/")->UIMessagePart.Audio(durable,
+                                                            recordedVoiceDurations[source]?.let{duration-> buildJsonObject {
+                                                                put("p14_media_role","voice_message");put("p14_duration_ms",duration);put("p14_mime_type","audio/mp4")
+                                                            }})
+                                                        effectiveMime.startsWith("video/")->UIMessagePart.Video(durable)
+                                                        else->UIMessagePart.Document(durable,source.lastPathSegment?:"file",mime.ifBlank{"application/octet-stream"})
+                                                    })
+                                                }
+                                            }
+                                            // Stable draft identities prevent creating another Entry if an OS kill
+                                            // happens after Room commit but before draft-clear/UI navigation.
+                                            val localId=kotlin.uuid.Uuid.parse(savedDraft.draftId)
+                                            val userMessage=UIMessage(id=kotlin.uuid.Uuid.parse(savedDraft.messageId),role=MessageRole.USER,parts=parts)
+                                            val result=product.acceptRikkaMessage(localId.toString(),localId.toString(),userMessage,assistant?.id?.toString(),model?.id?.toString(),deferAi=true,initialViews=savedDraft.views.toSet())
+                                            runCatching { withContext(Dispatchers.IO) { draftStore.clearAfterAccept() } }
+                                            savedDraft=P14CaptureDraft()
+                                            conversationId=null
+                                            legacyWorkbench=false
+                                            captureOpen=false;captureText="";captureFiles=emptyList();recordedVoiceDurations=emptyMap();scanUris=emptySet()
+                                            P14RemoteWork.enqueue(context)
+                                            "已保存到收件箱"
+            }.getOrElse { it.message ?: "保存失败，草稿已保留" }
+            savingCapture=false
+        }
+    }
+    fun toggleInboxVoice() {
+        if(activeRecorder==null) {
+            if(ContextCompat.checkSelfPermission(context,Manifest.permission.RECORD_AUDIO)==PackageManager.PERMISSION_GRANTED)startVoice()
+            else requestMicrophone.launch(Manifest.permission.RECORD_AUDIO)
+        } else {
+            val file=recordingFile;val duration=SystemClock.elapsedRealtime()-recordingStart
+            val stopped=runCatching {activeRecorder?.stop();activeRecorder?.release()}.isSuccess
+            activeRecorder=null;recordingFile=null
+            if(stopped&&file?.isFile==true&&file.length()>0L&&duration>=300L)importMaterial(Uri.fromFile(file),voiceMs=duration)
+            else file?.delete()
+        }
+    }
+    fun loadThumbnail(id:String) {scope.launch {runCatching {product.materializeAttachment(id)}}}
+    fun organize(id:String,pin:Boolean?=null,archive:Boolean?=null) {scope.launch {
+        status=runCatching {product.acceptOrganization(id,pin,archive);P14RemoteWork.enqueue(context);"整理已保存"}.getOrElse {it.message ?: "整理失败"}
+    }}
+    // A single low-friction inbox is the new home; the existing Entry detail, Hermes
+    // continuation, mixed-material Capture and diagnostics remain reachable and unchanged.
+    if (!legacyWorkbench && !profileOpen && !captureOpen) {
+        if(conversationId!=null&&(productConversation==null||entry==null)) {
+            androidx.activity.compose.BackHandler {conversationId=null}
+            Column(Modifier.fillMaxSize().padding(24.dp),verticalArrangement=Arrangement.Center) {
+                Text(status ?: "正在恢复记录…")
+                TextButton(onClick={conversationId=null;status=null}){Text("返回收件箱")}
+            }
+            return
+        }
+        if (conversationId == null) {
+            P14TickTickInboxScreen(
+                rows = inboxRows,
+                archived = inboxArchived,
+                onShowArchived = { inboxArchived = it; inboxLimit = 60 },
+                draftText = captureText,
+                onDraftChange = { persistText(it) },
+                saving = savingCapture,
+                status = status,
+                onQuickSave = {saveInboxCapture()},
+                onRichCapture = {chooseFiles.launch(arrayOf("*/*"))},
+                draftMaterials = savedDraft.materials,
+                draftViews = savedDraft.views.toSet(),
+                onDraftView = {view ->
+                    val selected=savedDraft.views.toMutableSet();if(!selected.add(view))selected.remove(view)
+                    val next=savedDraft.copy(views=selected.toList());draftStore.save(next);savedDraft=next
+                },
+                onRemoveDraftMaterial = { material ->
+                    val next=savedDraft.copy(materials=savedDraft.materials.filterNot {it.locator==material.locator})
+                    draftStore.save(next);savedDraft=next;captureFiles=next.materials.map {Uri.parse(it.locator)}
+                },
+                onRecordVoice = {toggleInboxVoice()},recording = activeRecorder!=null,
+                onTogglePin = {row -> organize(row.conversationId,pin=!row.pinned)},
+                onLoadThumbnail = {loadThumbnail(it)},
+                managedSearch = true,onSearchChange = {inboxQuery=it;inboxLimit=60},
+                activeView = inboxView,onViewFilter = {inboxView=it;inboxLimit=60},
+                availableViews = listOf("todo","idea","research","execute").filter {it in manifest.enabledViews},
+                onOpen = { conversationId = it; input = ""; status = null },
+                onToggleArchive = {row -> organize(row.conversationId,archive=!row.archived)},
+                onMore = { legacyWorkbench = true; status = null },
+                onLoadMore = {
+                    if (!inboxLoadingMore) {
+                        inboxLoadingMore = true
+                        scope.launch {
+                            runCatching {
+                                // The oldest ~50 server Entry roots are bootstrapped first.
+                                // Page at the current boundary to fetch older keyset pages
+                                // before increasing the observable Room projection limit.
+                                product.directoryPage(
+                                    offset = (inboxLimit - 10).coerceAtLeast(0),
+                                    limit = 20,
+                                    view = "chat",
+                                )
+                                inboxLimit += 60
+                            }.onFailure { status = it.message ?: "加载历史条目失败" }
+                            inboxLoadingMore = false
+                        }
+                    }
+                },
+                hasMore = p14InboxShouldOfferMore(
+                    inboxRows.size, inboxLimit, product.inboxHasOlderServerEntries(),
+                ),
+                onBack = onBack,
+                onSettings = {
+                    context.startActivity(Intent(context, me.rerere.rikkahub.RouteActivity::class.java)
+                        .setAction(me.rerere.rikkahub.P14_ACTION_CONNECTION_SETTINGS)
+                        .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP))
+                },
+                resumeQuickDraft = savedDraft.text.isNotBlank()||savedDraft.materials.isNotEmpty(),
+            )
+        } else {
+            P14TickTickEntryDetailScreen(
+                entryBody = entry?.bodyText,
+                entryId = entry?.entryId ?: conversationId!!,
+                displayBody = sourceMessage?.bodyText,
+                sourceMessageId = sourceMessage?.messageId,
+                sourceRevision = sourceMessage?.revision ?: 1,
+                editConflict = editConflicts.isNotEmpty(),
+                onResolveConflict = {keep -> scope.launch {
+                    status=runCatching {product.resolveConflicts(conversationId!!,keep);P14RemoteWork.enqueue(context);"冲突已处理"}.getOrElse {it.message ?: "本机修改仍已保留，请重试"}
+                } },
+                onCommitEdit = { draft,done -> scope.launch {
+                    runCatching {
+                        product.acceptEntryRevision(conversationId!!,draft.text,draft.baseRevision)
+                        P14RemoteWork.enqueue(context)
+                    }.onSuccess {status="修改已保存";done(true)}
+                        .onFailure {status=it.message ?: "编辑草稿已保留，请重试";done(false)}
+                } },
+                pinned = productConversation?.pinned ?: false,
+                archived = productConversation?.archived ?: false,
+                onToggleArchive = {productConversation?.let {organize(it.conversationId,archive=!it.archived)}},
+                onTogglePin = {productConversation?.let {organize(it.conversationId,pin=!it.pinned)}},
+                onLoadThumbnail = {loadThumbnail(it)},
+                createdAt = entry?.createdAtEpochMs,
+                conversationId = conversationId!!,
+                messages = messages,
+                availableViews = listOf("todo", "idea", "research", "execute").filter { it in manifest.enabledViews },
+                selectedViews = viewMemberships.filter { it.enabled }.map { it.viewName }.toSet(),
+                onToggleView = { view -> entry?.let { current -> scope.launch {
+                    status = runCatching {
+                        product.assignEntryView(current.entryId, view, !viewMemberships.any { it.viewName == view && it.enabled })
+                        P14RemoteWork.enqueue(context)
+                        "分类已保存"
+                    }.getOrElse { it.message ?: "分类保存失败" }
+                } } },
+                attachments = attachments,
+                onOpenAttachment = { attachment -> scope.launch {
+                    status = runCatching {
+                        val file = withContext(Dispatchers.IO) { product.materializeAttachment(attachment.localAttachmentId) }
+                        val content = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", File(requireNotNull(file.path)))
+                        context.startActivity(Intent(Intent.ACTION_VIEW).setDataAndType(content, attachment.mimeType)
+                            .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION))
+                        "已打开 ${attachment.fileName}"
+                    }.getOrElse { it.message ?: "附件暂不可用，请联网后重试" }
+                } },
+                input = input,
+                onInputChange = { input = it },
+                sending = sendingContinuation,
+                canChat = canText && !upgradeRequired,
+                status = if(chatActive)chatStatus else status,
+                onChatActive = {chatActive=it;chatStatus=null},
+                onRetryChat = {chatRefresh++},
+                onSend = {
+                    if (!sendingContinuation && input.isNotBlank() && canText && !upgradeRequired) {
+                        val id = conversationId!!
+                        val text = input
+                        sendingContinuation = true
+                        scope.launch {
+                            try {
+                                product.acceptEntryContinuation(id, text)
+                                input = ""
+                                chatStatus="正在发送…"
+                                chatRefresh++
+                                P14RemoteWork.enqueue(context)
+                            } catch (e: Exception) {
+                                chatStatus = "消息未能保存，请重试"
+                            } finally {
+                                sendingContinuation = false
+                            }
+                        }
+                    }
+                },
+                onBack = { conversationId = null; status = null; inboxArchived = false },
+                onAdvanced = { legacyWorkbench = true },
+            )
+        }
+        return
+    }
 
     Scaffold(
         topBar = {
             TopAppBar(
                 title = { Text(if (conversationId == null) "P14 Entries" else "P14 Entry") },
                 actions = {
+                    TextButton(onClick={legacyWorkbench=false;captureOpen=false;profileOpen=false;conversationId=null;status=null}) { Text("收件箱") }
                     if(conversationId != null) TextButton(onClick={conversationId=null;directoryPage=0;refreshContext++}) { Text("All Entries") }
                     else {
                         TextButton(onClick={profileOpen=!profileOpen;profileYaml=profileStore.exportProfile()}) { Text("Profile") }
@@ -390,10 +677,9 @@ private fun P14EntryScreen(
                                         status=runCatching {
                                             val settings=settingsStore.awaitLoaded()
                                             val model=settings.providers.flatMap{it.models}.firstOrNull{it.modelId=="p14-hermes"}
-                                                ?: error("Set up p14-hermes first")
-                                            val assistant=settings.assistants.firstOrNull{
-                                                settings.findModelById(it.chatModelId ?: settings.chatModelId)?.id==model.id
-                                            } ?: error("Select a P14 assistant before Capture")
+                                            val assistant=model?.let { target -> settings.assistants.firstOrNull{
+                                                settings.findModelById(it.chatModelId ?: settings.chatModelId)?.id==target.id
+                                            } }
                                             val parts=buildList<UIMessagePart> {
                                                 if(!initialSharedText.isNullOrBlank() || initialSharedFile!=null) {
                                                     check(profileStore.captureEnabled("share")) { "Profile disabled Share Capture" }
@@ -438,10 +724,11 @@ private fun P14EntryScreen(
                                             // happens after Room commit but before draft-clear/UI navigation.
                                             val localId=kotlin.uuid.Uuid.parse(savedDraft.draftId)
                                             val userMessage=UIMessage(id=kotlin.uuid.Uuid.parse(savedDraft.messageId),role=MessageRole.USER,parts=parts)
-                                            val result=product.acceptRikkaMessage(localId.toString(),localId.toString(),userMessage,assistant.id.toString(),model.id.toString())
+                                            val result=product.acceptRikkaMessage(localId.toString(),localId.toString(),userMessage,assistant?.id?.toString(),model?.id?.toString(),deferAi=true)
                                             runCatching { withContext(Dispatchers.IO) { draftStore.clearAfterAccept() } }
                                             savedDraft=P14CaptureDraft()
                                             conversationId=result.conversationId
+                                            legacyWorkbench=false
                                             captureOpen=false;captureText="";captureFiles=emptyList();recordedVoiceDurations=emptyMap();scanUris=emptySet()
                                             P14RemoteWork.enqueue(context)
                                             "Entry durably saved"

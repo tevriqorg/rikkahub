@@ -1,0 +1,21 @@
+{
+  "calls": [
+    {
+      "conversation_id": "rk-c-7541f84d18198ea69370768ab255bb1a058ade4a",
+      "message_id": "2dc930ab-35bf-45bb-8fed-d904ecbfdead",
+      "session_id": "20261030_190042_aa3a26",
+      "text": "KIWI-597d4b87",
+      "reply_to_text": "独立验收记录：当前暗号 KIWI-597d4b87，目的站东京站。",
+      "reply_to_message_id": "03609aac-41fc-4231-b16f-532220a6b979"
+    },
+    {
+      "conversation_id": "rk-c-7541f84d18198ea69370768ab255bb1a058ade4a",
+      "message_id": "3dbcf310-3a30-4722-a4cf-c079e97c998a",
+      "session_id": "20261030_190042_aa3a26",
+      "text": "KIWI-597d4b87",
+      "reply_to_text": "独立验收记录：当前暗号 KIWI-597d4b87，目的站东京站。",
+      "reply_to_message_id": "03609aac-41fc-4231-b16f-532220a6b979"
+    }
+  ],
+  "streamed_updates": 14
+}

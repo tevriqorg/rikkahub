@@ -23,6 +23,6 @@ class P14RemoteSyncWorker(ctx:Context,params:WorkerParameters):CoroutineWorker(c
         product.syncAndFlushActive()
         val repo=P14RemoteRepository(applicationContext,koin.get<SettingsStore>(),http)
         if(!repo.processPendingActive()) repo.refreshActive()
-        Result.success()
+        if(product.hasPendingDelivery()) Result.retry() else Result.success()
     }.getOrElse { Result.retry() }
 }

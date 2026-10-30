@@ -1,0 +1,14 @@
+<?xml version='1.0' encoding='UTF-8' ?>
+<testsuites tests="6" failures="0" errors="0" skipped="0" time="0.000" timestamp="2026-10-29T11:30:11" hostname="localhost">
+  <testsuite name="me.rerere.rikkahub.ui.activity.P14InboxReplicaUiInstrumentedTest" tests="6" failures="0" errors="0" skipped="0" time="18.660" timestamp="2026-10-29T11:30:11" hostname="localhost">
+    <properties>
+      <property name="device" value="emulator-5554" />
+    </properties>
+    <testcase name="plusOpensTickTickStyleQuickCapture" classname="me.rerere.rikkahub.ui.activity.P14InboxReplicaUiInstrumentedTest" time="6.315" />
+    <testcase name="entryIsUsefulWithoutAiAndConversationRequiresExplicitTap" classname="me.rerere.rikkahub.ui.activity.P14InboxReplicaUiInstrumentedTest" time="4.643" />
+    <testcase name="classificationReusesExistingViewIdentity" classname="me.rerere.rikkahub.ui.activity.P14InboxReplicaUiInstrumentedTest" time="2.621" />
+    <testcase name="inboxFollowsAndroidDarkConfiguration" classname="me.rerere.rikkahub.ui.activity.P14InboxReplicaUiInstrumentedTest" time="1.901" />
+    <testcase name="archivedChipUsesRealArchiveStateNotFakeTaskCompletion" classname="me.rerere.rikkahub.ui.activity.P14InboxReplicaUiInstrumentedTest" time="1.291" />
+    <testcase name="inboxShowsRealEntryAndOpensExistingConversation" classname="me.rerere.rikkahub.ui.activity.P14InboxReplicaUiInstrumentedTest" time="1.889" />
+  </testsuite>
+</testsuites>

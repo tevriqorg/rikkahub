@@ -282,12 +282,13 @@ class P14RecoveryInstrumentedTest {
         val assistant = Assistant(id = Uuid.parse("ae800001-0000-4000-8000-000000000003"), chatModelId = model.id, name = "P14 synthetic offline", runtimeMode = AssistantRuntimeMode.REMOTE)
         val provider = ProviderSetting.OpenAI(id = Uuid.parse("ae800001-0000-4000-8000-000000000005"), name = "P14 synthetic offline", models = listOf(model), apiKey = "", baseUrl = "http://127.0.0.1:9/v1")
         settings().update { it.copy(providers = it.providers.filterNot { p -> p.id == provider.id } + provider, assistants = it.assistants.filterNot { a -> a.id == assistant.id } + assistant) }
-        val accepted = product().acceptRikkaMessage("task4-offline", "ae800001-0000-4000-8000-000000000002", offlineMessage(), "ae800001-0000-4000-8000-000000000003", "ae800001-0000-4000-8000-000000000004")
+        val accepted = product().acceptRikkaMessage("task4-offline", "ae800001-0000-4000-8000-000000000002", offlineMessage(), "ae800001-0000-4000-8000-000000000003", "ae800001-0000-4000-8000-000000000004", deferAi = true)
         context.getSharedPreferences("task4-evidence", Context.MODE_PRIVATE).edit().putString("offline-conversation", accepted.conversationId).commit()
         val dao = P14ProductDatabase.get(context).dao()
         dao.markOutboxInFlight(accepted.clientOperationId)
         assertEquals("LOCAL_PENDING", dao.message(localMessageId.toString())?.deliveryState)
         assertEquals("IN_FLIGHT", dao.pendingOutbox().single { it.messageId == localMessageId.toString() }.state)
+        assertTrue(dao.pendingOutbox().single { it.messageId == localMessageId.toString() }.payloadJson.contains("\"defer_ai\":true"))
         evidence("seedOffline PASS: Entry/Conversation/Message/VOICE/Outbox transaction persisted before any credential/network; process now requires external force-stop")
     }
 
@@ -304,6 +305,7 @@ class P14RecoveryInstrumentedTest {
         assertEquals(1644L, File(requireNotNull(Uri.parse(voice.localLocator).path)).length())
         assertTrue(recoverP14AttachmentPart(voice) is UIMessagePart.Audio)
         assertEquals("IN_FLIGHT", dao.pendingOutbox().single { it.messageId == localMessageId.toString() }.state)
+        assertTrue(dao.pendingOutbox().single { it.messageId == localMessageId.toString() }.payloadJson.contains("\"defer_ai\":true"))
         repository.acceptRikkaMessage("task4-offline", "ae800001-0000-4000-8000-000000000002", offlineMessage(), "ae800001-0000-4000-8000-000000000003", "ae800001-0000-4000-8000-000000000004")
         assertEquals(1, dao.listMessages(id).size)
         assertEquals(1, dao.pendingOutbox().count { it.messageId == localMessageId.toString() })
