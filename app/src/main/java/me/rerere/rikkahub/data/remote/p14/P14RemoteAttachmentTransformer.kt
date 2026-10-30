@@ -62,7 +62,9 @@ internal class P14RemoteAttachmentTransformer(
         if (userIndex < 0) return messages
         val user = messages[userIndex]
         val attachmentCount = user.parts.count { it.isRemoteAttachment() }
-        if (attachmentCount == 0) return listOf(user)
+        if (attachmentCount == 0) return listOf(
+            withEntryContextForFirstRemoteTurn(messages).last()
+        )
         val connection=P14RuntimeConnection(provider.baseUrl.trimEnd('/'),provider.apiKey,provider.id.toString())
         val manifest=P14ManifestPolicy.load(ctx.context,connection,httpClient)
         P14ManifestPolicy.requireChat(manifest)
@@ -134,7 +136,9 @@ internal class P14RemoteAttachmentTransformer(
                     }
                 }.awaitAll().sortedBy { it.first }.map { it.second }
             }
-            listOf(user.copy(parts = transformedParts))
+            listOf(withEntryContextForFirstRemoteTurn(
+                messages.dropLast(1) + user.copy(parts = transformedParts),
+            ).last())
         }
     }
 

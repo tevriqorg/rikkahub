@@ -48,6 +48,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.repeatOnLifecycle
 import kotlinx.serialization.json.Json
 import me.rerere.rikkahub.data.datastore.SettingsStore
+import me.rerere.rikkahub.data.repository.ConversationRepository
 import me.rerere.rikkahub.data.remote.p14.*
 import me.rerere.rikkahub.ui.theme.RikkahubTheme
 import okhttp3.OkHttpClient
@@ -68,6 +69,7 @@ class P14EntryActivity : ComponentActivity() {
         val http = get<OkHttpClient>()
         val product = P14ProductRepository(applicationContext, http)
         val settingsStore = get<SettingsStore>()
+        val nativeConversations = get<ConversationRepository>()
         val remote = P14RemoteRepository(applicationContext, settingsStore, http)
         val sharedText = if (intent.action == Intent.ACTION_SEND && intent.type == "text/plain")
             intent.getStringExtra(Intent.EXTRA_TEXT) else null
@@ -86,6 +88,7 @@ class P14EntryActivity : ComponentActivity() {
                     product = product,
                     remote = remote,
                     settingsStore = settingsStore,
+                    nativeConversations = nativeConversations,
                     initialSharedText = sharedText,
                     initialSharedFile = sharedFile,
                     initialConversationId = intent.getStringExtra(EXTRA_CONVERSATION_ID),
@@ -116,6 +119,7 @@ private fun P14EntryScreen(
     product: P14ProductRepository,
     remote: P14RemoteRepository,
     settingsStore: SettingsStore,
+    nativeConversations: ConversationRepository,
     initialSharedText: String?,
     initialSharedFile: Uri?,
     initialConversationId: String?,
@@ -537,6 +541,29 @@ private fun P14EntryScreen(
                 status = if(chatActive)chatStatus else status,
                 onChatActive = {chatActive=it;chatStatus=null},
                 onRetryChat = {chatRefresh++},
+                onOpenNativeChat = {
+                    // Native RikkaHub owns model selection, history, streaming, and stop.
+                    // P14 only supplies its durable Entry source as context.
+                    val entryId = entry?.entryId
+                    val source = sourceMessage?.bodyText ?: entry?.bodyText
+                    if (entryId != null && source != null) {
+                        scope.launch {
+                            runCatching {
+                                withContext(Dispatchers.IO) {
+                                    prepareNativeEntryChat(entryId, source, nativeConversations, settingsStore)
+                                }
+                            }.onSuccess { chatId ->
+                                context.startActivity(
+                                    Intent(context, me.rerere.rikkahub.RouteActivity::class.java)
+                                        .putExtra("conversationId", chatId.toString())
+                                        .putExtra(me.rerere.rikkahub.P14_EXTRA_NATIVE_ENTRY_CHAT, true),
+                                )
+                            }.onFailure { status = it.message ?: "无法打开原生对话" }
+                        }
+                    } else {
+                        status = "正在恢复 Entry 上下文，请稍后重试"
+                    }
+                },
                 onSend = {
                     if (!sendingContinuation && input.isNotBlank() && canText && !upgradeRequired) {
                         val id = conversationId!!

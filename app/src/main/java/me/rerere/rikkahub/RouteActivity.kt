@@ -143,6 +143,7 @@ import org.koin.compose.koinInject
 import kotlin.uuid.Uuid
 
 private const val TAG = "RouteActivity"
+internal const val P14_EXTRA_NATIVE_ENTRY_CHAT = "p14_native_entry_chat"
 internal const val P14_ACTION_CONNECTION_SETTINGS = "me.rerere.rikkahub.action.P14_CONNECTION_SETTINGS"
 
 private const val ACTION_TRANSLATE = "me.rerere.rikkahub.action.TRANSLATE"
@@ -295,8 +296,11 @@ class RouteActivity : ComponentActivity() {
         }
         val migrationState by DatabaseMigrationTracker.state.collectAsStateWithLifecycle()
 
+        val fromP14Entry = intent.getBooleanExtra(P14_EXTRA_NATIVE_ENTRY_CHAT, false)
         val startScreen = Screen.Chat(
-            id = if (readBooleanPreference("create_new_conversation_on_start", true)) {
+            id = if (fromP14Entry) {
+                requireNotNull(intent.getStringExtra("conversationId"))
+            } else if (readBooleanPreference("create_new_conversation_on_start", true)) {
                 Uuid.random().toString()
             } else {
                 readStringPreference(
@@ -337,7 +341,10 @@ class RouteActivity : ComponentActivity() {
                             rememberViewModelStoreNavEntryDecorator(),
                         ),
                         modifier = Modifier.fillMaxSize(),
-                        onBack = { backStack.removeLastOrNull() },
+                        onBack = {
+                            if (fromP14Entry && backStack.size <= 1) finish()
+                            else backStack.removeLastOrNull()
+                        },
                         transitionSpec = {
                             if (backStack.size == 1) fadeIn() togetherWith fadeOut()
                             else {
