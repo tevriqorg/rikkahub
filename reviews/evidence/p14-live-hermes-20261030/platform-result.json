@@ -1,0 +1,31 @@
+{
+  "isolated_server": true,
+  "actual_p14_platform_adapter": true,
+  "actual_baseplatform_message_dispatch": true,
+  "hermes_backend": "stock CLI, existing provider config, no tools",
+  "hermes_invoked": true,
+  "production_untouched": true,
+  "capture_without_ai": true,
+  "same_conversation": true,
+  "same_hermes_session": true,
+  "streamed_updates": 14,
+  "turns": [
+    {
+      "conversation_id": "89838a7f-2e28-420a-902b-fc752a8fe882",
+      "message_id": "9e30d169-e4cf-4cac-acb6-d7fb948c3b4e",
+      "session_id": "20261030_145643_796519",
+      "text": "PLUM-ec4034e5",
+      "reply_to_text": "独立平台验收：当前暗号 PLUM-ec4034e5。",
+      "reply_to_message_id": "30fd3b60-12eb-489a-bf6d-b1c1ab391573"
+    },
+    {
+      "conversation_id": "89838a7f-2e28-420a-902b-fc752a8fe882",
+      "message_id": "2517536d-eca9-498b-b427-c169322789b6",
+      "session_id": "20261030_145643_796519",
+      "text": "PLUM-ec4034e5",
+      "reply_to_text": null,
+      "reply_to_message_id": null
+    }
+  ],
+  "android_activity_live_tested": false
+}
