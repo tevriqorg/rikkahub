@@ -62,9 +62,10 @@ internal class P14RemoteAttachmentTransformer(
         if (userIndex < 0) return messages
         val user = messages[userIndex]
         val attachmentCount = user.parts.count { it.isRemoteAttachment() }
-        if (attachmentCount == 0) return listOf(
-            withEntryContextForFirstRemoteTurn(messages).last()
-        )
+        // P14's durable Outbox already submitted this message ID with its original
+        // text. Rewriting the same turn to include Entry source causes a 409 conflict.
+        // The backend owns Entry context via its already-persisted source record.
+        if (attachmentCount == 0) return listOf(user)
         val connection=P14RuntimeConnection(provider.baseUrl.trimEnd('/'),provider.apiKey,provider.id.toString())
         val manifest=P14ManifestPolicy.load(ctx.context,connection,httpClient)
         P14ManifestPolicy.requireChat(manifest)
@@ -136,9 +137,7 @@ internal class P14RemoteAttachmentTransformer(
                     }
                 }.awaitAll().sortedBy { it.first }.map { it.second }
             }
-            listOf(withEntryContextForFirstRemoteTurn(
-                messages.dropLast(1) + user.copy(parts = transformedParts),
-            ).last())
+            listOf(user.copy(parts = transformedParts))
         }
     }
 

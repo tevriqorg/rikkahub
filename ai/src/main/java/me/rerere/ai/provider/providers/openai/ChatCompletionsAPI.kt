@@ -1,6 +1,7 @@
 package me.rerere.ai.provider.providers.openai
 
 import android.util.Log
+import java.io.IOException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.channels.awaitClose
@@ -71,6 +72,26 @@ import okhttp3.sse.EventSource
 import okhttp3.sse.EventSourceListener
 import okhttp3.sse.EventSources
 import kotlin.time.Clock
+
+/**
+ * Decode a provider's structured error when present. Non-JSON error bodies
+ * must preserve HTTP status and original transport cause.
+ */
+internal fun parseChatCompletionHttpFailure(
+    statusCode: Int?,
+    rawBody: String?,
+    originalCause: Throwable?,
+): Throwable {
+    val structured = rawBody?.takeIf { it.isNotBlank() }?.let { body ->
+        runCatching { Json.parseToJsonElement(body).parseErrorDetail() }.getOrNull()
+    }
+    if (structured != null) return structured
+    val status = statusCode?.let { "HTTP $it" } ?: "Provider request failed"
+    val summary = rawBody?.trim()?.take(160)?.takeIf {
+        it.isNotBlank() && !it.contains('<') && !it.contains('\n')
+    } ?: originalCause?.message?.take(160)
+    return IOException(if (summary.isNullOrBlank()) status else "$status: $summary", originalCause)
+}
 
 private const val TAG = "ChatCompletionsAPI"
 
@@ -191,20 +212,10 @@ class ChatCompletionsAPI(
                 println("[onFailure] 发生错误: ${t?.javaClass?.name} ${t?.message} / $response")
 
                 val bodyRaw = response?.body?.stringSafe()
-                try {
-                    if (!bodyRaw.isNullOrBlank()) {
-                        val bodyElement = Json.parseToJsonElement(bodyRaw)
-                        println(bodyElement)
-                        exception = bodyElement.parseErrorDetail()
-                        Log.i(TAG, "onFailure: $exception")
-                    }
-                } catch (e: Throwable) {
-                    Log.w(TAG, "onFailure: failed to parse from $bodyRaw")
-                    e.printStackTrace()
-                    exception = e
-                } finally {
-                    close(exception)
-                }
+                // An HTTP 500 can have a plain-text/HTML body. Never turn that
+                // upstream failure into a misleading JSON decoding exception.
+                exception = parseChatCompletionHttpFailure(response?.code, bodyRaw, exception)
+                close(exception)
             }
 
             override fun onClosed(eventSource: EventSource) {
