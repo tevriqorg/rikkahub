@@ -93,10 +93,10 @@ class P14HighFidelityVisualInstrumentedTest {
         conversationId?.let {intent.putExtra(P14EntryActivity.EXTRA_CONVERSATION_ID,it)}
         return ActivityScenario.launch(intent)
     }
-    private fun awaitTag(tag:String) {compose.waitUntil(20_000) {compose.onAllNodesWithTag(tag).fetchSemanticsNodes().isNotEmpty()};compose.onNodeWithTag(tag).assertIsDisplayed()}
+    private fun awaitTag(tag:String) {compose.waitUntil(20_000) {compose.onAllNodesWithTag(tag).fetchSemanticsNodes(atLeastOneRootRequired=false).isNotEmpty()};compose.onNodeWithTag(tag).assertIsDisplayed()}
     private fun enterEditor() {
         awaitTag("p14-entry-body")
-        compose.waitUntil(15_000){compose.onAllNodes(hasTestTag("p14-entry-body").and(hasClickAction())).fetchSemanticsNodes().isNotEmpty()}
+        compose.waitUntil(15_000){compose.onAllNodes(hasTestTag("p14-entry-body").and(hasClickAction())).fetchSemanticsNodes(atLeastOneRootRequired=false).isNotEmpty()}
         compose.onNodeWithTag("p14-entry-body").performClick();awaitTag("p14-entry-editor")
     }
     private fun photo(name:String,food:Boolean=false):File {
@@ -200,7 +200,7 @@ class P14HighFidelityVisualInstrumentedTest {
             scenario.onActivity {it.requestedOrientation=ActivityInfo.SCREEN_ORIENTATION_PORTRAIT}
             compose.waitUntil(20_000){context.resources.configuration.orientation==Configuration.ORIENTATION_PORTRAIT};awaitTag("p14-inbox-quick-input");compose.onNodeWithTag("p14-inbox-quick-input").assertTextEquals(text)
             val captureDraft=P14CaptureDraftStore(context).read();compose.onNodeWithTag("p14-inbox-quick-save").performClick()
-            compose.waitUntil(20_000){compose.onAllNodesWithTag("p14-quick-sheet").fetchSemanticsNodes().isEmpty()}
+            compose.waitUntil(20_000){compose.onAllNodesWithTag("p14-quick-sheet").fetchSemanticsNodes(atLeastOneRootRequired=false).isEmpty()}
             val saved=requireNotNull(db.dao().conversationByExternalSession(captureDraft.draftId));assertEquals(text,repo.entry(saved.entryId)!!.bodyText)
             assertEquals(1,db.dao().pendingOutbox().count {it.messageId==captureDraft.messageId})
             assertTrue(db.dao().pendingOutbox().single {it.messageId==captureDraft.messageId}.payloadJson.contains("defer_ai"))

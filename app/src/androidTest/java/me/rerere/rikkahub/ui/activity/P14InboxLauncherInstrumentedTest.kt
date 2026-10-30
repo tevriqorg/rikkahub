@@ -40,7 +40,7 @@ class P14InboxLauncherInstrumentedTest {
         try {
             compose.waitUntil(timeoutMillis = 20_000L) {
                 compose.onAllNodes(androidx.compose.ui.test.hasTestTag("p14-inbox-add"))
-                    .fetchSemanticsNodes().isNotEmpty()
+                    .fetchSemanticsNodes(atLeastOneRootRequired=false).isNotEmpty()
             }
             compose.onNodeWithTag("p14-inbox-list").assertIsDisplayed()
             compose.onNodeWithTag("p14-inbox-add").assertIsDisplayed()
@@ -56,7 +56,7 @@ class P14InboxLauncherInstrumentedTest {
                     android.content.Intent.FLAG_ACTIVITY_CLEAR_TOP or android.content.Intent.FLAG_ACTIVITY_SINGLE_TOP))
             compose.waitUntil(timeoutMillis = 20_000L) {
                 compose.onAllNodes(androidx.compose.ui.test.hasTestTag("p14-inbox-add"))
-                    .fetchSemanticsNodes().isNotEmpty()
+                    .fetchSemanticsNodes(atLeastOneRootRequired=false).isNotEmpty()
             }
             compose.onNodeWithTag("p14-inbox-add").assertIsDisplayed()
             androidx.test.espresso.Espresso.pressBackUnconditionally()
