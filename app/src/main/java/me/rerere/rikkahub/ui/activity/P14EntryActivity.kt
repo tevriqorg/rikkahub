@@ -545,12 +545,28 @@ private fun P14EntryScreen(
                     // Native RikkaHub owns model selection, history, streaming, and stop.
                     // P14 only supplies its durable Entry source as context.
                     val entryId = entry?.entryId
-                    val source = sourceMessage?.bodyText ?: entry?.bodyText
-                    if (entryId != null && source != null) {
+                    val p14ConversationId = conversationId
+                    if (entryId != null && p14ConversationId != null) {
                         scope.launch {
                             runCatching {
                                 withContext(Dispatchers.IO) {
-                                    prepareNativeEntryChat(entryId, source, nativeConversations, settingsStore)
+                                    val savedSource = product.ensureEntrySource(p14ConversationId)
+                                    val source = savedSource?.bodyText ?: sourceMessage?.bodyText ?: entry?.bodyText
+                                        ?: error("Entry source not available")
+                                    val sourceAttachments = savedSource?.let {
+                                        P14ProductDatabase.get(context).dao()
+                                            .attachmentsForMessage(it.messageId)
+                                            .mapNotNull(::recoverP14AttachmentPart)
+                                    }.orEmpty()
+                                    prepareNativeEntryChat(
+                                        entryId = entryId,
+                                        sourceText = source,
+                                        conversations = nativeConversations,
+                                        settingsStore = settingsStore,
+                                        existingP14LocalChatId = productConversation?.localConversationId,
+                                        originalSourceMessageId = savedSource?.messageId ?: sourceMessage?.messageId,
+                                        sourceAttachments = sourceAttachments,
+                                    )
                                 }
                             }.onSuccess { chatId ->
                                 context.startActivity(

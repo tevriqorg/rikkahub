@@ -14,6 +14,12 @@ class P14NativeEntryContextTest {
         assertNotEquals(first, nativeChatIdForEntry("entry-def"))
     }
 
+    @Test fun existingP14LocalConversationIdentityIsNotReplacedByASecondId() {
+        val localId = "7d24c499-4f4a-45f1-a210-ac542d4208c9"
+        assertNotEquals(nativeChatIdForEntry("entry-abc").toString(), localId)
+        assertEquals(localId, nativeChatIdForEntryOrExisting("entry-abc", localId).toString())
+    }
+
     @Test fun newEntryIsContextOnlyAndDoesNotGenerateAnAssistantReply() {
         val source = UIMessage.user(entryContextMessage("entry-abc", "长野之旅\n随时可能下雨"))
         val result = withEntryContextForFirstRemoteTurn(listOf(source))

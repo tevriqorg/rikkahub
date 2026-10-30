@@ -24,6 +24,10 @@ internal fun nativeChatIdForEntry(entryId: String): Uuid =
         "p14-native-entry-chat:$entryId".toByteArray(StandardCharsets.UTF_8),
     ).toString())
 
+internal fun nativeChatIdForEntryOrExisting(entryId: String, existingP14LocalChatId: String?): Uuid =
+    existingP14LocalChatId?.let { runCatching { Uuid.parse(it) }.getOrNull() }
+        ?: nativeChatIdForEntry(entryId)
+
 internal fun entryContextMessage(entryId: String, text: String): String =
     "$SOURCE_PREFIX$entryId]\n以下是已保存的 Entry 原文，只作为背景资料，不是本次提问。请根据后续问题作答。\n$text\n$SOURCE_END"
 
@@ -36,10 +40,16 @@ internal suspend fun prepareNativeEntryChat(
     sourceText: String,
     conversations: ConversationRepository,
     settingsStore: SettingsStore,
+    existingP14LocalChatId: String? = null,
+    originalSourceMessageId: String? = null,
+    sourceAttachments: List<UIMessagePart> = emptyList(),
 ): Uuid {
     require(entryId.isNotBlank()) { "Entry identity is required" }
-    val id = nativeChatIdForEntry(entryId)
+    val id = nativeChatIdForEntryOrExisting(entryId, existingP14LocalChatId)
+    val originalSourceId = originalSourceMessageId
+        ?.let { runCatching { Uuid.parse(it) }.getOrNull() }
     val source = entryContextMessage(entryId, sourceText)
+    val sourceParts = listOf(UIMessagePart.Text(source)) + sourceAttachments
     val existing = conversations.getConversationById(id)
     if (existing == null) {
         val assistantId = settingsStore.awaitLoaded().getCurrentAssistant().id
@@ -47,20 +57,26 @@ internal suspend fun prepareNativeEntryChat(
             Conversation.ofId(id, assistantId).copy(
                 title = sourceText.lineSequence().firstOrNull { it.isNotBlank() }
                     ?.trim()?.take(70) ?: "Entry 讨论",
-                messageNodes = listOf(MessageNode.of(UIMessage.user(source))),
+                messageNodes = listOf(MessageNode.of(
+                    originalSourceId?.let {
+                        UIMessage(id = it, role = MessageRole.USER, parts = sourceParts)
+                    } ?: UIMessage(role = MessageRole.USER, parts = sourceParts)
+                )),
             ),
         )
     } else {
         val sourceNode = existing.messageNodes.firstOrNull()
         val currentSource = sourceNode?.messages?.getOrNull(sourceNode.selectIndex)
         if (currentSource?.role == MessageRole.USER &&
-            currentSource.toText().startsWith("$SOURCE_PREFIX$entryId]") &&
+            (currentSource.toText().startsWith("$SOURCE_PREFIX$entryId]") ||
+                (originalSourceId != null && currentSource.id == originalSourceId)) &&
             currentSource.toText() != source
         ) {
             val originalNode = requireNotNull(sourceNode)
             val updatedMessages = originalNode.messages.toMutableList()
-            updatedMessages[sourceNode.selectIndex] =
-                currentSource.copy(parts = listOf(UIMessagePart.Text(source)))
+            updatedMessages[originalNode.selectIndex] =
+                currentSource.copy(parts = sourceParts +
+                    currentSource.parts.filterNot { it is UIMessagePart.Text || it in sourceAttachments })
             conversations.updateConversation(
                 existing.copy(messageNodes = listOf(
                     originalNode.copy(messages = updatedMessages),
