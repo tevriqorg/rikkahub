@@ -244,6 +244,10 @@ class P14HighFidelityVisualInstrumentedTest {
         }
         shell("cmd uimode night no")
         // Production Activity, Room, Outbox and real HTTP; loopback only, never Hermes.
+        // Fixtures represent existing uploaded files; preserve local bytes for handoff tests.
+        entries.forEach { entry -> db.dao().attachmentsForMessage(entry.messageId).forEach { attachment ->
+            db.dao().setAttachmentState(attachment.localAttachmentId,"SYNCED","synthetic-"+attachment.localAttachmentId)
+        } }
         val target=entries[0].conversationId
         repo.acceptEntryRevision(target,"地方小店讨论记录\n编辑后的上下文内容",1)
         val credential=P14RuntimeCredentialStore(context)
