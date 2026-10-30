@@ -1,0 +1,6 @@
+--------- beginning of main
+10-30 02:48:57.869  5456  5486 I P14_TASK4: networkOnline PASS: app UID reached actual synthetic Server health; attempts=1
+10-30 02:49:01.893  5543  5574 I P14_TASK4: networkOffline PASS: app UID cannot reach same synthetic Server endpoint; ConnectException
+10-30 02:49:14.100  5694  5726 I P14_TASK4: localContracts PASS: Room legacy migration, owned draft copy, Profile rollback/permission-denied, Manifest LKG/fallback/upgrade-required, OS notification projection
+10-30 02:49:17.817  5782  5816 I P14_TASK4: seedOffline PASS: Entry/Conversation/Message/VOICE/Outbox transaction persisted before any credential/network; process now requires external force-stop
+10-30 02:49:21.131  5849  5884 I P14_TASK4: verifyOffline PASS after external force-stop: no duplicate accepted mutation, IN_FLIGHT retry eligible, VOICE source and draft retained
