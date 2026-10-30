@@ -25,6 +25,7 @@ import java.io.File
 import java.security.MessageDigest
 import java.util.UUID
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.flow.first
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.*
 import me.rerere.ai.core.MessageRole
@@ -242,6 +243,27 @@ class P14HighFidelityVisualInstrumentedTest {
             keyboard(false)
         }
         shell("cmd uimode night no")
+        // Production Activity, Room, Outbox and real HTTP; loopback only, never Hermes.
+        val target=entries[0].conversationId
+        val credential=P14RuntimeCredentialStore(context)
+        P14SyntheticChatServer(target).use { server ->
+            credential.save("synthetic-native-chat",server.baseUrl,"synthetic-loopback-only")
+            credential.markActive("synthetic-native-chat",server.baseUrl)
+            try {launch(target).use {
+                awaitTag("p14-entry-body");compose.onNodeWithTag("p14-inbox-open-ai").performClick();awaitTag("p14-entry-message-input")
+                for(question in listOf("今天下午怎么去东京站？","然后怎么回来？")) {
+                    compose.onNodeWithTag("p14-entry-message-input").performTextInput(question)
+                    compose.onNodeWithTag("p14-inbox-ai-send").performClick()
+                    compose.waitUntil(45_000){compose.onAllNodesWithText("合成回复：$question",substring=true).fetchSemanticsNodes(atLeastOneRootRequired=false).isNotEmpty()}
+                }
+                keyboard(false);capture("09-native-chat-exchange")
+                assertEquals(2,server.targetTurns);assertEquals(2,server.targetMessageIds.size);assertTrue(server.retries>=3)
+                assertFalse(repo.messages(target,100).first().any {it.deliveryState=="STREAMING"})
+                File(output,"native-chat-exchange.json").writeText(buildJsonObject {
+                    put("real_activity",true);put("loopback_http",true);put("first_send_503",true);put("same_message_retry",true);put("two_turns",true);put("delayed_draft_and_final",true);put("same_conversation",true);put("hermes_invoked",false)
+                }.toString())
+            }} finally {credential.clear("synthetic-native-chat")}
+        }
         assertNull(P14RuntimeCredentialStore(context).activeConnection())
         assertEquals(14,db.dao().directoryPage(100,0).size)
         File(output,"journey-result.json").writeText("""{"visual_screens":6,"real_ime_verified":true,"rotation_verified":true,"source_preserved":true,"same_conversation":true,"hermes_invoked":false,"entry_count":14}""")
