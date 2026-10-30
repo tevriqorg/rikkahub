@@ -63,6 +63,7 @@ class P14EntryRevisionInstrumentedTest {
         assertEquals(a.messageId,payload["reply_to_message_id"]!!.jsonPrimitive.content)
         assertEquals("修订标题\n第二版正文",payload["quote"]!!.jsonObject["text"]!!.jsonPrimitive.content)
         assertEquals("请讨论这条修订",payload["text"]!!.jsonPrimitive.content)
+        assertEquals(3,payload["quote"]!!.jsonObject["source_revision"]!!.jsonPrimitive.int)
         assertEquals(1,db.dao().directoryPage(20,0).size)
     } }
     @Test fun oldAcknowledgementsCannotEraseLaterOfflineEdit()=runBlocking { fixture { _,db,repo ->
@@ -184,9 +185,18 @@ class P14EntryRevisionInstrumentedTest {
                 Response.Builder().request(r).protocol(Protocol.HTTP_1_1).code(code).message("synthetic").body(body.toResponseBody("application/json".toMediaType())).build()
             }.build() }
             val repository=P14ProductRepository(c,client,db)
-            val (_,capture)=capture(repository);repository.syncAndFlushActive()
+            val (_,capture)=capture(repository)
+            repository.acceptEntryRevision(capture.conversationId,"修改后的标题与正文",1)
+            repository.syncAndFlushActive()
             val first=repository.acceptEntryContinuation(capture.conversationId,"怎么去东京站？")
+            // Simulate the exact old candidate payload already persisted on an owner device.
+            val queued=db.dao().pendingOutbox().single()
+            val old=Json.parseToJsonElement(queued.payloadJson).jsonObject
+            db.dao().repairPendingPayload(queued.clientOperationId,JsonObject(old+("quote" to JsonObject(old["quote"]!!.jsonObject-"source_revision"))).toString())
             repository.syncAndFlushActive();assertTrue(repository.hasPendingDelivery())
+            val fixed=db.dao().pendingOutbox().single()
+            assertEquals(queued.messageId,fixed.messageId);assertEquals(queued.clientOperationId,fixed.clientOperationId)
+            assertEquals(2,Json.parseToJsonElement(fixed.payloadJson).jsonObject["quote"]!!.jsonObject["source_revision"]!!.jsonPrimitive.int)
             repository.syncAndFlushActive();assertFalse(repository.hasPendingDelivery())
             assertEquals(calls.filter {it.path.endsWith("/messages")}[0].payload,calls.filter {it.path.endsWith("/messages")}[1].payload)
             assertEquals("SYNCED",repository.message(first.messageId)!!.deliveryState)

@@ -243,6 +243,8 @@ interface P14ProductDao {
     @Query("UPDATE p14_attachments SET state=:state, remote_attachment_id=:remoteAttachmentId WHERE local_attachment_id=:localAttachmentId") suspend fun setAttachmentState(localAttachmentId: String, state: String, remoteAttachmentId: String?)
 
     @Query("SELECT * FROM p14_chat_outbox WHERE state IN ('PENDING','RETRY','IN_FLIGHT') ORDER BY created_at_epoch_ms ASC,rowid ASC LIMIT :limit") suspend fun pendingOutbox(limit: Int = 50): List<P14ChatOutboxEntity>
+    @Query("SELECT * FROM p14_chat_outbox WHERE message_id=:messageId AND operation_type='EDIT_SOURCE_MESSAGE' ORDER BY created_at_epoch_ms DESC,rowid DESC") suspend fun allMessageEdits(messageId:String):List<P14ChatOutboxEntity>
+    @Query("UPDATE p14_chat_outbox SET payload_json=:payload WHERE client_operation_id=:id AND state IN ('PENDING','RETRY','IN_FLIGHT')") suspend fun repairPendingPayload(id:String,payload:String)
     @Query("UPDATE p14_chat_outbox SET state='IN_FLIGHT', attempts=attempts+1, last_error_class=NULL WHERE client_operation_id=:id") suspend fun markOutboxInFlight(id: String)
     @Query("UPDATE p14_chat_outbox SET state='RETRY', last_error_class=:errorClass WHERE client_operation_id=:id") suspend fun markOutboxRetry(id: String, errorClass: String)
     @Query("UPDATE p14_chat_outbox SET state='ACKED', last_error_class=NULL, acked_at_epoch_ms=:ackedAt WHERE client_operation_id=:id") suspend fun markOutboxAcked(id: String, ackedAt: Long)

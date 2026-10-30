@@ -37,6 +37,10 @@ internal class P14SyntheticChatServer(private val target:String):Closeable {
             if(path.endsWith("/messages")) {
                 val cid=path.substringAfter("/conversations/").substringBefore('/')
                 if(cid!=target)return 200 to "{}"
+                val quote=payload["quote"]?.jsonObject
+                // Mirror Server QuoteSelection default=1 and exact revision validation.
+                if((quote?.get("source_revision")?.jsonPrimitive?.int ?: 1)!=2)return 409 to "{}"
+                check(quote!!["text"]!!.jsonPrimitive.content=="地方小店讨论记录\n编辑后的上下文内容")
                 val op=payload["client_operation_id"]!!.jsonPrimitive.content
                 if(cid==target&&retries++==0)return 503 to "{}"
                 if(accepted.add(op)) {

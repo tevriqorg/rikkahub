@@ -375,7 +375,7 @@ internal class P14ProductRepository(
                         put("text", normalized)
                         verifiedSource(conversationId)?.takeIf { it.revision>1 }?.let { source ->
                             put("reply_to_message_id",source.messageId)
-                            put("quote",buildJsonObject { put("text",source.bodyText) })
+                            put("quote",buildJsonObject { put("text",source.bodyText);put("source_revision",source.revision) })
                         }
                     }.toString(), createdAtEpochMs = now,
                 )
@@ -921,7 +921,25 @@ internal class P14ProductRepository(
             }
             dao.markOutboxInFlight(operation.clientOperationId)
             try {
-                val payload = json.parseToJsonElement(operation.payloadJson).jsonObject
+                var payload = json.parseToJsonElement(operation.payloadJson).jsonObject
+                // Older Inbox candidates omitted QuoteSelection.source_revision, whose
+                // Server default is 1. Their edited-source turns receive 409 before acceptance.
+                // Repair only a provable exact-body revision; keep the operation/message IDs.
+                val legacyQuote=payload["quote"] as? JsonObject
+                if(operation.operationType=="SEND_MESSAGE"&&legacyQuote!=null&&legacyQuote["source_revision"]==null) {
+                    val targetId=payload["reply_to_message_id"]?.jsonPrimitive?.contentOrNull
+                    val text=legacyQuote["text"]?.jsonPrimitive?.contentOrNull
+                    val source=targetId?.let {dao.message(it)}
+                    val revision=if(source!=null&&source.bodyText==text)source.revision else targetId?.let {id ->
+                        dao.allMessageEdits(id).firstNotNullOfOrNull {edit ->
+                            val old=json.parseToJsonElement(edit.payloadJson).jsonObject
+                            if(old["text"]?.jsonPrimitive?.contentOrNull==text)old["base_revision"]?.jsonPrimitive?.intOrNull?.plus(1) else null
+                        }
+                    }
+                    check(revision!=null) {"Cannot recover the original quoted revision"}
+                    payload=JsonObject(payload+ ("quote" to JsonObject(legacyQuote+("source_revision" to JsonPrimitive(revision)))))
+                    dao.repairPendingPayload(operation.clientOperationId,payload.toString())
+                }
                 if(operation.operationType in setOf("EDIT_SOURCE_MESSAGE","SET_CONVERSATION_STATE")) {
                     val mutation=buildJsonObject {
                         put("client_operation_id",operation.clientOperationId)

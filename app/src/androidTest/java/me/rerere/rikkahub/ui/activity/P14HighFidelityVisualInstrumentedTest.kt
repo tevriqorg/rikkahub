@@ -245,6 +245,7 @@ class P14HighFidelityVisualInstrumentedTest {
         shell("cmd uimode night no")
         // Production Activity, Room, Outbox and real HTTP; loopback only, never Hermes.
         val target=entries[0].conversationId
+        repo.acceptEntryRevision(target,"地方小店讨论记录\n编辑后的上下文内容",1)
         val credential=P14RuntimeCredentialStore(context)
         P14SyntheticChatServer(target).use { server ->
             credential.save("synthetic-native-chat",server.baseUrl,"synthetic-loopback-only")
