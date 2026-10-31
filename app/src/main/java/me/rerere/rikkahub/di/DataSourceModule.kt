@@ -31,24 +31,14 @@ import me.rerere.rikkahub.data.sync.BackupManager
 import me.rerere.rikkahub.data.db.AppDatabaseFactory
 import me.rerere.rikkahub.data.db.AppDatabase
 import me.rerere.rikkahub.data.db.fts.MessageFtsManager
-import me.rerere.rikkahub.data.ai.GenerationLoop
 import me.rerere.rikkahub.data.ai.UsageRecorder
 import me.rerere.rikkahub.data.ai.account.ProviderAccountManager
 import me.rerere.rikkahub.data.ai.mcp.McpManager
 import me.rerere.rikkahub.data.ai.transformers.AssistantTemplateLoader
-import me.rerere.rikkahub.data.ai.transformers.TemplateTransformer
-import me.rerere.rikkahub.data.datastore.SettingsStore
-import me.rerere.rikkahub.data.db.AppDatabase
-import me.rerere.rikkahub.data.db.AppDatabaseFactory
-import me.rerere.rikkahub.data.db.fts.MessageFtsManager
 import me.rerere.rikkahub.data.remote.ModelsDevUpdater
-import me.rerere.rikkahub.data.remote.RemoteFileStore
-import me.rerere.rikkahub.data.remote.RikkaHubAPI
 import me.rerere.rikkahub.data.remote.SettingsProxyAuthenticator
 import me.rerere.rikkahub.data.remote.SettingsProxySelector
 import me.rerere.rikkahub.data.remote.SettingsSocks5Authenticator
-import me.rerere.rikkahub.data.remote.SponsorAPI
-import me.rerere.rikkahub.data.sync.BackupManager
 import me.rerere.rikkahub.data.sync.S3Sync
 import me.rerere.rikkahub.data.sync.webdav.WebDavSync
 import me.rerere.rikkahub.service.memoryDreamKeepAlive
@@ -150,11 +140,6 @@ val dataSourceModule = module {
     }
 
     single { McpManager(settingsStore = get(), appScope = get(), filesManager = get()) }
-
-    // Keep P14 remote generation until the new agent architecture has a durable adapter.
-    single {
-        GenerationLoop(context = get(), providerManager = get(), json = get())
-    }
 
     single {
         MemoryConsolidator(

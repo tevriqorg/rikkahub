@@ -1,6 +1,14 @@
 package me.rerere.rikkahub.data.ai
 
 import android.content.Context
+import me.rerere.rikkahub.data.datastore.SettingsStore
+import me.rerere.rikkahub.data.model.AssistantRuntimeMode
+import me.rerere.rikkahub.data.model.forGenerationRuntime
+import me.rerere.rikkahub.data.files.FilesManager
+import me.rerere.rikkahub.data.remote.p14.P14RuntimeAccess
+import me.rerere.rikkahub.data.remote.p14.P14RemoteAttachmentTransformer
+import me.rerere.rikkahub.data.remote.p14.P14ManifestPolicy
+import okhttp3.OkHttpClient
 import android.util.Log
 import kotlinx.coroutines.flow.MutableStateFlow
 import me.rerere.ai.agent.AgentHooks
@@ -77,7 +85,13 @@ class ChatRequestFactory(
     private val memoryRepository: MemoryRepository,
     templateTransformer: TemplateTransformer,
     workspaceRepository: WorkspaceRepository,
+    settingsStore: SettingsStore,
+    filesManager: FilesManager,
+    okHttpClient: OkHttpClient,
 ) {
+    private val p14RuntimeAccess = P14RuntimeAccess(context, settingsStore, okHttpClient)
+    private val p14AttachmentTransformer = P14RemoteAttachmentTransformer(filesManager, okHttpClient)
+
     private val inputTransformers: List<InputMessageTransformer> = listOf(
         TimeReminderTransformer,
         PromptInjectionTransformer,
@@ -101,16 +115,28 @@ class ChatRequestFactory(
         val model = settings.getChatModelOf(conversation)
             ?: throw IllegalStateException("No chat model selected")
         val provider = model.findProvider(settings.providers) ?: error("Provider not found")
+        val remote = model.modelId == "p14-hermes"
+        val runtimeProvider = if (remote) {
+            val configured = provider as? ProviderSetting.OpenAI
+                ?: error("P14 Remote requires OpenAI-compatible provider")
+            p14RuntimeAccess.prepare(configured)
+        } else provider
+        val generationAssistant = if (remote) {
+            assistant.copy(runtimeMode = AssistantRuntimeMode.REMOTE).forGenerationRuntime()
+        } else assistant
         return ChatTurnContext(
-            settings = settings,
-            assistant = assistant,
+            settings = if (remote) settings.copy(providers = settings.providers.map {
+                if (it.id == provider.id) runtimeProvider else it
+            }) else settings,
+            assistant = generationAssistant,
             model = model,
-            providerSetting = provider,
+            providerSetting = runtimeProvider,
             conversationId = conversation.id,
-            conversationSystemPrompt = conversation.customSystemPrompt,
-            workspaceCwd = conversation.workspaceCwd,
-            memories = if (assistant.enableMemory) memoryRepository.getFiles(assistant.memoryId) else emptyList(),
-            tools = chatToolFactory.createTools(
+            conversationSystemPrompt = if (remote) null else conversation.customSystemPrompt,
+            workspaceCwd = if (remote) null else conversation.workspaceCwd,
+            memories = if (remote || !assistant.enableMemory) emptyList()
+                       else memoryRepository.getFiles(assistant.memoryId),
+            tools = if (remote) emptyList() else chatToolFactory.createTools(
                 settings = settings,
                 assistant = assistant,
                 model = model,
@@ -146,12 +172,12 @@ class ChatRequestFactory(
             }
 
             override suspend fun previewStep(message: UIMessage, newPartsFrom: Int) =
-                message.transformNewParts(newPartsFrom) {
+                if (turn.model.modelId == "p14-hermes") message else message.transformNewParts(newPartsFrom) {
                     it.visualTransforms(outputTransformers, context, turn.model, turn.assistant, turn.settings)
                 }
 
             override suspend fun finishStep(message: UIMessage, newPartsFrom: Int) =
-                message.transformNewParts(newPartsFrom) {
+                if (turn.model.modelId == "p14-hermes") message else message.transformNewParts(newPartsFrom) {
                     it.transforms(outputTransformers, context, turn.model, turn.assistant, turn.settings)
                         .visualTransforms(outputTransformers, context, turn.model, turn.assistant, turn.settings)
                         .onGenerationFinish(outputTransformers, context, turn.model, turn.assistant, turn.settings)
@@ -226,9 +252,11 @@ class ChatRequestFactory(
             if (system.isNotBlank()) {
                 add(UIMessage.system(prompt = system).copy(isSynthetic = true))
             }
-            addAll(messages.limitContext(assistant.contextMessageLimit))
+            addAll(if (turn.model.modelId == "p14-hermes") messages.takeLast(1)
+                   else messages.limitContext(assistant.contextMessageLimit))
         }.transforms(
-            transformers = inputTransformers,
+            transformers = if (turn.model.modelId == "p14-hermes")
+                listOf(p14AttachmentTransformer) else inputTransformers,
             context = context,
             model = turn.model,
             assistant = assistant,

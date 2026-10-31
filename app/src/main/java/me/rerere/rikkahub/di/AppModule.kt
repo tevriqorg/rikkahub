@@ -121,6 +121,9 @@ val appModule = module {
             memoryRepository = get(),
             templateTransformer = get(),
             workspaceRepository = get(),
+            settingsStore = get(),
+            filesManager = get(),
+            okHttpClient = get(),
         )
     }
 
@@ -131,16 +134,12 @@ val appModule = module {
             appEventBus = get(),
             settingsStore = get(),
             conversationRepo = get(),
-            memoryRepository = get(),
-            generationLoop = get(),
+            requestFactory = get(),
             memoryConsolidationScheduler = get(),
             translationHandler = get(),
-            templateTransformer = get(),
-            providerManager = get(),
-            chatToolFactory = get(),
+            metaGenerator = get(),
             mcpManager = get(),
             filesManager = get(),
-            workspaceRepository = get(),
             folderRepository = get(),
             okHttpClient = get(),
         )
