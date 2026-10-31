@@ -478,8 +478,14 @@ class ChatService(
                 // in the native RikkaHub timeline to preserve identity across retries.
                 val userMessage = UIMessage(role = MessageRole.USER, parts = processedContent)
                 if (isP14Remote) {
+                    // An existing Entry has an independent Server session ID.
+                    // Never submit its native discussion UUID as a new Entry;
+                    // that would fork the saved source and lose its revision.
+                    val serverSession = p14ProductRepository
+                        .conversationForLocal(conversationId.toString())
+                        ?.externalSessionId ?: conversationId.toString()
                     p14ProductRepository.acceptRikkaMessage(
-                        externalSessionId = conversationId.toString(),
+                        externalSessionId = serverSession,
                         localConversationId = conversationId.toString(),
                         message = userMessage,
                         assistantId = currentConversation.assistantId.toString(),

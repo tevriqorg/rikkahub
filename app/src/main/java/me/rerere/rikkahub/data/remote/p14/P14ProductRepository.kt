@@ -283,6 +283,10 @@ internal class P14ProductRepository(
         dao.conversation(conversationId)
     }
     suspend fun conversationForExternal(externalSessionId: String) = dao.conversationByExternalSession(externalSessionId)
+    /** Native RikkaHub chat ID is a local UUID, not necessarily the original
+     * P14 Server session ID. Reuse the authoritative mapping to avoid forking
+     * a second Entry whenever the owner chooses Discuss on an old capture. */
+    suspend fun conversationForLocal(localConversationId: String) = dao.conversationByLocalId(localConversationId)
     suspend fun message(messageId: String) = dao.message(messageId)
 
     suspend fun acceptRikkaMessage(
