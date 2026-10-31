@@ -238,7 +238,25 @@ internal fun p14ViewTitle(view:String)=when(view){"todo"->"待办";"idea"->"想�
         Column(Modifier.fillMaxWidth().imePadding().navigationBarsPadding()) {
             val orientation=LocalConfiguration.current.orientation
             val windowFocused=LocalWindowInfo.current.isWindowFocused
-            LaunchedEffect(orientation,windowFocused){if(windowFocused){withFrameNanos {};delay(350);focus.requestFocus();delay(150);keyboard?.show()}}
+            // A rotation recreates the modal dialog window. Focus can become
+            // valid before Android finishes the dialog's IME handoff, which
+            // hides the keyboard even while the text field remains focused.
+            // Reassert focus only when the sheet is attached/reoriented, not
+            // on every recomposition or every typed character.
+            LaunchedEffect(orientation, windowFocused) {
+                if (windowFocused) {
+                    withFrameNanos {}
+                    delay(350)
+                    focus.requestFocus()
+                    delay(150)
+                    keyboard?.show()
+                    // A second post-layout attempt survives the old window
+                    // being torn down after the initial IME show request.
+                    delay(550)
+                    focus.requestFocus()
+                    keyboard?.show()
+                }
+            }
             BasicTextField(value=value,onValueChange={value=it;onText(it.text)},textStyle=TextStyle(color=c.ink,fontSize=17.sp,lineHeight=24.sp),cursorBrush=SolidColor(c.blue),modifier=Modifier.fillMaxWidth().padding(start=18.dp,end=18.dp,top=17.dp,bottom=3.dp).heightIn(min=76.dp,max=200.dp).focusRequester(focus).testTag("p14-inbox-quick-input"),keyboardOptions=KeyboardOptions(imeAction=ImeAction.Default),decorationBox={inner->Box {if(value.text.isBlank())Text("例如：下午 3 点组织大家开会",color=c.muted.copy(alpha=.55f),fontSize=16.sp);inner()}})
             if(materials.isNotEmpty())Row(Modifier.fillMaxWidth().padding(horizontal=18.dp),horizontalArrangement=Arrangement.spacedBy(8.dp)){materials.take(3).forEach {m->Text(m.originalName.take(18)+" ×",fontSize=11.sp,color=c.blue,modifier=Modifier.clip(RoundedCornerShape(6.dp)).background(c.chip).clickable {onRemove(m)}.padding(6.dp))}}
             if(selectedViews.isNotEmpty())Row(Modifier.padding(horizontal=18.dp,vertical=3.dp),horizontalArrangement=Arrangement.spacedBy(6.dp)){selectedViews.forEach {ClassificationPill(p14ViewTitle(it))}}
