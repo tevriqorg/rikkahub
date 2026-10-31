@@ -53,10 +53,15 @@ class P14Upgrade30To32PreservationTest {
         val conversationId = "conversation-migration-$suffix"
         val messageId = "message-migration-$suffix"
         val operationId = "operation-migration-$suffix"
+        val productDbName = "p14-v6-upgrade-fixture-$suffix.db"
 
         // P14 Room is separate from upstream RikkaHub Room. The local pending
         // Outbox must remain durable and must not accidentally be sent by this test.
-        val p14 = P14ProductDatabase.get(context)
+        val p14 = Room.databaseBuilder(
+            context,
+            P14ProductDatabase::class.java,
+            productDbName,
+        ).build()
         val p14Dao = p14.dao()
         p14Dao.upsertEntry(P14EntryEntity(entryId, "P14 durable source", 1_000L))
         p14Dao.upsertConversation(
@@ -91,6 +96,8 @@ class P14Upgrade30To32PreservationTest {
                 createdAtEpochMs = 1_003L,
             ),
         )
+
+        p14.close()
 
         // A real Room v30 fixture with both user and assistant history.
         // The v30->31 migration must backfill usage; v31->32 must retain it.
@@ -139,7 +146,7 @@ class P14Upgrade30To32PreservationTest {
         Room.databaseBuilder(
             context,
             P14ProductDatabase::class.java,
-            "rikkahub-p14-product.db",
+            productDbName,
         ).build().use { reloaded ->
             reloaded.openHelper.writableDatabase.query("PRAGMA user_version").use {
                 assertTrue(it.moveToFirst())
@@ -154,8 +161,10 @@ class P14Upgrade30To32PreservationTest {
             assertEquals("PENDING", pending?.state)
         }
 
-        // Test fixtures are isolated to the disposable emulator, not migrated
-        // from a real owner device. This is necessary but not sufficient for
-        // approval of an in-place user-device upgrade.
+        // The two independent test databases contain only synthetic fixtures.
+        // This is not proof that an existing owner's installed APK can be
+        // overwritten without migration or export/restore failures.
+        assertTrue(context.deleteDatabase(productDbName))
+        assertTrue(context.deleteDatabase(testDb))
     }
 }
