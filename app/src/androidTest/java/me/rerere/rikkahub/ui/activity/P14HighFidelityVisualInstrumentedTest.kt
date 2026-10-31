@@ -270,47 +270,105 @@ class P14HighFidelityVisualInstrumentedTest {
         File(output,"journey-result.json").writeText("""{"visual_screens":6,"real_ime_verified":true,"rotation_verified":true,"source_preserved":true,"same_conversation":true,"hermes_invoked":false,"entry_count":14}""")
     }
     @Test fun nativeChatExchange():Unit=runBlocking {
-        // A fresh instrumentation process owns this Activity. Do not reuse owners
-        // that were rotated and re-themed during the six-screen visual journey.
         guard()
-        // Fixtures represent existing uploaded files; preserve local bytes for handoff tests.
-        db.dao().directoryPage(100,0).forEach { conversation ->
-            repo.ensureEntrySource(conversation.conversationId)?.let { source ->
-                db.dao().attachmentsForMessage(source.messageId).forEach { attachment ->
-                    db.dao().setAttachmentState(attachment.localAttachmentId,"SYNCED","synthetic-"+attachment.localAttachmentId)
-                }
-            }
-        }
         val target=requireNotNull(prefs.getString("primary",null))
-        repo.acceptEntryRevision(target,"地方小店讨论记录\n编辑后的上下文内容",1)
+        val stored=requireNotNull(repo.conversation(target))
+        val entryId=stored.entryId
+        val revisedSource="地方小店讨论记录\n编辑后的上下文内容"
+        repo.acceptEntryRevision(target,revisedSource,1)
         val credential=P14RuntimeCredentialStore(context)
-        P14SyntheticChatServer(target).use { server ->
+        val settings=org.koin.core.context.GlobalContext.get()
+            .get<me.rerere.rikkahub.data.datastore.SettingsStore>()
+        val nativeRepo=org.koin.core.context.GlobalContext.get()
+            .get<me.rerere.rikkahub.data.repository.ConversationRepository>()
+        val original=settings.awaitLoaded()
+        val model=me.rerere.ai.provider.Model(modelId="p14-hermes")
+        P14SyntheticChatServer(target).use {server ->
+            val provider=me.rerere.ai.provider.ProviderSetting.OpenAI(
+                name="P14 synthetic native loopback",
+                models=listOf(model),
+                baseUrl=server.baseUrl,
+                apiKey="synthetic-loopback-not-a-real-secret",
+            )
+            settings.update { current -> current.copy(
+                providers=current.providers+provider,
+                chatModelId=model.id,
+                enableAutoTitle=false,
+                enableSuggestion=false,
+                assistants=current.assistants.map { a ->
+                    if(a.id==current.assistantId) a.copy(
+                        chatModelId=model.id,
+                        streamOutput=true,
+                        runtimeMode=me.rerere.rikkahub.data.model.AssistantRuntimeMode.REMOTE,
+                    ) else a
+                },
+            ) }
             credential.save("synthetic-native-chat",server.baseUrl,"synthetic-loopback-only")
             credential.markActive("synthetic-native-chat",server.baseUrl)
-            try {launch(target).use {
-                awaitTag("p14-entry-body");compose.onNodeWithTag("p14-inbox-open-ai").performClick();awaitTag("p14-entry-message-input")
-                for(question in listOf("今天下午怎么去东京站？","然后怎么回来？")) {
-                    compose.onNodeWithTag("p14-entry-message-input").performTextInput(question)
-                    compose.onNodeWithTag("p14-inbox-ai-send").performClick()
-                    compose.waitUntil(30_000){compose.onAllNodesWithText("正在组织合成回复…",substring=true).fetchSemanticsNodes(atLeastOneRootRequired=false).isNotEmpty()}
-                    compose.waitUntil(45_000){compose.onAllNodesWithText("合成回复：$question",substring=true).fetchSemanticsNodes(atLeastOneRootRequired=false).isNotEmpty()}
+            try {
+                launch(target).use {
+                    awaitTag("p14-entry-body")
+                    compose.onNodeWithTag("p14-inbox-open-ai").performClick()
+                    awaitTag("chat_input")
+                    val nativeId=nativeChatIdForEntryOrExisting(
+                        entryId,stored.localConversationId,
+                    )
+                    val opened=requireNotNull(nativeRepo.getConversationById(nativeId))
+                    assertTrue(
+                        "Native chat must use revised Entry source, not stale capture",
+                        opened.currentMessages.first().toText().contains(revisedSource),
+                    )
+                    // UI must use real 3.1.1 ChatInput + runAgent, not old
+                    // p14-entry-message-input or a second generated chat engine.
+                    for((index,question) in listOf(
+                        "今天下午怎么去东京站？","然后怎么回来？",
+                    ).withIndex()) {
+                        compose.onNodeWithTag("chat_input").performTextInput(question)
+                        compose.onNodeWithTag("chat_send_button").performClick()
+                        val expected="合成回复：第${index+1}轮"
+                        compose.waitUntil(45_000) {
+                            runBlocking {
+                                nativeRepo.getConversationById(nativeId)?.currentMessages
+                                    ?.any { msg -> msg.role==MessageRole.ASSISTANT &&
+                                        msg.toText().contains(expected) }
+                            }==true
+                        }
+                        val history=requireNotNull(nativeRepo.getConversationById(nativeId)).currentMessages
+                        val userAt=history.indexOfLast {it.role==MessageRole.USER&&it.toText().contains(question)}
+                        val assistantAt=history.indexOfLast {it.role==MessageRole.ASSISTANT&&it.toText().contains(expected)}
+                        assertTrue("Question must precede its native streamed answer",userAt>=1&&assistantAt>userAt)
+                    }
+                    assertEquals(2,server.nativeStreamTurns)
+                    // Native UI completion is not enough: flush the separate
+                    // durable P14 Outbox and verify both sends reused the
+                    // original Server session rather than creating an Entry.
+                    repeat(4) {repo.syncAndFlushActive()}
+                    assertEquals("Both turns must reach the original P14 session",2,server.targetTurns)
+                    assertEquals(2,server.targetMessageIds.size)
+                    val final=requireNotNull(nativeRepo.getConversationById(nativeId))
+                    assertEquals(1,final.currentMessages.count {
+                        it.role==MessageRole.USER && it.toText().contains("[P14_ENTRY_CONTEXT:")
+                    })
+                    keyboard(false)
+                    capture("09-native-chat-exchange")
+                    File(output,"native-chat-exchange.json").writeText(buildJsonObject {
+                        put("real_activity",true);put("synthetic_loopback_sse",true)
+                        put("native_runAgent",true);put("two_turns",true)
+                        put("same_conversation",true);put("source_revision",2)
+                        put("hermes_invoked",false)
+                    }.toString())
+                    shell("input keyevent KEYCODE_BACK")
+                    awaitTag("p14-entry-body")
                 }
-                keyboard(false);capture("09-native-chat-exchange")
-                assertEquals(2,server.targetTurns);assertEquals(2,server.targetMessageIds.size);assertTrue(server.retries>=3)
-                val history=repo.messages(target,100).first()
-                assertFalse(history.any {it.deliveryState=="STREAMING"})
-                for(question in listOf("今天下午怎么去东京站？","然后怎么回来？")) {
-                    val userAt=history.indexOfFirst {it.role=="user"&&it.bodyText==question}
-                    val replyAt=history.indexOfFirst {it.role=="assistant"&&it.bodyText=="合成回复：$question"}
-                    assertTrue("Question must precede its reply even when timestamps tie",userAt>=0&&replyAt>userAt)
-                }
-                File(output,"native-chat-exchange.json").writeText(buildJsonObject {
-                    put("real_activity",true);put("loopback_http",true);put("first_send_503",true);put("same_message_retry",true);put("two_turns",true);put("delayed_draft_and_final",true);put("same_conversation",true);put("hermes_invoked",false)
-                }.toString())
-            }} finally {
+            } finally {
+                settings.update { current -> current.copy(
+                    providers=original.providers,
+                    chatModelId=original.chatModelId,
+                    assistants=original.assistants,
+                    enableAutoTitle=original.enableAutoTitle,
+                    enableSuggestion=original.enableSuggestion,
+                ) }
                 credential.clear("synthetic-native-chat")
-                // The next method is a separate instrumentation process. Flush the
-                // preceding asynchronous removal before this runner can terminate.
                 check(context.getSharedPreferences("p14-rikkahub-runtime",Context.MODE_PRIVATE).edit().commit())
             }
         }
