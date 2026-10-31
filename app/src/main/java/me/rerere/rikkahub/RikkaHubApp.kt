@@ -5,7 +5,7 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
 import coil3.ImageLoader
-import coil3.compose.setSingletonImageLoaderFactory
+import coil3.SingletonImageLoader
 import coil3.gif.AnimatedImageDecoder
 import coil3.gif.GifDecoder
 import coil3.network.cachecontrol.CacheControlCacheStrategy
@@ -81,7 +81,7 @@ class RikkaHubApp : Application() {
         // Register Coil once before ANY Activity/Compose image access.
         // The P14 Entry launcher may use AsyncImage before RouteActivity exists.
         // setSafe rejects re-registering after first load and would crash UI.
-        setSingletonImageLoaderFactory { context ->
+        SingletonImageLoader.setSafe { context ->
             ImageLoader.Builder(context)
                 .crossfade(true)
                 .components {
