@@ -115,7 +115,8 @@ internal class P14ProductRepository(
     private val editLock = Mutex()
     fun inboxRows(archived:Boolean=false,limit:Int=60,query:String="",view:String=""):Flow<List<P14InboxRow>> =
         combine(dao.observeInboxRows(archived,limit,query,view),sourceIndexVersion) { rows,_ ->
-            rows.map { row -> verifiedSource(row.conversationId)?.let { row.copy(bodyText=it.bodyText) } ?: row }
+            rows.filterNot { it.bodyText.startsWith("[P14_ENTRY_CONTEXT:notification:") }
+                .map { row -> verifiedSource(row.conversationId)?.let { row.copy(bodyText=it.bodyText) } ?: row }
         }
     fun sourceMessage(conversationId:String):Flow<P14ProductMessageEntity?> =
         combine(dao.observeFirstUser(conversationId),sourceIndexVersion) { _,_ -> verifiedSource(conversationId) }
