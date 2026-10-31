@@ -252,7 +252,11 @@ class ChatRequestFactory(
             if (system.isNotBlank()) {
                 add(UIMessage.system(prompt = system).copy(isSynthetic = true))
             }
-            addAll(if (turn.model.modelId == "p14-hermes") messages.takeLast(1)
+            // P14RemoteAttachmentTransformer selects the last USER message with
+            // the durable P14 message ID. Keeping the full candidate history until
+            // this transformer runs allows regenerate/retry after an assistant turn
+            // without accidentally sending an assistant-only request to the server.
+            addAll(if (turn.model.modelId == "p14-hermes") messages
                    else messages.limitContext(assistant.contextMessageLimit))
         }.transforms(
             transformers = if (turn.model.modelId == "p14-hermes")
