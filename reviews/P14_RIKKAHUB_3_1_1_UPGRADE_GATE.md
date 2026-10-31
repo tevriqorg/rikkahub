@@ -1,24 +1,49 @@
-# P14 / RikkaHub 3.1.1 — Integration gate (2026-10-31)
+# P14 / RikkaHub 3.1.1 — Unified integration gate (2026-10-31)
 
-**Status: EXPERIMENTAL — NOT FOR OWNER INSTALLATION.** No Hermes use, server deployment, or APK distribution.
+Status: **EXPERIMENTAL — NOT OWNER-ACCEPTED, NO FORMAL RELEASE.**
 
-## Source and recovery authority
-- P14 Android: deaec054f4411e3d97e64329359a55cc8d3369f2.
-- Upstream release 3.1.1: ad2c4430d50ba52392b2941367f98ef59614cb73.
-- P14 authority Issue #51, Requirement P14R3 and P14R3_REMOTE_CHANNEL; recovery rows S0-LOCAL, SYNC-REPLAY, RC-G1, RC-G4, CAPTURE-001.
+## Frozen sources of authority
 
-## Architecture blocking gate
-- 3.1.1 changes approximately 646 files; 10 conflicting files and 24 conflict blocks.
-- Native ChatService now uses the upstream runAgent and ChatRequestFactory, while P14 owns durable remote message identity, Outbox, retry, edits and quote revision.
-- First-pass integration deliberately retains P14 ChatService and GenerationLoop. This is not proof of compatibility with the new 3.1.1 Agent architecture. Full migration remains a required gate.
-- App version code 194, 3.1.1 with P14 CI test suffix; preserve exact application ID and long-lived fixed-signature install track.
-- Upstream 3.1.1 already contains equivalent context-limit and presigned S3 download patches: do not duplicate cherry-picks. Image/video creation and new SSE code need semantic comparison against archived branches.
-- Room main DB v30 to v31 to v32 migration requires representative dataset testing. P14 product Room v6 must remain independent.
-- Preserve Entry body vs Conversation, real native chat and same message IDs, local Outbox, replay, stop/retry/edit, and UnifiedPush/Interaction.
+- P14-Entry Issue #51, original P14R3, P14R3 Architecture Addendum, P14R3 Remote Channel (§§6, 8, 11, 14, 19), R3 Recovery Matrix, P14R2 Profile/Capture/Observation requirements, and Server/Android Architecture.
+- Android PR #14 is now the single active 3.1.1 client-upgrade line. No second P14 runtime or 2.5.6 notification maintenance.
 
-## Required gates before install
-1. GitHub Actions compile, unit tests, Android test compilation — never build Android code on VPS.
-2. Adapt P14 remote execution into the native 3.1.1 Agent architecture, without a second chat engine.
-3. Database upgrade and rollback rehearsal.
-4. Real multi-turn conversation and device push checks.
-5. Fixed signature human-test build only after all gates pass.
+## Exact source lineage and notifications governance
+
+- Existing stable test baseline: deaec054 (unchanged), package me.rerere.rikkahub.debug.
+- RikkaHub upstream 3.1.1: ad2c4430.
+- Previous 3.1.1 integration: 85dbb456 (upstream ChatService/runAgent, native P14 durable message adapter, Coil initialization).
+- Notification RC-G5 Android source: PR #15 / 982fe21e, merged as the **second parent** of 96c518bd into the upgrade branch. All six files and commit history retained. Do not cherry-pick duplications.
+- PR #15 closed as superseded, NOT accepted. Permanent rollback tag archive/p14-notification-native-discussion-982fe21e-20261031 points to the exact original SHA.
+- The old notification branch remains frozen while its separate Tokyo VPS worktree is checked out. New changes go to PR #14.
+
+## Server fixes (read-only compatibility, never port Python into Android)
+
+- Server PR #57: duplicate Outbox/Completions, 500 and Working progress fixes.
+- Server PR #58: authoritative NotificationRow/producer/context re-resolution for every remote discussion turn.
+- Server PR #59: ddace69 final-only append-only OpenAI SSE after mutable Hermes drafts, heartbeat while pending.
+- Latest Tokyo TEST container verified running p14-server:ddace69b2c34da0860b62e32d1053e04d0bd0e74; historical read-only replay exactly 785/785 stored final characters and one terminal stop/DONE, no stream consistency error. No Hermes invocation or production service mutation in this Android upgrade.
+- Notification context is untrusted information, never approval for an Agent action, deploy, or repair.
+
+## Requirement gates (evidence vs unknown)
+
+| Gate | Actual state |
+|---|---|
+| S0-LOCAL / SYNC-REPLAY | Existing P14 Room/Outbox and replay retained. Notification source is accepted locally/defer-AI and flushed before native chat. Synthetic and two-device reacceptance pending. |
+| RC-G1 Native chat | 3.1.1 native ChatService/runAgent, old GenerationLoop removed, P14 remote-only tools/memory isolation and stable identities kept. Android main source + JVM baseline green, post-notification live UI regression pending. |
+| RC-G2 media / voice | Existing encrypted attachments and true-voice source kept; new physical-device tests pending. |
+| RC-G3 message ops | Existing quote revision, remote edit/delete and Activity kept. Must retest real behavior after 3.1.1 merge. |
+| RCG4-NOTIFICATION | Canonical details, provenance, notification -> native conversation, click navigation inherited from 982fe21e; native CI pending. OEM system push still unverified. |
+| RCG5-INTERACTION | One deterministic native conversation ID per notification; background source Outbox barrier; no execution/approval from discussion. Synthetic tests pending. No Hermes approval/execution allowed. |
+| DUR-REMOTE-DB | New P14Upgrade30To32PreservationTest creates real Room v30 fixture, upgrades with production factory to v32, validates conversation and usage; independent synthetic P14 v6 DB reopened with pending Outbox intact. Actual user-device migration still RED. |
+| VIEWS-001 / CAPTURE-001 | Real emulator screenshot shows quick-add soft keyboard hidden after landscape rotation, fixed by post-modal focus/IME retry 839a53c0; strict visual test still pending. |
+| Setup/auth/push | APIs and controls retained; physical and multi-device acceptance pending. |
+
+## GitHub Actions evidence
+
+- Pre-notification 3.1.1 Android compile PASS: https://github.com/tevriqorg/public-ci/actions/runs/41202660927
+- PR #15 merged into 3.1.1 compile PASS: https://github.com/tevriqorg/public-ci/actions/runs/41204141055
+- Public CI emulator JDK rate-limit repair PR #11 and Room migration gate PR #12 merged; legacy 2.5.6 still supports its own task names.
+- Latest full ARM64/JVM/Android-test compile: https://github.com/tevriqorg/public-ci/actions/runs/41205120797
+- Latest fully synthetic, no-Hermes emulator: https://github.com/tevriqorg/public-ci/actions/runs/41205117582
+
+**No new installable 3.1.1 candidate until post-merge CI and Room migration are GREEN.** Synthetic acceptance does not prove owner in-place data upgrade. CI owns Android build. Existing pinned TEST certificate on VPS may sign a verified immutable CI artifact after all gates, upload only a labeled GitHub test prerelease. Never use Hermes or real Agent actions under current authorization.
