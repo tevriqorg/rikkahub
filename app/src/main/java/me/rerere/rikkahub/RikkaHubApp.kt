@@ -4,6 +4,14 @@ import android.app.Application
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
+import coil3.ImageLoader
+import coil3.compose.setSingletonImageLoaderFactory
+import coil3.gif.AnimatedImageDecoder
+import coil3.gif.GifDecoder
+import coil3.network.cachecontrol.CacheControlCacheStrategy
+import coil3.network.okhttp.OkHttpNetworkFetcherFactory
+import coil3.request.crossfade
+import coil3.svg.SvgDecoder
 import android.util.Log
 import android.widget.Toast
 import androidx.compose.foundation.ComposeFoundationFlags
@@ -70,6 +78,26 @@ const val MEMORY_DREAM_NOTIFICATION_CHANNEL_ID = "memory_dream"
 class RikkaHubApp : Application() {
     override fun onCreate() {
         super.onCreate()
+        // Register Coil once before ANY Activity/Compose image access.
+        // The P14 Entry launcher may use AsyncImage before RouteActivity exists.
+        // setSafe rejects re-registering after first load and would crash UI.
+        setSingletonImageLoaderFactory { context ->
+            ImageLoader.Builder(context)
+                .crossfade(true)
+                .components {
+                    add(OkHttpNetworkFetcherFactory(
+                        callFactory = { GlobalContext.get().get<OkHttpClient>() },
+                        cacheStrategy = { CacheControlCacheStrategy() },
+                    ))
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                        add(AnimatedImageDecoder.Factory())
+                    } else {
+                        add(GifDecoder.Factory())
+                    }
+                    add(SvgDecoder.Factory(scaleToDensity = true))
+                }
+                .build()
+        }
         // Restore files and settings before eager Koin singletons or workers can access them.
         try {
             val restored = runBlocking(Dispatchers.IO) {
