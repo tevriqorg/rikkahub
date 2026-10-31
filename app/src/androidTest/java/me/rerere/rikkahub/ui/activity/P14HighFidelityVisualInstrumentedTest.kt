@@ -239,18 +239,28 @@ class P14HighFidelityVisualInstrumentedTest {
             assertEquals(draftBefore.snapshot.bodyStart,P14EntryEditDraftStore(context).read(entryId)!!.snapshot.bodyStart)
             compose.onNodeWithTag("p14-editor-back").performClick();awaitTag("p14-entry-body")
             assertEquals("摩托\n具体",repo.entry(entryId)!!.bodyText);val revised=repo.message(entries[11].messageId)!!;assertEquals(2,revised.revision)
-            compose.onNodeWithTag("p14-inbox-open-ai").performClick();awaitTag("p14-entry-message-input");compose.onNodeWithTag("p14-entry-message-input").performTextInput("请基于最新修订讨论")
-            compose.onNodeWithTag("p14-inbox-ai-send").performClick();compose.waitForIdle()
-            val turn=kotlinx.coroutines.withTimeout(15_000) {
-                var found=db.dao().pendingOutbox().lastOrNull {it.conversationId==entries[11].conversationId&&it.operationType=="SEND_MESSAGE"}
-                while(found==null){kotlinx.coroutines.delay(50);found=db.dao().pendingOutbox().lastOrNull {it.conversationId==entries[11].conversationId&&it.operationType=="SEND_MESSAGE"}}
-                requireNotNull(found)
-            };val payload=Json.parseToJsonElement(turn.payloadJson).jsonObject
-            assertEquals(entries[11].messageId,payload["reply_to_message_id"]!!.jsonPrimitive.content);assertEquals(revised.bodyText,payload["quote"]!!.jsonObject["text"]!!.jsonPrimitive.content)
-            shell("input keyevent KEYCODE_BACK");awaitIme(false);SystemClock.sleep(500);shell("input keyevent KEYCODE_BACK");awaitTag("p14-entry-body");compose.onNodeWithTag("p14-entry-back").performClick();awaitTag("p14-inbox-list")
+            // In the 3.1.1 upgrade, discuss opens the *native* ChatPage, never
+            // the obsolete inline P14 entry-message-input surface.
+            compose.onNodeWithTag("p14-inbox-open-ai").performClick()
+            awaitTag("chat_input")
+            val nativeId=me.rerere.rikkahub.data.remote.p14.nativeChatIdForEntryOrExisting(
+                entryId,db.dao().conversation(entries[11].conversationId)?.localConversationId,
+            )
+            val nativeConversation=requireNotNull(
+                org.koin.core.context.GlobalContext.get()
+                    .get<me.rerere.rikkahub.data.repository.ConversationRepository>()
+                    .getConversationById(nativeId),
+            )
+            assertTrue("The revised Entry must be source context in native chat",
+                nativeConversation.currentMessages.first().toText().contains(revised.bodyText))
+            assertTrue("The original Entry must remain separate from an AI question",
+                nativeConversation.currentMessages.first().toText().contains("[P14_ENTRY_CONTEXT:"))
+            shell("input keyevent KEYCODE_BACK");awaitTag("p14-entry-body")
+            compose.onNodeWithTag("p14-entry-back").performClick();awaitTag("p14-inbox-list")
             compose.onNodeWithTag("p14-inbox-list").performScrollToIndex(0);compose.onNodeWithText("关于日本地方小店的经营模式").performClick();awaitTag("p14-entry-body");capture("04-detail-light")
-            compose.onNodeWithTag("p14-inbox-open-ai").performClick();awaitTag("p14-entry-message-input");capture("05-ai-light")
-            compose.onNodeWithTag("p14-entry-back").performClick();awaitTag("p14-entry-body");compose.onNodeWithTag("p14-entry-back").performClick();awaitTag("p14-inbox-list")
+            compose.onNodeWithTag("p14-inbox-open-ai").performClick();awaitTag("chat_input");capture("05-ai-light")
+            shell("input keyevent KEYCODE_BACK");awaitTag("p14-entry-body")
+            compose.onNodeWithTag("p14-entry-back").performClick();awaitTag("p14-inbox-list")
             shell("cmd uimode night yes");compose.waitUntil(20_000){context.resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK==Configuration.UI_MODE_NIGHT_YES};awaitTag("p14-inbox-list");capture("06-inbox-dark")
             compose.onNodeWithTag("p14-inbox-add").performClick();awaitTag("p14-inbox-quick-input");awaitIme(true);capture("06b-quick-add-dark-ime",true,"p14-quick-sheet")
             keyboard(false)
