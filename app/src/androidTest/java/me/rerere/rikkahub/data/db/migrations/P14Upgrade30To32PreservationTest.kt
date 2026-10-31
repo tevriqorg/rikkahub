@@ -118,7 +118,8 @@ class P14Upgrade30To32PreservationTest {
 
         // This is the exact production migration-registration path, not a
         // hand-picked SQL migration or a destructive createDatabase(v32).
-        AppDatabaseFactory.create(context, testDb).use { database ->
+        val database = AppDatabaseFactory.create(context, testDb)
+        try {
             val sqlite = database.openHelper.writableDatabase
             sqlite.query("PRAGMA user_version").use {
                 assertTrue(it.moveToFirst())
@@ -138,16 +139,19 @@ class P14Upgrade30To32PreservationTest {
                 assertEquals(2, it.getInt(2))
                 assertTrue(!it.moveToNext())
             }
+        } finally {
+            database.close()
         }
 
         // Open a second genuine Room connection to the existing independent
         // P14 v6 database: catches accidental database-name/schema overlap and
         // proves the pending Outbox is not silently acknowledged or deleted.
-        Room.databaseBuilder(
+        val reloaded = Room.databaseBuilder(
             context,
             P14ProductDatabase::class.java,
             productDbName,
-        ).build().use { reloaded ->
+        ).build()
+        try {
             reloaded.openHelper.writableDatabase.query("PRAGMA user_version").use {
                 assertTrue(it.moveToFirst())
                 assertEquals(6, it.getInt(0))
@@ -159,6 +163,8 @@ class P14Upgrade30To32PreservationTest {
             val pending = dao.pendingOutbox().find { it.clientOperationId == operationId }
             assertNotNull("P14 Outbox must survive Room 30 to 32 upgrade", pending)
             assertEquals("PENDING", pending?.state)
+        } finally {
+            reloaded.close()
         }
 
         // The two independent test databases contain only synthetic fixtures.
