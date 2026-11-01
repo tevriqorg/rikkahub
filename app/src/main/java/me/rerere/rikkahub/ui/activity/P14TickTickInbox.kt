@@ -40,6 +40,7 @@ import androidx.compose.ui.graphics.drawscope.scale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalWindowInfo
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.testTag
@@ -56,6 +57,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.PopupProperties
 import coil3.compose.AsyncImage
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import me.rerere.rikkahub.data.remote.p14.*
@@ -238,23 +241,28 @@ internal fun p14ViewTitle(view:String)=when(view){"todo"->"待办";"idea"->"想�
         Column(Modifier.fillMaxWidth().imePadding().navigationBarsPadding()) {
             val orientation=LocalConfiguration.current.orientation
             val windowFocused=LocalWindowInfo.current.isWindowFocused
-            // A rotation recreates the modal dialog window. Focus can become
-            // valid before Android finishes the dialog's IME handoff, which
-            // hides the keyboard even while the text field remains focused.
-            // Reassert focus only when the sheet is attached/reoriented, not
-            // on every recomposition or every typed character.
-            LaunchedEffect(orientation, windowFocused) {
+            val dialogView=LocalView.current
+            // ModalBottomSheet owns a separate Android dialog window. On a
+            // rotation, the old dialog may dismiss its IME *after* Compose has
+            // regained focus and shown the new IME. A one/two-shot call races
+            // with that dismissal (verified by real emulator screenshots).
+            // Probe the actual dialog window insets, not only Compose focus.
+            LaunchedEffect(orientation,windowFocused,dialogView) {
                 if (windowFocused) {
                     withFrameNanos {}
-                    delay(350)
-                    focus.requestFocus()
-                    delay(150)
-                    keyboard?.show()
-                    // A second post-layout attempt survives the old window
-                    // being torn down after the initial IME show request.
-                    delay(550)
-                    focus.requestFocus()
-                    keyboard?.show()
+                    var continuouslyVisible=0
+                    repeat(12) {
+                        focus.requestFocus()
+                        val controller=ViewCompat.getWindowInsetsController(dialogView)
+                        controller?.show(WindowInsetsCompat.Type.ime())
+                        keyboard?.show()
+                        delay(200)
+                        val visible=ViewCompat.getRootWindowInsets(dialogView)
+                            ?.isVisible(WindowInsetsCompat.Type.ime())==true
+                        continuouslyVisible=if(visible) continuouslyVisible+1 else 0
+                        // Require >600ms of stable real IME insets after handoff.
+                        if(continuouslyVisible>=4) return@LaunchedEffect
+                    }
                 }
             }
             BasicTextField(value=value,onValueChange={value=it;onText(it.text)},textStyle=TextStyle(color=c.ink,fontSize=17.sp,lineHeight=24.sp),cursorBrush=SolidColor(c.blue),modifier=Modifier.fillMaxWidth().padding(start=18.dp,end=18.dp,top=17.dp,bottom=3.dp).heightIn(min=76.dp,max=200.dp).focusRequester(focus).testTag("p14-inbox-quick-input"),keyboardOptions=KeyboardOptions(imeAction=ImeAction.Default),decorationBox={inner->Box {if(value.text.isBlank())Text("例如：下午 3 点组织大家开会",color=c.muted.copy(alpha=.55f),fontSize=16.sp);inner()}})
