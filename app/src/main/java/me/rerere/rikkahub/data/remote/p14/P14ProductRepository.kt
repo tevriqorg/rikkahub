@@ -937,7 +937,12 @@ internal class P14ProductRepository(
                 blockedConversations+=operation.conversationId
                 continue
             }
-            val attachments = dao.attachmentsForMessage(operation.messageId)
+            // Only a new message/capture submits attachment references.
+            // Text edits on an existing Entry must not be blocked by historical
+            // unsynced media; later native chat sends retain their own gate.
+            val attachments = if(operation.operationType in setOf(
+                "CREATE_ENTRY_WITH_MESSAGE", "SEND_MESSAGE"
+            )) dao.attachmentsForMessage(operation.messageId) else emptyList()
             if (attachments.any { it.state != "SYNCED" || it.remoteAttachmentId == null }) {
                 blockedConversations+=operation.conversationId
                 continue
