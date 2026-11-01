@@ -115,7 +115,8 @@ internal class P14ProductRepository(
     private val editLock = Mutex()
     fun inboxRows(archived:Boolean=false,limit:Int=60,query:String="",view:String=""):Flow<List<P14InboxRow>> =
         combine(dao.observeInboxRows(archived,limit,query,view),sourceIndexVersion) { rows,_ ->
-            rows.map { row -> verifiedSource(row.conversationId)?.let { row.copy(bodyText=it.bodyText) } ?: row }
+            rows.filterNot { it.bodyText.startsWith("[P14_ENTRY_CONTEXT:notification:") }
+                .map { row -> verifiedSource(row.conversationId)?.let { row.copy(bodyText=it.bodyText) } ?: row }
         }
     fun sourceMessage(conversationId:String):Flow<P14ProductMessageEntity?> =
         combine(dao.observeFirstUser(conversationId),sourceIndexVersion) { _,_ -> verifiedSource(conversationId) }
@@ -282,6 +283,28 @@ internal class P14ProductRepository(
         dao.conversation(conversationId)
     }
     suspend fun conversationForExternal(externalSessionId: String) = dao.conversationByExternalSession(externalSessionId)
+    /** Native RikkaHub chat ID is a local UUID, not necessarily the original
+     * P14 Server session ID. Reuse the authoritative mapping to avoid forking
+     * a second Entry whenever the owner chooses Discuss on an old capture. */
+    suspend fun conversationForLocal(localConversationId: String) = dao.conversationByLocalId(localConversationId)
+
+    /** Existing Entry and native RikkaHub ChatPage are separate identities.
+     *  Persist their mapping before launching the chat, without replacing the
+     *  authoritative server session or rewriting any existing Entry content. */
+    suspend fun bindNativeConversationId(p14ConversationId: String, nativeChatId: String) =
+        database.withTransaction {
+            require(nativeChatId.isNotBlank()) { "Native chat ID is required" }
+            val source = requireNotNull(dao.conversation(p14ConversationId)) {
+                "P14 Entry does not exist for native discussion"
+            }
+            val occupant = dao.conversationByLocalId(nativeChatId)
+            require(occupant == null || occupant.conversationId == p14ConversationId) {
+                "Native chat ID already belongs to a different Entry"
+            }
+            check(dao.bindLocalConversationId(source.conversationId, nativeChatId) == 1) {
+                "Existing native discussion mapping conflicts with this Entry"
+            }
+        }
     suspend fun message(messageId: String) = dao.message(messageId)
 
     suspend fun acceptRikkaMessage(
@@ -914,7 +937,12 @@ internal class P14ProductRepository(
                 blockedConversations+=operation.conversationId
                 continue
             }
-            val attachments = dao.attachmentsForMessage(operation.messageId)
+            // Only a new message/capture submits attachment references.
+            // Text edits on an existing Entry must not be blocked by historical
+            // unsynced media; later native chat sends retain their own gate.
+            val attachments = if(operation.operationType in setOf(
+                "CREATE_ENTRY_WITH_MESSAGE", "SEND_MESSAGE"
+            )) dao.attachmentsForMessage(operation.messageId) else emptyList()
             if (attachments.any { it.state != "SYNCED" || it.remoteAttachmentId == null }) {
                 blockedConversations+=operation.conversationId
                 continue

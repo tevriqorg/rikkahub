@@ -17,6 +17,7 @@ internal class P14SyntheticChatServer(private val target:String):Closeable {
     private var pending:Pair<Long,JsonObject>?=null
     var retries=0;private set
     var targetTurns=0;private set
+    var nativeStreamTurns=0;private set
     val targetMessageIds=mutableSetOf<String>()
     @Volatile private var open=true
     init {thread(isDaemon=true,name="p14-synthetic-http") {while(open)try {val s=server.accept();thread(isDaemon=true){s.use {handle(it)}}}catch(_:Exception){}}}
@@ -26,6 +27,29 @@ internal class P14SyntheticChatServer(private val target:String):Closeable {
     private fun message(cid:String,id:String,role:String,text:String)=buildJsonObject {put("message",buildJsonObject {put("message_id",id);put("conversation_id",cid);put("role",role);put("body_text",text);put("created_at",Instant.now().toString())})}
     @Synchronized private fun respond(method:String,url:String,payload:JsonObject):Pair<Int,String> {
         val path=url.substringBefore('?')
+        if(method=="POST" && path.endsWith("/chat/completions")) {
+            // A genuinely append-only OpenAI SSE loopback response.
+            // No request is forwarded to Hermes or a production Server.
+            nativeStreamTurns++
+            val responseId=UUID.randomUUID().toString()
+            val text="合成回复：第${nativeStreamTurns}轮"
+            val chunk=buildJsonObject {
+                put("id",responseId);put("model","p14-hermes")
+                put("choices",buildJsonArray { add(buildJsonObject {
+                    put("index",0)
+                    put("delta",buildJsonObject {put("role","assistant");put("content",text)})
+                    put("finish_reason",JsonNull)
+                }) })
+            }.toString()
+            val finish=buildJsonObject {
+                put("id",responseId)
+                put("choices",buildJsonArray { add(buildJsonObject {
+                    put("index",0);put("delta",buildJsonObject {})
+                    put("finish_reason","stop")
+                }) })
+            }.toString()
+            return 200 to "data: $chunk\n\ndata: $finish\n\ndata: [DONE]\n\n"
+        }
         if(path.endsWith("/sync/ws"))return 404 to "{}"
         if(path.endsWith("/remote-manifest"))return 200 to """{"schema_version":"p14.remote-manifest/v1","manifest_version":1,"minimum_client_protocol":1,"maximum_client_protocol":1,"compatibility":"COMPATIBLE","enabled_views":["chat","inbox","todo","idea"],"message_capabilities":["text","reply","edit"]}"""
         if(path.endsWith("/sync/events")) {
@@ -38,9 +62,12 @@ internal class P14SyntheticChatServer(private val target:String):Closeable {
                 val cid=path.substringAfter("/conversations/").substringBefore('/')
                 if(cid!=target)return 200 to "{}"
                 val quote=payload["quote"]?.jsonObject
-                // Mirror Server QuoteSelection default=1 and exact revision validation.
-                if((quote?.get("source_revision")?.jsonPrimitive?.int ?: 1)!=2)return 409 to "{}"
-                check(quote!!["text"]!!.jsonPrimitive.content=="地方小店讨论记录\n编辑后的上下文内容")
+                // Native 3.1.1 conversation already carries the amended
+                // source node. Only the legacy continuation explicitly quotes.
+                if(quote!=null) {
+                    if((quote["source_revision"]?.jsonPrimitive?.int ?: 1)!=2)return 409 to "{}"
+                    check(quote["text"]!!.jsonPrimitive.content=="地方小店讨论记录\n编辑后的上下文内容")
+                }
                 val op=payload["client_operation_id"]!!.jsonPrimitive.content
                 if(cid==target&&retries++==0)return 503 to "{}"
                 if(accepted.add(op)) {
@@ -71,7 +98,9 @@ internal class P14SyntheticChatServer(private val target:String):Closeable {
         val payload=if(length>0)Json.parseToJsonElement(bytesIn.toString(Charsets.UTF_8)).jsonObject else buildJsonObject{}
         val (code,body)=respond(first[0],first[1],payload)
         val bytes=body.toByteArray()
-        socket.getOutputStream().apply {write("HTTP/1.1 $code synthetic\r\nContent-Type: application/json\r\nContent-Length: ${bytes.size}\r\nConnection: close\r\n\r\n".toByteArray());write(bytes);flush()}
+        val contentType=if(first[1].substringBefore('?').endsWith("/chat/completions"))
+            "text/event-stream" else "application/json"
+        socket.getOutputStream().apply {write("HTTP/1.1 $code synthetic\r\nContent-Type: $contentType\r\nContent-Length: ${bytes.size}\r\nConnection: close\r\n\r\n".toByteArray());write(bytes);flush()}
     }
     override fun close(){open=false;server.close()}
 }

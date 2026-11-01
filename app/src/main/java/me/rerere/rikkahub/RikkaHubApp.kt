@@ -4,6 +4,14 @@ import android.app.Application
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
+import coil3.ImageLoader
+import coil3.SingletonImageLoader
+import coil3.gif.AnimatedImageDecoder
+import coil3.gif.GifDecoder
+import coil3.network.cachecontrol.CacheControlCacheStrategy
+import coil3.network.okhttp.OkHttpNetworkFetcherFactory
+import coil3.request.crossfade
+import coil3.svg.SvgDecoder
 import android.util.Log
 import android.widget.Toast
 import androidx.compose.foundation.ComposeFoundationFlags
@@ -12,30 +20,32 @@ import androidx.compose.runtime.tooling.ComposeStackTraceMode
 import androidx.core.app.NotificationChannelCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
-import androidx.lifecycle.ProcessLifecycleOwner
-import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.ProcessLifecycleOwner
 import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineName
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
-import me.rerere.rikkahub.data.ai.MemoryConsolidationScheduler
-import me.rerere.rikkahub.data.files.FileFolders
-import me.rerere.rikkahub.data.skills.SkillManager
-import java.io.File
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 import me.rerere.common.android.appTempFolder
+import me.rerere.rikkahub.data.ai.MemoryConsolidationScheduler
+import me.rerere.rikkahub.data.datastore.SettingsStore
+import me.rerere.rikkahub.data.files.FileFolders
+import me.rerere.rikkahub.data.files.FilesManager
+import me.rerere.rikkahub.data.remote.ModelsDevUpdater
+import me.rerere.rikkahub.data.repository.WorkspaceRepository
+import me.rerere.rikkahub.data.skills.SkillManager
+import me.rerere.rikkahub.data.sync.BackupManager
+import me.rerere.rikkahub.data.sync.RestoreFailedException
 import me.rerere.rikkahub.di.appModule
 import me.rerere.rikkahub.di.dataSourceModule
 import me.rerere.rikkahub.di.repositoryModule
 import me.rerere.rikkahub.di.viewModelModule
-import me.rerere.rikkahub.data.files.FilesManager
-import me.rerere.rikkahub.data.datastore.SettingsStore
-import me.rerere.rikkahub.data.sync.BackupManager
 import me.rerere.rikkahub.data.remote.p14.P14ProductSyncRuntime
 import me.rerere.rikkahub.data.remote.p14.P14RemoteWork
 import me.rerere.rikkahub.data.remote.p14.P14ChatRecovery
@@ -44,19 +54,18 @@ import me.rerere.rikkahub.data.remote.p14.P14LocationObservationScheduler
 import me.rerere.rikkahub.data.repository.ConversationRepository
 import okhttp3.OkHttpClient
 import org.koin.core.context.GlobalContext
-import me.rerere.rikkahub.data.sync.RestoreFailedException
 import me.rerere.rikkahub.utils.JsonInstant
 import me.rerere.rikkahub.service.MediaCreationService
 import me.rerere.rikkahub.service.WebServerService
 import me.rerere.rikkahub.utils.CrashHandler
 import me.rerere.rikkahub.utils.DatabaseUtil
-import me.rerere.rikkahub.data.repository.WorkspaceRepository
 import me.rerere.workspace.WorkspaceManager
 import org.koin.android.ext.android.get
 import org.koin.android.ext.koin.androidContext
 import org.koin.android.ext.koin.androidLogger
 import org.koin.androidx.workmanager.koin.workManagerFactory
 import org.koin.core.context.startKoin
+import java.io.File
 
 private const val TAG = "RikkaHubApp"
 
@@ -69,6 +78,26 @@ const val MEMORY_DREAM_NOTIFICATION_CHANNEL_ID = "memory_dream"
 class RikkaHubApp : Application() {
     override fun onCreate() {
         super.onCreate()
+        // Register Coil once before ANY Activity/Compose image access.
+        // The P14 Entry launcher may use AsyncImage before RouteActivity exists.
+        // setSafe rejects re-registering after first load and would crash UI.
+        SingletonImageLoader.setSafe { context ->
+            ImageLoader.Builder(context)
+                .crossfade(true)
+                .components {
+                    add(OkHttpNetworkFetcherFactory(
+                        callFactory = { GlobalContext.get().get<OkHttpClient>() },
+                        cacheStrategy = { CacheControlCacheStrategy() },
+                    ))
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                        add(AnimatedImageDecoder.Factory())
+                    } else {
+                        add(GifDecoder.Factory())
+                    }
+                    add(SvgDecoder.Factory(scaleToDensity = true))
+                }
+                .build()
+        }
         // Restore files and settings before eager Koin singletons or workers can access them.
         try {
             val restored = runBlocking(Dispatchers.IO) {
@@ -129,6 +158,9 @@ class RikkaHubApp : Application() {
 
         // Extract builtin skills from assets after install/update
         extractBuiltinSkills()
+
+        // Load models.dev data for model capability matching, then refresh it in background
+        updateModelsDev()
 
         // Start WebServer if enabled in settings
         startWebServerIfEnabled()
@@ -223,6 +255,12 @@ class RikkaHubApp : Application() {
     private fun extractBuiltinSkills() {
         get<AppScope>().launch(Dispatchers.IO) {
             get<SkillManager>().ensureBuiltinSkillsExtracted()
+        }
+    }
+
+    private fun updateModelsDev() {
+        get<AppScope>().launch {
+            get<ModelsDevUpdater>().start()
         }
     }
 
@@ -327,10 +365,10 @@ class RikkaHubApp : Application() {
 }
 
 class AppScope : CoroutineScope by CoroutineScope(
-    SupervisorJob()
-        + Dispatchers.Main
-        + CoroutineName("AppScope")
-        + CoroutineExceptionHandler { _, e ->
-        Log.e(TAG, "AppScope exception", e)
-    }
+    SupervisorJob() +
+        Dispatchers.Main +
+        CoroutineName("AppScope") +
+        CoroutineExceptionHandler { _, e ->
+            Log.e(TAG, "AppScope exception", e)
+        }
 )

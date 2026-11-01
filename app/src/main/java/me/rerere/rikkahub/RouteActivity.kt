@@ -1,6 +1,7 @@
 package me.rerere.rikkahub
 
 import android.annotation.SuppressLint
+import android.content.Context
 import android.content.Intent
 import android.os.Build
 import android.os.Bundle
@@ -47,14 +48,6 @@ import androidx.navigation3.runtime.entryProvider
 import androidx.navigation3.runtime.rememberNavBackStack
 import androidx.navigation3.runtime.rememberSaveableStateHolderNavEntryDecorator
 import androidx.navigation3.ui.NavDisplay
-import coil3.ImageLoader
-import coil3.compose.setSingletonImageLoaderFactory
-import coil3.gif.AnimatedImageDecoder
-import coil3.gif.GifDecoder
-import coil3.network.cachecontrol.CacheControlCacheStrategy
-import coil3.network.okhttp.OkHttpNetworkFetcherFactory
-import coil3.request.crossfade
-import coil3.svg.SvgDecoder
 import me.rerere.ui.toast.Toaster
 import me.rerere.ui.toast.rememberToasterState
 import kotlinx.coroutines.launch
@@ -100,6 +93,7 @@ import me.rerere.rikkahub.ui.pages.extensions.skills.SkillsPage
 import me.rerere.rikkahub.ui.pages.extensions.workspace.WorkspacePage
 import me.rerere.rikkahub.ui.pages.extensions.workspace.WorkspaceDetailPage
 import me.rerere.rikkahub.ui.pages.extensions.workspace.WorkspaceFileEditorPage
+import me.rerere.rikkahub.ui.pages.extensions.workspace.WorkspaceSshEditorPage
 import me.rerere.rikkahub.ui.pages.extensions.workspace.WorkspaceTerminalPage
 import me.rerere.workspace.WorkspaceStorageArea
 import me.rerere.rikkahub.ui.pages.favorite.FavoritePage
@@ -128,6 +122,7 @@ import me.rerere.rikkahub.ui.pages.setting.SettingProviderPage
 import me.rerere.rikkahub.ui.pages.setting.SettingSearchDetailPage
 import me.rerere.rikkahub.ui.pages.setting.SettingSearchPage
 import me.rerere.rikkahub.ui.pages.setting.SettingMediaPage
+import me.rerere.rikkahub.ui.pages.setting.SettingMediaProviderDetailPage
 import me.rerere.rikkahub.ui.pages.setting.SettingSpeechPage
 import me.rerere.rikkahub.ui.pages.setting.SettingWebPage
 import me.rerere.rikkahub.ui.pages.share.handler.ShareHandlerPage
@@ -148,6 +143,14 @@ internal const val P14_ACTION_CONNECTION_SETTINGS = "me.rerere.rikkahub.action.P
 
 private const val ACTION_TRANSLATE = "me.rerere.rikkahub.action.TRANSLATE"
 private const val ACTION_MEDIA_CREATION = "me.rerere.rikkahub.action.MEDIA_CREATION"
+private const val EXTRA_CONVERSATION_ID = "conversationId"
+
+/** 打开指定会话的聊天页 */
+fun conversationIntent(context: Context, conversationId: String): Intent =
+    Intent(context, RouteActivity::class.java).apply {
+        flags = Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
+        putExtra(EXTRA_CONVERSATION_ID, conversationId)
+    }
 
 class RouteActivity : ComponentActivity() {
     private val okHttpClient by inject<OkHttpClient>()
@@ -194,25 +197,6 @@ class RouteActivity : ComponentActivity() {
 
         setContent {
             RikkahubTheme {
-                setSingletonImageLoaderFactory { context ->
-                    ImageLoader.Builder(context)
-                        .crossfade(true)
-                        .components {
-                            add(
-                                OkHttpNetworkFetcherFactory(
-                                    callFactory = { okHttpClient },
-                                    cacheStrategy = { CacheControlCacheStrategy() },
-                                )
-                            )
-                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-                                add(AnimatedImageDecoder.Factory())
-                            } else {
-                                add(GifDecoder.Factory())
-                            }
-                            add(SvgDecoder.Factory(scaleToDensity = true))
-                        }
-                        .build()
-                }
                 AppRoutes()
             }
         }
@@ -255,7 +239,7 @@ class RouteActivity : ComponentActivity() {
                 text = intent.getCharSequenceExtra(Intent.EXTRA_PROCESS_TEXT)?.toString().orEmpty(),
             )
             else -> mediaCreationDestination(intent)
-                ?: intent.getStringExtra("conversationId")?.let { Screen.Chat(it) }
+                ?: intent.getStringExtra(EXTRA_CONVERSATION_ID)?.let { Screen.Chat(it) }
         }
         if (destination != null && backStack.lastOrNull() != destination) {
             backStack.add(destination)
@@ -343,7 +327,7 @@ class RouteActivity : ComponentActivity() {
                         modifier = Modifier.fillMaxSize(),
                         onBack = {
                             if (fromP14Entry && backStack.size <= 1) finish()
-                            else backStack.removeLastOrNull()
+                            else if (backStack.size > 1) backStack.removeLastOrNull()
                         },
                         transitionSpec = {
                             if (backStack.size == 1) fadeIn() togetherWith fadeOut()
@@ -448,7 +432,12 @@ class RouteActivity : ComponentActivity() {
                                 MediaCreationSessionsPage()
                             }
 
-                            entry<Screen.MediaCreation> { key ->
+                            // 从会话列表展开（容器变换），页面本身只做淡入淡出，避免和平移打架
+                            entry<Screen.MediaCreation>(
+                                metadata = NavDisplay.transitionSpec { fadeIn() togetherWith fadeOut() }
+                                    + NavDisplay.popTransitionSpec { fadeIn() togetherWith fadeOut() }
+                                    + NavDisplay.predictivePopTransitionSpec { fadeIn() togetherWith fadeOut() }
+                            ) { key ->
                                 MediaCreationPage(key.id)
                             }
 
@@ -518,6 +507,10 @@ class RouteActivity : ComponentActivity() {
                                 SettingMediaPage()
                             }
 
+                            entry<Screen.SettingMediaProviderDetail> { key ->
+                                SettingMediaProviderDetailPage(id = Uuid.parse(key.providerId))
+                            }
+
                             entry<Screen.SettingMcp> {
                                 SettingMcpPage()
                             }
@@ -572,6 +565,10 @@ class RouteActivity : ComponentActivity() {
 
                             entry<Screen.WorkspaceTerminal> { key ->
                                 WorkspaceTerminalPage(key.id)
+                            }
+
+                            entry<Screen.WorkspaceSshEditor> { key ->
+                                WorkspaceSshEditorPage(key.id)
                             }
 
                             entry<Screen.WorkspaceFileEditor> { key ->
@@ -763,6 +760,9 @@ sealed interface Screen : NavKey {
     data object SettingMedia : Screen
 
     @Serializable
+    data class SettingMediaProviderDetail(val providerId: String) : Screen
+
+    @Serializable
     data object SettingMcp : Screen
 
     @Serializable
@@ -803,6 +803,10 @@ sealed interface Screen : NavKey {
 
     @Serializable
     data class WorkspaceTerminal(val id: String) : Screen
+
+    /** [id] 为 null 时新建 */
+    @Serializable
+    data class WorkspaceSshEditor(val id: String? = null) : Screen
 
     @Serializable
     data class WorkspaceFileEditor(val id: String, val area: String, val path: String) : Screen

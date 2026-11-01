@@ -40,6 +40,8 @@ import androidx.compose.ui.graphics.drawscope.scale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalWindowInfo
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.testTag
@@ -56,6 +58,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.PopupProperties
 import coil3.compose.AsyncImage
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import me.rerere.rikkahub.data.remote.p14.*
@@ -238,7 +242,43 @@ internal fun p14ViewTitle(view:String)=when(view){"todo"->"待办";"idea"->"想�
         Column(Modifier.fillMaxWidth().imePadding().navigationBarsPadding()) {
             val orientation=LocalConfiguration.current.orientation
             val windowFocused=LocalWindowInfo.current.isWindowFocused
-            LaunchedEffect(orientation,windowFocused){if(windowFocused){withFrameNanos {};delay(350);focus.requestFocus();delay(150);keyboard?.show()}}
+            val dialogView=LocalView.current
+            val focusManager=LocalFocusManager.current
+            // ModalBottomSheet owns a separate Android dialog window. During
+            // rotation the old window may hide IME after the new Compose field
+            // was already focused and accepted a show() request. Requesting
+            // focus on an ALREADY-focused field is a no-op. Recreate its input
+            // connection if the real dialog-window insets report no keyboard.
+            // A recovery window is bounded; user-initiated hide later must not
+            // be overridden by an always-on keyboard show loop.
+            LaunchedEffect(orientation,windowFocused,dialogView) {
+                if (windowFocused) {
+                    withFrameNanos {}
+                    delay(220)
+                    var visibleStreak=0
+                    repeat(20) { index ->
+                        val visible=ViewCompat.getRootWindowInsets(dialogView)
+                            ?.isVisible(WindowInsetsCompat.Type.ime())==true
+                        if (!visible) {
+                            if (index==0 || index%4==0) {
+                                focusManager.clearFocus(force=true)
+                                withFrameNanos {}
+                            }
+                            focus.requestFocus()
+                            ViewCompat.getWindowInsetsController(dialogView)
+                                ?.show(WindowInsetsCompat.Type.ime())
+                            keyboard?.show()
+                            visibleStreak=0
+                        } else {
+                            visibleStreak++
+                        }
+                        delay(200)
+                        // Monitor for at least 2.8 s, including the delayed
+                        // old-window teardown, before accepting stable IME.
+                        if (index>=14 && visibleStreak>=5) return@LaunchedEffect
+                    }
+                }
+            }
             BasicTextField(value=value,onValueChange={value=it;onText(it.text)},textStyle=TextStyle(color=c.ink,fontSize=17.sp,lineHeight=24.sp),cursorBrush=SolidColor(c.blue),modifier=Modifier.fillMaxWidth().padding(start=18.dp,end=18.dp,top=17.dp,bottom=3.dp).heightIn(min=76.dp,max=200.dp).focusRequester(focus).testTag("p14-inbox-quick-input"),keyboardOptions=KeyboardOptions(imeAction=ImeAction.Default),decorationBox={inner->Box {if(value.text.isBlank())Text("例如：下午 3 点组织大家开会",color=c.muted.copy(alpha=.55f),fontSize=16.sp);inner()}})
             if(materials.isNotEmpty())Row(Modifier.fillMaxWidth().padding(horizontal=18.dp),horizontalArrangement=Arrangement.spacedBy(8.dp)){materials.take(3).forEach {m->Text(m.originalName.take(18)+" ×",fontSize=11.sp,color=c.blue,modifier=Modifier.clip(RoundedCornerShape(6.dp)).background(c.chip).clickable {onRemove(m)}.padding(6.dp))}}
             if(selectedViews.isNotEmpty())Row(Modifier.padding(horizontal=18.dp,vertical=3.dp),horizontalArrangement=Arrangement.spacedBy(6.dp)){selectedViews.forEach {ClassificationPill(p14ViewTitle(it))}}

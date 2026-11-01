@@ -30,13 +30,12 @@ internal object P14SystemNotifications {
         items.forEach { n ->
             val id=n.notificationId.hashCode()
             if(n.state=="RESOLVED") { nm.cancel(id); return@forEach }
-            val contentIntent=if(n.conversationId!=null) {
-                Intent(context,P14EntryActivity::class.java)
-                    .putExtra(P14EntryActivity.EXTRA_CONVERSATION_ID,n.conversationId)
-                    .putExtra(P14EntryActivity.EXTRA_NOTIFICATION_ID,n.notificationId)
-            } else {
-                Intent(context,P14InboxActivity::class.java).putExtra("notification_id",n.notificationId)
-            }.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+            // Every OS notification opens the durable Notification detail first.
+            // A linked Entry/conversation is not a replacement for the notification:
+            // the user may discuss the notice without granting an Action.
+            val contentIntent=Intent(context,P14InboxActivity::class.java)
+                .putExtra("notification_id",n.notificationId)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
             val pending=PendingIntent.getActivity(context,id,contentIntent,PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
             val builder=NotificationCompat.Builder(context,CHANNEL)
                 .setSmallIcon(R.mipmap.ic_launcher_foreground)

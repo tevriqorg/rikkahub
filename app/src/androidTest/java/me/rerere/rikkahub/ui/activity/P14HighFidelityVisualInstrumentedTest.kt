@@ -219,7 +219,9 @@ class P14HighFidelityVisualInstrumentedTest {
             assertEquals(text,P14CaptureDraftStore(context).read().text)
             keyboard(false);capture("02b-quick-add-hidden");compose.onNodeWithTag("p14-inbox-quick-input").performClick();keyboard(true)
             scenario.onActivity {it.requestedOrientation=ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE}
-            compose.waitUntil(20_000){context.resources.configuration.orientation==Configuration.ORIENTATION_LANDSCAPE};awaitTag("p14-inbox-quick-input");awaitIme(true);capture("02c-quick-add-landscape-ime",true,"p14-quick-sheet")
+            compose.waitUntil(20_000){context.resources.configuration.orientation==Configuration.ORIENTATION_LANDSCAPE};awaitTag("p14-inbox-quick-input");awaitIme(true)
+            SystemClock.sleep(1300);awaitIme(true)
+            capture("02c-quick-add-landscape-ime",true,"p14-quick-sheet")
             scenario.onActivity {it.requestedOrientation=ActivityInfo.SCREEN_ORIENTATION_PORTRAIT}
             compose.waitUntil(20_000){context.resources.configuration.orientation==Configuration.ORIENTATION_PORTRAIT};awaitTag("p14-inbox-quick-input");compose.onNodeWithTag("p14-inbox-quick-input").assertTextEquals(text)
             val captureDraft=P14CaptureDraftStore(context).read();compose.onNodeWithTag("p14-inbox-quick-save").performClick()
@@ -239,18 +241,28 @@ class P14HighFidelityVisualInstrumentedTest {
             assertEquals(draftBefore.snapshot.bodyStart,P14EntryEditDraftStore(context).read(entryId)!!.snapshot.bodyStart)
             compose.onNodeWithTag("p14-editor-back").performClick();awaitTag("p14-entry-body")
             assertEquals("摩托\n具体",repo.entry(entryId)!!.bodyText);val revised=repo.message(entries[11].messageId)!!;assertEquals(2,revised.revision)
-            compose.onNodeWithTag("p14-inbox-open-ai").performClick();awaitTag("p14-entry-message-input");compose.onNodeWithTag("p14-entry-message-input").performTextInput("请基于最新修订讨论")
-            compose.onNodeWithTag("p14-inbox-ai-send").performClick();compose.waitForIdle()
-            val turn=kotlinx.coroutines.withTimeout(15_000) {
-                var found=db.dao().pendingOutbox().lastOrNull {it.conversationId==entries[11].conversationId&&it.operationType=="SEND_MESSAGE"}
-                while(found==null){kotlinx.coroutines.delay(50);found=db.dao().pendingOutbox().lastOrNull {it.conversationId==entries[11].conversationId&&it.operationType=="SEND_MESSAGE"}}
-                requireNotNull(found)
-            };val payload=Json.parseToJsonElement(turn.payloadJson).jsonObject
-            assertEquals(entries[11].messageId,payload["reply_to_message_id"]!!.jsonPrimitive.content);assertEquals(revised.bodyText,payload["quote"]!!.jsonObject["text"]!!.jsonPrimitive.content)
-            shell("input keyevent KEYCODE_BACK");awaitIme(false);SystemClock.sleep(500);shell("input keyevent KEYCODE_BACK");awaitTag("p14-entry-body");compose.onNodeWithTag("p14-entry-back").performClick();awaitTag("p14-inbox-list")
+            // In the 3.1.1 upgrade, discuss opens the *native* ChatPage, never
+            // the obsolete inline P14 entry-message-input surface.
+            compose.onNodeWithTag("p14-inbox-open-ai").performClick()
+            awaitTag("chat_input")
+            val nativeId=me.rerere.rikkahub.data.remote.p14.nativeChatIdForEntryOrExisting(
+                entryId,db.dao().conversation(entries[11].conversationId)?.localConversationId,
+            )
+            val nativeConversation=requireNotNull(
+                org.koin.core.context.GlobalContext.get()
+                    .get<me.rerere.rikkahub.data.repository.ConversationRepository>()
+                    .getConversationById(nativeId),
+            )
+            assertTrue("The revised Entry must be source context in native chat",
+                nativeConversation.currentMessages.first().toText().contains(revised.bodyText))
+            assertTrue("The original Entry must remain separate from an AI question",
+                nativeConversation.currentMessages.first().toText().contains("[P14_ENTRY_CONTEXT:"))
+            shell("input keyevent KEYCODE_BACK");awaitTag("p14-entry-body")
+            compose.onNodeWithTag("p14-entry-back").performClick();awaitTag("p14-inbox-list")
             compose.onNodeWithTag("p14-inbox-list").performScrollToIndex(0);compose.onNodeWithText("关于日本地方小店的经营模式").performClick();awaitTag("p14-entry-body");capture("04-detail-light")
-            compose.onNodeWithTag("p14-inbox-open-ai").performClick();awaitTag("p14-entry-message-input");capture("05-ai-light")
-            compose.onNodeWithTag("p14-entry-back").performClick();awaitTag("p14-entry-body");compose.onNodeWithTag("p14-entry-back").performClick();awaitTag("p14-inbox-list")
+            compose.onNodeWithTag("p14-inbox-open-ai").performClick();awaitTag("chat_input");capture("05-ai-light")
+            shell("input keyevent KEYCODE_BACK");awaitTag("p14-entry-body")
+            compose.onNodeWithTag("p14-entry-back").performClick();awaitTag("p14-inbox-list")
             shell("cmd uimode night yes");compose.waitUntil(20_000){context.resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK==Configuration.UI_MODE_NIGHT_YES};awaitTag("p14-inbox-list");capture("06-inbox-dark")
             compose.onNodeWithTag("p14-inbox-add").performClick();awaitTag("p14-inbox-quick-input");awaitIme(true);capture("06b-quick-add-dark-ime",true,"p14-quick-sheet")
             keyboard(false)
@@ -260,47 +272,145 @@ class P14HighFidelityVisualInstrumentedTest {
         File(output,"journey-result.json").writeText("""{"visual_screens":6,"real_ime_verified":true,"rotation_verified":true,"source_preserved":true,"same_conversation":true,"hermes_invoked":false,"entry_count":14}""")
     }
     @Test fun nativeChatExchange():Unit=runBlocking {
-        // A fresh instrumentation process owns this Activity. Do not reuse owners
-        // that were rotated and re-themed during the six-screen visual journey.
         guard()
-        // Fixtures represent existing uploaded files; preserve local bytes for handoff tests.
-        db.dao().directoryPage(100,0).forEach { conversation ->
-            repo.ensureEntrySource(conversation.conversationId)?.let { source ->
-                db.dao().attachmentsForMessage(source.messageId).forEach { attachment ->
-                    db.dao().setAttachmentState(attachment.localAttachmentId,"SYNCED","synthetic-"+attachment.localAttachmentId)
-                }
-            }
-        }
         val target=requireNotNull(prefs.getString("primary",null))
-        repo.acceptEntryRevision(target,"地方小店讨论记录\n编辑后的上下文内容",1)
+        val stored=requireNotNull(repo.conversation(target))
+        val entryId=stored.entryId
+        val revisedSource="地方小店讨论记录\n编辑后的上下文内容"
+        repo.acceptEntryRevision(target,revisedSource,1)
         val credential=P14RuntimeCredentialStore(context)
-        P14SyntheticChatServer(target).use { server ->
-            credential.save("synthetic-native-chat",server.baseUrl,"synthetic-loopback-only")
-            credential.markActive("synthetic-native-chat",server.baseUrl)
-            try {launch(target).use {
-                awaitTag("p14-entry-body");compose.onNodeWithTag("p14-inbox-open-ai").performClick();awaitTag("p14-entry-message-input")
-                for(question in listOf("今天下午怎么去东京站？","然后怎么回来？")) {
-                    compose.onNodeWithTag("p14-entry-message-input").performTextInput(question)
-                    compose.onNodeWithTag("p14-inbox-ai-send").performClick()
-                    compose.waitUntil(30_000){compose.onAllNodesWithText("正在组织合成回复…",substring=true).fetchSemanticsNodes(atLeastOneRootRequired=false).isNotEmpty()}
-                    compose.waitUntil(45_000){compose.onAllNodesWithText("合成回复：$question",substring=true).fetchSemanticsNodes(atLeastOneRootRequired=false).isNotEmpty()}
+        val settings=org.koin.core.context.GlobalContext.get()
+            .get<me.rerere.rikkahub.data.datastore.SettingsStore>()
+        val nativeRepo=org.koin.core.context.GlobalContext.get()
+            .get<me.rerere.rikkahub.data.repository.ConversationRepository>()
+        val original=settings.awaitLoaded()
+        val model=me.rerere.ai.provider.Model(modelId="p14-hermes")
+        P14SyntheticChatServer(target).use {server ->
+            val provider=me.rerere.ai.provider.ProviderSetting.OpenAI(
+                name="P14 synthetic native loopback",
+                models=listOf(model),
+                baseUrl=server.baseUrl,
+                apiKey="synthetic-loopback-not-a-real-secret",
+            )
+            settings.update { current -> current.copy(
+                providers=current.providers+provider,
+                chatModelId=model.id,
+                enableAutoTitle=false,
+                enableSuggestion=false,
+                assistants=current.assistants.map { a ->
+                    if(a.id==current.assistantId) a.copy(
+                        chatModelId=model.id,
+                        streamOutput=true,
+                        runtimeMode=me.rerere.rikkahub.data.model.AssistantRuntimeMode.REMOTE,
+                    ) else a
+                },
+            ) }
+            // RuntimeAccess resolves encrypted credentials by the *actual*
+            // OpenAI provider UUID, never by a human-readable test label.
+            // The old fixture used "synthetic-native-chat", causing prepare()
+            // to attempt a device-session handshake at the loopback stub and
+            // fail before the first SSE request was issued.
+            val providerKey=provider.id.toString()
+            credential.save(providerKey,server.baseUrl,"synthetic-loopback-only")
+            credential.markActive(providerKey,server.baseUrl)
+            assertEquals("synthetic-loopback-only",
+                credential.load(providerKey,server.baseUrl))
+            try {
+                launch(target).use {
+                    awaitTag("p14-entry-body")
+                    compose.onNodeWithTag("p14-inbox-open-ai").performClick()
+                    awaitTag("chat_input")
+                    val nativeId=nativeChatIdForEntryOrExisting(
+                        entryId,stored.localConversationId,
+                    )
+                    val opened=requireNotNull(nativeRepo.getConversationById(nativeId))
+                    assertTrue(
+                        "Native chat must use revised Entry source, not stale capture",
+                        opened.currentMessages.first().toText().contains(revisedSource),
+                    )
+                    // UI must use real 3.1.1 ChatInput + runAgent, not old
+                    // p14-entry-message-input or a second generated chat engine.
+                    for((index,question) in listOf(
+                        "今天下午怎么去东京站？","然后怎么回来？",
+                    ).withIndex()) {
+                        compose.onNodeWithTag("chat_input").performTextInput(question)
+                        compose.onNodeWithTag("chat_send_button").performClick()
+                        val expected="合成回复：第${index+1}轮"
+                        try {
+                            compose.waitUntil(45_000) {
+                                runBlocking {
+                                    nativeRepo.getConversationById(nativeId)?.currentMessages
+                                        ?.any { msg -> msg.role==MessageRole.ASSISTANT &&
+                                            msg.toText().contains(expected) }
+                                }==true
+                            }
+                        } catch (failure: androidx.compose.ui.test.ComposeTimeoutException) {
+                            val history=nativeRepo.getConversationById(nativeId)?.currentMessages.orEmpty()
+                            File(output,"native-chat-timeout.json").writeText(buildJsonObject {
+                                put("turn_index",index+1)
+                                put("synthetic_stream_requests",server.nativeStreamTurns)
+                                put("server_outbox_turns",server.targetTurns)
+                                put("native_history_roles",history.joinToString(",") { it.role.toString() })
+                                put("native_history_count",history.size)
+                                put("no_hermes_invoked",true)
+                            }.toString())
+                            throw failure
+                        }
+                        val history=requireNotNull(nativeRepo.getConversationById(nativeId)).currentMessages
+                        val userAt=history.indexOfLast {it.role==MessageRole.USER&&it.toText().contains(question)}
+                        val assistantAt=history.indexOfLast {it.role==MessageRole.ASSISTANT&&it.toText().contains(expected)}
+                        assertTrue("Question must precede its native streamed answer",userAt>=1&&assistantAt>userAt)
+                    }
+                    assertEquals(2,server.nativeStreamTurns)
+                    // Native UI completion is not enough: flush the separate
+                    // durable P14 Outbox and verify both sends reused the
+                    // original Server session rather than creating an Entry.
+                    val outcomes=(1..4).map {repo.syncAndFlushActive()}
+                    if(server.targetTurns!=2) {
+                        File(output,"native-chat-outbox-diagnostic.json").writeText(buildJsonObject {
+                            put("original_conversation",target)
+                            put("native_conversation",nativeId.toString())
+                            put("mapped_external",repo.conversationForLocal(nativeId.toString())?.externalSessionId ?: "")
+                            put("sync_returns",JsonArray(outcomes.map {JsonPrimitive(it)}))
+                            put("native_stream_requests",server.nativeStreamTurns)
+                            put("server_message_accepts",server.targetTurns)
+                            put("pending",buildJsonArray {
+                                db.dao().pendingOutbox().forEach { row -> add(buildJsonObject {
+                                    put("type",row.operationType)
+                                    put("conversation",row.conversationId)
+                                    put("external",row.externalSessionId)
+                                    put("state",row.state)
+                                    put("last_error",row.lastErrorClass ?: "")
+                                }) }
+                            })
+                        }.toString())
+                    }
+                    assertEquals("Both turns must reach the original P14 session",2,server.targetTurns)
+                    assertEquals(2,server.targetMessageIds.size)
+                    val final=requireNotNull(nativeRepo.getConversationById(nativeId))
+                    assertEquals(1,final.currentMessages.count {
+                        it.role==MessageRole.USER && it.toText().contains("[P14_ENTRY_CONTEXT:")
+                    })
+                    keyboard(false)
+                    capture("09-native-chat-exchange")
+                    File(output,"native-chat-exchange.json").writeText(buildJsonObject {
+                        put("real_activity",true);put("synthetic_loopback_sse",true)
+                        put("native_runAgent",true);put("two_turns",true)
+                        put("same_conversation",true);put("source_revision",2)
+                        put("hermes_invoked",false)
+                    }.toString())
+                    shell("input keyevent KEYCODE_BACK")
+                    awaitTag("p14-entry-body")
                 }
-                keyboard(false);capture("09-native-chat-exchange")
-                assertEquals(2,server.targetTurns);assertEquals(2,server.targetMessageIds.size);assertTrue(server.retries>=3)
-                val history=repo.messages(target,100).first()
-                assertFalse(history.any {it.deliveryState=="STREAMING"})
-                for(question in listOf("今天下午怎么去东京站？","然后怎么回来？")) {
-                    val userAt=history.indexOfFirst {it.role=="user"&&it.bodyText==question}
-                    val replyAt=history.indexOfFirst {it.role=="assistant"&&it.bodyText=="合成回复：$question"}
-                    assertTrue("Question must precede its reply even when timestamps tie",userAt>=0&&replyAt>userAt)
-                }
-                File(output,"native-chat-exchange.json").writeText(buildJsonObject {
-                    put("real_activity",true);put("loopback_http",true);put("first_send_503",true);put("same_message_retry",true);put("two_turns",true);put("delayed_draft_and_final",true);put("same_conversation",true);put("hermes_invoked",false)
-                }.toString())
-            }} finally {
-                credential.clear("synthetic-native-chat")
-                // The next method is a separate instrumentation process. Flush the
-                // preceding asynchronous removal before this runner can terminate.
+            } finally {
+                settings.update { current -> current.copy(
+                    providers=original.providers,
+                    chatModelId=original.chatModelId,
+                    assistants=original.assistants,
+                    enableAutoTitle=original.enableAutoTitle,
+                    enableSuggestion=original.enableSuggestion,
+                ) }
+                credential.clear(providerKey)
                 check(context.getSharedPreferences("p14-rikkahub-runtime",Context.MODE_PRIVATE).edit().commit())
             }
         }

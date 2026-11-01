@@ -91,6 +91,19 @@ internal class P14RemoteRepository(
     private fun manifest(c:P14RuntimeConnection):P14EffectiveManifest = P14ManifestPolicy.load(context,c,http)
 
     suspend fun notification(notificationId:String):P14NotificationEntity?=withContext(Dispatchers.IO){ dao.notification(notificationId) }
+
+    /** Fetch a canonical snapshot; authoritative notification data always
+     * originates from P14 Server, not the compact local Room projection.
+     */
+    suspend fun authoritativeNotification(notificationId:String):P14NotificationDto = withContext(Dispatchers.IO) {
+        require(Regex("^ntf-[0-9a-f]{32}$").matches(notificationId)) { "Invalid P14 notification ID" }
+        val c=P14RuntimeCredentialStore(context).activeConnection()
+            ?: error("请先连接 P14 Server 后再讨论通知")
+        val snapshot=json.decodeFromString<P14NotificationDto>(get(c,"notifications/$notificationId"))
+        check(snapshot.notificationId==notificationId) { "P14 notification identity mismatch" }
+        dao.upsertNotifications(listOf(snapshot.entity()))
+        snapshot
+    }
     suspend fun setConversationStateActive(conversationId:String,baseRevision:Int,pinned:Boolean?=null,archived:Boolean?=null)=withContext(Dispatchers.IO) {
         val c=P14RuntimeCredentialStore(context).activeConnection() ?: error("P14 device is not connected")
         val payload=buildJsonObject {

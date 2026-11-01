@@ -13,14 +13,22 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -277,8 +285,12 @@ internal suspend fun saveMediaToGallery(context: Context, file: File, mimeType: 
             context.getActivity()?.let { ActivityCompat.requestPermissions(it, arrayOf(permission), 1) }
             error(context.getString(R.string.media_creation_page_storage_permission_required))
         }
-        val target = File(Environment.getExternalStoragePublicDirectory(directory), name)
-        file.copyTo(target, overwrite = true)
+        // 批量保存时同一毫秒里会有好几个文件，重名的另取一个名字，不能互相覆盖（Android 10 起由 MediaStore 处理）
+        val dir = Environment.getExternalStoragePublicDirectory(directory)
+        val target = generateSequence(0) { it + 1 }
+            .map { if (it == 0) File(dir, name) else File(dir, "${name.substringBeforeLast('.')}_$it.${file.extension}") }
+            .first { !it.exists() }
+        file.copyTo(target)
         MediaScannerConnection.scanFile(context, arrayOf(target.absolutePath), arrayOf(mimeType), null)
     }
 }
@@ -291,4 +303,35 @@ internal fun shareMedia(context: Context, file: File, mimeType: String) {
         addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
     }
     context.startActivity(Intent.createChooser(intent, null))
+}
+
+@Composable
+internal fun RenameSessionDialog(
+    initialTitle: String,
+    onConfirm: (String) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    var title by remember { mutableStateOf(initialTitle) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(stringResource(R.string.media_creation_page_rename_session)) },
+        text = {
+            OutlinedTextField(
+                value = title,
+                onValueChange = { title = it },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth(),
+            )
+        },
+        confirmButton = {
+            TextButton(onClick = { onConfirm(title) }) {
+                Text(stringResource(R.string.confirm))
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text(stringResource(R.string.cancel))
+            }
+        },
+    )
 }

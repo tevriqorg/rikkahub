@@ -558,7 +558,7 @@ private fun P14EntryScreen(
                                             .attachmentsForMessage(it.messageId)
                                             .mapNotNull(::recoverP14AttachmentPart)
                                     }.orEmpty()
-                                    prepareNativeEntryChat(
+                                    val nativeId = prepareNativeEntryChat(
                                         entryId = entryId,
                                         sourceText = source,
                                         conversations = nativeConversations,
@@ -567,6 +567,11 @@ private fun P14EntryScreen(
                                         originalSourceMessageId = savedSource?.messageId ?: sourceMessage?.messageId,
                                         sourceAttachments = sourceAttachments,
                                     )
+                                    // Older v6 rows may have no local Conversation UUID.
+                                    // Bind before opening RouteActivity so ChatService
+                                    // always uses this Entry's original Server session.
+                                    product.bindNativeConversationId(p14ConversationId, nativeId.toString())
+                                    nativeId
                                 }
                             }.onSuccess { chatId ->
                                 context.startActivity(
