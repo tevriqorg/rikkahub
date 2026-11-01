@@ -303,8 +303,16 @@ class P14HighFidelityVisualInstrumentedTest {
                     ) else a
                 },
             ) }
-            credential.save("synthetic-native-chat",server.baseUrl,"synthetic-loopback-only")
-            credential.markActive("synthetic-native-chat",server.baseUrl)
+            // RuntimeAccess resolves encrypted credentials by the *actual*
+            // OpenAI provider UUID, never by a human-readable test label.
+            // The old fixture used "synthetic-native-chat", causing prepare()
+            // to attempt a device-session handshake at the loopback stub and
+            // fail before the first SSE request was issued.
+            val providerKey=provider.id.toString()
+            credential.save(providerKey,server.baseUrl,"synthetic-loopback-only")
+            credential.markActive(providerKey,server.baseUrl)
+            assertEquals("synthetic-loopback-only",
+                credential.load(providerKey,server.baseUrl))
             try {
                 launch(target).use {
                     awaitTag("p14-entry-body")
@@ -326,12 +334,25 @@ class P14HighFidelityVisualInstrumentedTest {
                         compose.onNodeWithTag("chat_input").performTextInput(question)
                         compose.onNodeWithTag("chat_send_button").performClick()
                         val expected="合成回复：第${index+1}轮"
-                        compose.waitUntil(45_000) {
-                            runBlocking {
-                                nativeRepo.getConversationById(nativeId)?.currentMessages
-                                    ?.any { msg -> msg.role==MessageRole.ASSISTANT &&
-                                        msg.toText().contains(expected) }
-                            }==true
+                        try {
+                            compose.waitUntil(45_000) {
+                                runBlocking {
+                                    nativeRepo.getConversationById(nativeId)?.currentMessages
+                                        ?.any { msg -> msg.role==MessageRole.ASSISTANT &&
+                                            msg.toText().contains(expected) }
+                                }==true
+                            }
+                        } catch (failure: androidx.compose.ui.test.ComposeTimeoutException) {
+                            val history=nativeRepo.getConversationById(nativeId)?.currentMessages.orEmpty()
+                            File(output,"native-chat-timeout.json").writeText(buildJsonObject {
+                                put("turn_index",index+1)
+                                put("synthetic_stream_requests",server.nativeStreamTurns)
+                                put("server_outbox_turns",server.targetTurns)
+                                put("native_history_roles",history.joinToString(",") { it.role.toString() })
+                                put("native_history_count",history.size)
+                                put("no_hermes_invoked",true)
+                            }.toString())
+                            throw failure
                         }
                         val history=requireNotNull(nativeRepo.getConversationById(nativeId)).currentMessages
                         val userAt=history.indexOfLast {it.role==MessageRole.USER&&it.toText().contains(question)}
@@ -368,7 +389,7 @@ class P14HighFidelityVisualInstrumentedTest {
                     enableAutoTitle=original.enableAutoTitle,
                     enableSuggestion=original.enableSuggestion,
                 ) }
-                credential.clear("synthetic-native-chat")
+                credential.clear(providerKey)
                 check(context.getSharedPreferences("p14-rikkahub-runtime",Context.MODE_PRIVATE).edit().commit())
             }
         }
