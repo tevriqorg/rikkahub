@@ -219,7 +219,9 @@ class P14HighFidelityVisualInstrumentedTest {
             assertEquals(text,P14CaptureDraftStore(context).read().text)
             keyboard(false);capture("02b-quick-add-hidden");compose.onNodeWithTag("p14-inbox-quick-input").performClick();keyboard(true)
             scenario.onActivity {it.requestedOrientation=ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE}
-            compose.waitUntil(20_000){context.resources.configuration.orientation==Configuration.ORIENTATION_LANDSCAPE};awaitTag("p14-inbox-quick-input");awaitIme(true);capture("02c-quick-add-landscape-ime",true,"p14-quick-sheet")
+            compose.waitUntil(20_000){context.resources.configuration.orientation==Configuration.ORIENTATION_LANDSCAPE};awaitTag("p14-inbox-quick-input");awaitIme(true)
+            SystemClock.sleep(1300);awaitIme(true)
+            capture("02c-quick-add-landscape-ime",true,"p14-quick-sheet")
             scenario.onActivity {it.requestedOrientation=ActivityInfo.SCREEN_ORIENTATION_PORTRAIT}
             compose.waitUntil(20_000){context.resources.configuration.orientation==Configuration.ORIENTATION_PORTRAIT};awaitTag("p14-inbox-quick-input");compose.onNodeWithTag("p14-inbox-quick-input").assertTextEquals(text)
             val captureDraft=P14CaptureDraftStore(context).read();compose.onNodeWithTag("p14-inbox-quick-save").performClick()

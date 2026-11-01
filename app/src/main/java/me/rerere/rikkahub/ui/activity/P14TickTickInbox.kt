@@ -40,6 +40,7 @@ import androidx.compose.ui.graphics.drawscope.scale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalWindowInfo
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
@@ -242,26 +243,39 @@ internal fun p14ViewTitle(view:String)=when(view){"todo"->"待办";"idea"->"想�
             val orientation=LocalConfiguration.current.orientation
             val windowFocused=LocalWindowInfo.current.isWindowFocused
             val dialogView=LocalView.current
-            // ModalBottomSheet owns a separate Android dialog window. On a
-            // rotation, the old dialog may dismiss its IME *after* Compose has
-            // regained focus and shown the new IME. A one/two-shot call races
-            // with that dismissal (verified by real emulator screenshots).
-            // Probe the actual dialog window insets, not only Compose focus.
+            val focusManager=LocalFocusManager.current
+            // ModalBottomSheet owns a separate Android dialog window. During
+            // rotation the old window may hide IME after the new Compose field
+            // was already focused and accepted a show() request. Requesting
+            // focus on an ALREADY-focused field is a no-op. Recreate its input
+            // connection if the real dialog-window insets report no keyboard.
+            // A recovery window is bounded; user-initiated hide later must not
+            // be overridden by an always-on keyboard show loop.
             LaunchedEffect(orientation,windowFocused,dialogView) {
                 if (windowFocused) {
                     withFrameNanos {}
-                    var continuouslyVisible=0
-                    repeat(12) {
-                        focus.requestFocus()
-                        val controller=ViewCompat.getWindowInsetsController(dialogView)
-                        controller?.show(WindowInsetsCompat.Type.ime())
-                        keyboard?.show()
-                        delay(200)
+                    delay(220)
+                    var visibleStreak=0
+                    repeat(20) { index ->
                         val visible=ViewCompat.getRootWindowInsets(dialogView)
                             ?.isVisible(WindowInsetsCompat.Type.ime())==true
-                        continuouslyVisible=if(visible) continuouslyVisible+1 else 0
-                        // Require >600ms of stable real IME insets after handoff.
-                        if(continuouslyVisible>=4) return@LaunchedEffect
+                        if (!visible) {
+                            if (index==0 || index%4==0) {
+                                focusManager.clearFocus(force=true)
+                                withFrameNanos {}
+                            }
+                            focus.requestFocus()
+                            ViewCompat.getWindowInsetsController(dialogView)
+                                ?.show(WindowInsetsCompat.Type.ime())
+                            keyboard?.show()
+                            visibleStreak=0
+                        } else {
+                            visibleStreak++
+                        }
+                        delay(200)
+                        // Monitor for at least 2.8 s, including the delayed
+                        // old-window teardown, before accepting stable IME.
+                        if (index>=14 && visibleStreak>=5) return@LaunchedEffect
                     }
                 }
             }

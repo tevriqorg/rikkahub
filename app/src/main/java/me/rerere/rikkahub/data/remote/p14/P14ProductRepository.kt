@@ -287,6 +287,24 @@ internal class P14ProductRepository(
      * P14 Server session ID. Reuse the authoritative mapping to avoid forking
      * a second Entry whenever the owner chooses Discuss on an old capture. */
     suspend fun conversationForLocal(localConversationId: String) = dao.conversationByLocalId(localConversationId)
+
+    /** Existing Entry and native RikkaHub ChatPage are separate identities.
+     *  Persist their mapping before launching the chat, without replacing the
+     *  authoritative server session or rewriting any existing Entry content. */
+    suspend fun bindNativeConversationId(p14ConversationId: String, nativeChatId: String) =
+        database.withTransaction {
+            require(nativeChatId.isNotBlank()) { "Native chat ID is required" }
+            val source = requireNotNull(dao.conversation(p14ConversationId)) {
+                "P14 Entry does not exist for native discussion"
+            }
+            val occupant = dao.conversationByLocalId(nativeChatId)
+            require(occupant == null || occupant.conversationId == p14ConversationId) {
+                "Native chat ID already belongs to a different Entry"
+            }
+            check(dao.bindLocalConversationId(source.conversationId, nativeChatId) == 1) {
+                "Existing native discussion mapping conflicts with this Entry"
+            }
+        }
     suspend fun message(messageId: String) = dao.message(messageId)
 
     suspend fun acceptRikkaMessage(
