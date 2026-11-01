@@ -365,7 +365,26 @@ class P14HighFidelityVisualInstrumentedTest {
                     // Native UI completion is not enough: flush the separate
                     // durable P14 Outbox and verify both sends reused the
                     // original Server session rather than creating an Entry.
-                    repeat(4) {repo.syncAndFlushActive()}
+                    val outcomes=(1..4).map {repo.syncAndFlushActive()}
+                    if(server.targetTurns!=2) {
+                        File(output,"native-chat-outbox-diagnostic.json").writeText(buildJsonObject {
+                            put("original_conversation",target)
+                            put("native_conversation",nativeId.toString())
+                            put("mapped_external",repo.conversationForLocal(nativeId.toString())?.externalSessionId ?: "")
+                            put("sync_returns",JsonArray(outcomes.map {JsonPrimitive(it)}))
+                            put("native_stream_requests",server.nativeStreamTurns)
+                            put("server_message_accepts",server.targetTurns)
+                            put("pending",buildJsonArray {
+                                db.dao().pendingOutbox().forEach { row -> add(buildJsonObject {
+                                    put("type",row.operationType)
+                                    put("conversation",row.conversationId)
+                                    put("external",row.externalSessionId)
+                                    put("state",row.state)
+                                    put("last_error",row.lastErrorClass ?: "")
+                                }) }
+                            })
+                        }.toString())
+                    }
                     assertEquals("Both turns must reach the original P14 session",2,server.targetTurns)
                     assertEquals(2,server.targetMessageIds.size)
                     val final=requireNotNull(nativeRepo.getConversationById(nativeId))
