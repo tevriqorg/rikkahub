@@ -30,7 +30,7 @@ import me.rerere.rikkahub.data.datastore.SettingsStore
 import me.rerere.rikkahub.data.model.Assistant
 import me.rerere.rikkahub.data.model.AssistantRuntimeMode
 import me.rerere.rikkahub.data.repository.ConversationRepository
-import me.rerere.rikkahub.ui.activity.P14EntryActivity
+import me.rerere.rikkahub.ui.activity.P14InboxActivity
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
@@ -219,12 +219,19 @@ class P14RecoveryInstrumentedTest {
         assertEquals(android.app.Notification.VISIBILITY_PRIVATE, posted.visibility)
         assertNotNull(posted.publicVersion)
         val instrumentation = InstrumentationRegistry.getInstrumentation()
-        val monitor = instrumentation.addMonitor(P14EntryActivity::class.java.name, null, false)
+        // Since RC-G5, notification tap first opens canonical notice detail.
+        // It is not consent to an unrelated Interaction response.
+        val monitor = instrumentation.addMonitor(P14InboxActivity::class.java.name, null, false)
         try {
             posted.contentIntent.send()
-            val opened = requireNotNull(monitor.waitForActivityWithTimeout(8000)) { "Notification did not open Entry Activity" }
-            assertEquals(notification.conversationId, opened.intent.getStringExtra(P14EntryActivity.EXTRA_CONVERSATION_ID))
-            assertEquals(notification.notificationId, opened.intent.getStringExtra(P14EntryActivity.EXTRA_NOTIFICATION_ID))
+            val opened = requireNotNull(monitor.waitForActivityWithTimeout(8000)) {
+                "Notification did not open the native notification detail"
+            }
+            assertEquals(notification.notificationId, opened.intent.getStringExtra("notification_id"))
+            assertEquals("PENDING", dao.interaction("task4-os-interaction")?.status)
+            assertTrue("Opening notice must not queue an Interaction response",
+                dao.pendingOperations().none { it.notificationId == notification.notificationId &&
+                    it.type == "RESPOND_INTERACTION" })
             instrumentation.runOnMainSync { opened.finish() }
         } finally { instrumentation.removeMonitor(monitor) }
         P14SystemNotifications.project(context, dao, listOf(notification.copy(state = "RESOLVED")))
