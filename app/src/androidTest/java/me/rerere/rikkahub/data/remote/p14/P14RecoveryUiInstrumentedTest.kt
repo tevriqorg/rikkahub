@@ -48,6 +48,53 @@ class P14RecoveryUiInstrumentedTest {
     @get:Rule val compose = createEmptyComposeRule()
     private val context get() = InstrumentationRegistry.getInstrumentation().targetContext
 
+    @Test fun saveQuickCaptureWithoutProvider(): Unit = runBlocking {
+        assertNull(P14RuntimeCredentialStore(context).activeConnection())
+        val store: SettingsStore = GlobalContext.get().get()
+        val original = store.awaitLoaded()
+        store.update { it.copy(providers = emptyList()) }
+        try {
+            val text = "inbox-without-provider-" + java.util.UUID.randomUUID()
+            val intent = Intent(context, P14EntryActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            ActivityScenario.launch<P14EntryActivity>(intent).use {
+                compose.onNodeWithTag("p14-inbox-add").performClick()
+                compose.onNodeWithTag("p14-inbox-quick-input").performTextReplacement(text)
+                val draft = P14CaptureDraftStore(context).read()
+                compose.onNodeWithTag("p14-inbox-quick-save").assertIsEnabled().performClick()
+                val dao = P14ProductDatabase.get(context).dao()
+                val conversation = kotlinx.coroutines.withTimeout(15000) {
+                    var saved = dao.conversationByExternalSession(draft.draftId)
+                    while (saved == null) { kotlinx.coroutines.delay(50); saved = dao.conversationByExternalSession(draft.draftId) }
+                    requireNotNull(saved)
+                }
+                assertNull(conversation.assistantId)
+                assertNull(conversation.modelId)
+                assertEquals(text, dao.entry(conversation.entryId)?.bodyText)
+                assertTrue(dao.pendingOutbox().single { it.messageId == draft.messageId }.payloadJson.contains("\"defer_ai\":true"))
+                compose.onNodeWithText(text).performScrollTo().assertIsDisplayed()
+                assertTrue(context.getSharedPreferences("inbox-evidence", Context.MODE_PRIVATE).edit()
+                    .putString("quick-conversation", conversation.conversationId)
+                    .putString("quick-message", draft.messageId).putString("quick-text", text).commit())
+            }
+        } finally { store.update { original } }
+    }
+
+    @Test fun verifyQuickCaptureAfterRestart(): Unit = runBlocking {
+        val prefs = context.getSharedPreferences("inbox-evidence", Context.MODE_PRIVATE)
+        val id = requireNotNull(prefs.getString("quick-conversation", null))
+        val message = requireNotNull(prefs.getString("quick-message", null))
+        val text = requireNotNull(prefs.getString("quick-text", null))
+        val dao = P14ProductDatabase.get(context).dao()
+        val conversation = requireNotNull(dao.conversation(id))
+        assertEquals(text, dao.entry(conversation.entryId)?.bodyText)
+        assertEquals(1, dao.listMessages(id).count { it.messageId == message })
+        assertEquals(1, dao.pendingOutbox().count { it.messageId == message })
+        val intent = Intent(context, P14EntryActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        ActivityScenario.launch<P14EntryActivity>(intent).use {
+            compose.onNodeWithText(text).performScrollTo().assertIsDisplayed()
+        }
+    }
+
     @Test fun captureAndProfileUi() {
         val intent = Intent(context, P14EntryActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         ActivityScenario.launch<P14EntryActivity>(intent).use {

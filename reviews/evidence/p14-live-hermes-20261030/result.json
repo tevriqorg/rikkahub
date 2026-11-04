@@ -1,0 +1,139 @@
+{
+  "source_android": "837d06fe59ea8e5bdde6b84b64a0d5742581c03e",
+  "server_image": "p14-server:f805b994ef995ca8592b2176269d9f26a845870e",
+  "isolated_server": true,
+  "production_untouched": true,
+  "hermes_invoked": true,
+  "entry_id": "9d5da0de-78ab-4803-afdf-f3865ee76ef6",
+  "conversation_id": "3ede0dfb-5f67-4ebb-840d-2d1b79b98aca",
+  "capture_message_id": "394f48ce-7fe1-4322-a883-58c89083932c",
+  "original_capture": "独立验收记录：旧暗号 OLD-IGNORE，目的站秋叶原。",
+  "capture_without_ai": true,
+  "single_hermes_session": "20261030_144957_598e41",
+  "turns": [
+    {
+      "question": "只依据当前引用的记录版本回答：暗号和目的站分别是什么？请简短回答，不调用任何工具。",
+      "reply": "暗号：LIME-ac4061e1；目的站：东京站。",
+      "expected": "LIME-ac4061e1",
+      "passed": true,
+      "seconds": 12.51,
+      "hermes_session_id": "20261030_144957_598e41",
+      "message_id": "3fef4d5b-a490-469a-bc67-75b808eb4c1e",
+      "reply_message_id": "h-0e82930d-4467-43cd-8cb1-acf8f1ba3ba0",
+      "event_types": [
+        "result",
+        "system",
+        "text"
+      ]
+    },
+    {
+      "question": "不要读取文件或调用工具。只依据我们刚才的对话，重复一次刚才确认的暗号。",
+      "reply": "暗号：LIME-ac4061e1",
+      "expected": "LIME-ac4061e1",
+      "passed": true,
+      "seconds": 14.05,
+      "hermes_session_id": "20261030_144957_598e41",
+      "message_id": "c556b1fa-08eb-4a85-bf66-e897e14e85db",
+      "reply_message_id": "h-e8f823b8-04bc-4904-b692-6b7e41397f5d",
+      "event_types": [
+        "result",
+        "system",
+        "text"
+      ]
+    },
+    {
+      "question": "记录已经更新。请只返回当前引用版本中的新暗号，不要沿用上次的暗号，不调用工具。",
+      "reply": "暗号：PEAR-6ebee6d3",
+      "expected": "PEAR-6ebee6d3",
+      "passed": true,
+      "seconds": 15.95,
+      "hermes_session_id": "20261030_144957_598e41",
+      "message_id": "92bcaedc-c4c4-4888-901f-2ebfe1314aea",
+      "reply_message_id": "h-eadc123f-3371-47e8-86e5-24a132ebf5d6",
+      "event_types": [
+        "result",
+        "system",
+        "text"
+      ]
+    }
+  ],
+  "current_revision": 3,
+  "history": {
+    "items": [
+      {
+        "message_id": "h-eadc123f-3371-47e8-86e5-24a132ebf5d6",
+        "conversation_id": "3ede0dfb-5f67-4ebb-840d-2d1b79b98aca",
+        "role": "assistant",
+        "body_text": "暗号：PEAR-6ebee6d3",
+        "revision": 1,
+        "tombstone": false,
+        "created_at": "2026-10-30T06:50:38.351883",
+        "attachments": []
+      },
+      {
+        "message_id": "92bcaedc-c4c4-4888-901f-2ebfe1314aea",
+        "conversation_id": "3ede0dfb-5f67-4ebb-840d-2d1b79b98aca",
+        "role": "user",
+        "body_text": "记录已经更新。请只返回当前引用版本中的新暗号，不要沿用上次的暗号，不调用工具。",
+        "revision": 1,
+        "tombstone": false,
+        "created_at": "2026-10-30T06:50:22.462556",
+        "attachments": []
+      },
+      {
+        "message_id": "h-e8f823b8-04bc-4904-b692-6b7e41397f5d",
+        "conversation_id": "3ede0dfb-5f67-4ebb-840d-2d1b79b98aca",
+        "role": "assistant",
+        "body_text": "暗号：LIME-ac4061e1",
+        "revision": 1,
+        "tombstone": false,
+        "created_at": "2026-10-30T06:50:22.416995",
+        "attachments": []
+      },
+      {
+        "message_id": "c556b1fa-08eb-4a85-bf66-e897e14e85db",
+        "conversation_id": "3ede0dfb-5f67-4ebb-840d-2d1b79b98aca",
+        "role": "user",
+        "body_text": "不要读取文件或调用工具。只依据我们刚才的对话，重复一次刚才确认的暗号。",
+        "revision": 1,
+        "tombstone": false,
+        "created_at": "2026-10-30T06:50:08.364628",
+        "attachments": []
+      },
+      {
+        "message_id": "h-0e82930d-4467-43cd-8cb1-acf8f1ba3ba0",
+        "conversation_id": "3ede0dfb-5f67-4ebb-840d-2d1b79b98aca",
+        "role": "assistant",
+        "body_text": "暗号：LIME-ac4061e1；目的站：东京站。",
+        "revision": 1,
+        "tombstone": false,
+        "created_at": "2026-10-30T06:50:08.333262",
+        "attachments": []
+      },
+      {
+        "message_id": "3fef4d5b-a490-469a-bc67-75b808eb4c1e",
+        "conversation_id": "3ede0dfb-5f67-4ebb-840d-2d1b79b98aca",
+        "role": "user",
+        "body_text": "只依据当前引用的记录版本回答：暗号和目的站分别是什么？请简短回答，不调用任何工具。",
+        "revision": 1,
+        "tombstone": false,
+        "created_at": "2026-10-30T06:49:55.829756",
+        "attachments": []
+      },
+      {
+        "message_id": "394f48ce-7fe1-4322-a883-58c89083932c",
+        "conversation_id": "3ede0dfb-5f67-4ebb-840d-2d1b79b98aca",
+        "role": "user",
+        "body_text": "独立验收记录：更新后的暗号 PEAR-6ebee6d3，目的站仍是东京站。",
+        "revision": 3,
+        "tombstone": false,
+        "created_at": "2026-10-30T06:49:55.778473",
+        "attachments": []
+      }
+    ],
+    "has_more": false,
+    "next_offset": 7
+  },
+  "android_activity_live_tested": false,
+  "transport": "P14 HTTP -> stock Hermes CLI -> P14 HTTP; actual platform gateway not yet exercised"
+}

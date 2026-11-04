@@ -682,12 +682,12 @@ private fun TopBar(
                                     putExtra(P14EntryActivity.EXTRA_EXTERNAL_SESSION_ID, conversation.id.toString())
                                 }
                             })
-                    }) { Text("Entry") }
+                    }) { Text("收件箱") }
                 }
                 if (remoteManifest?.enabledViews?.contains("inbox") == true) {
                     TextButton(onClick = {
                         context.startActivity(Intent(context, P14InboxActivity::class.java))
-                    }) { Text("Inbox") }
+                    }) { Text("通知") }
                 }
             }
             IconButton(

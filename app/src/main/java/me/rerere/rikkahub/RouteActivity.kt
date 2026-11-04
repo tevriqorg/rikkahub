@@ -143,6 +143,9 @@ import org.koin.compose.koinInject
 import kotlin.uuid.Uuid
 
 private const val TAG = "RouteActivity"
+internal const val P14_EXTRA_NATIVE_ENTRY_CHAT = "p14_native_entry_chat"
+internal const val P14_ACTION_CONNECTION_SETTINGS = "me.rerere.rikkahub.action.P14_CONNECTION_SETTINGS"
+
 private const val ACTION_TRANSLATE = "me.rerere.rikkahub.action.TRANSLATE"
 private const val ACTION_MEDIA_CREATION = "me.rerere.rikkahub.action.MEDIA_CREATION"
 
@@ -181,6 +184,14 @@ class RouteActivity : ComponentActivity() {
         if (savedInstanceState == null) {
             handleIntent(intent)
         }
+        // The P14 test track starts with records, including before provider setup.
+        // Keep the shell underneath for the existing provider/settings flow.
+        if (savedInstanceState == null && intent.action == Intent.ACTION_MAIN &&
+            intent.hasCategory(Intent.CATEGORY_LAUNCHER)) {
+            startActivity(Intent(this, me.rerere.rikkahub.ui.activity.P14EntryActivity::class.java)
+                .putExtra(me.rerere.rikkahub.ui.activity.P14EntryActivity.EXTRA_FROM_LAUNCHER, true))
+        }
+
         setContent {
             RikkahubTheme {
                 setSingletonImageLoaderFactory { context ->
@@ -217,6 +228,10 @@ class RouteActivity : ComponentActivity() {
         super.onNewIntent(intent)
         setIntent(intent)
         handleIntent(intent)
+        if (intent.action == Intent.ACTION_MAIN && intent.hasCategory(Intent.CATEGORY_LAUNCHER)) {
+            startActivity(Intent(this, me.rerere.rikkahub.ui.activity.P14EntryActivity::class.java)
+                .putExtra(me.rerere.rikkahub.ui.activity.P14EntryActivity.EXTRA_FROM_LAUNCHER, true))
+        }
     }
 
     private fun handleIntent(intent: Intent) {
@@ -226,6 +241,7 @@ class RouteActivity : ComponentActivity() {
             return
         }
         val destination = when (intent.action) {
+            P14_ACTION_CONNECTION_SETTINGS -> Screen.SettingProvider
             ACTION_TRANSLATE -> Screen.Translator
             ACTION_MEDIA_CREATION -> {
                 openNewMediaCreation(backStack)
@@ -280,8 +296,11 @@ class RouteActivity : ComponentActivity() {
         }
         val migrationState by DatabaseMigrationTracker.state.collectAsStateWithLifecycle()
 
+        val fromP14Entry = intent.getBooleanExtra(P14_EXTRA_NATIVE_ENTRY_CHAT, false)
         val startScreen = Screen.Chat(
-            id = if (readBooleanPreference("create_new_conversation_on_start", true)) {
+            id = if (fromP14Entry) {
+                requireNotNull(intent.getStringExtra("conversationId"))
+            } else if (readBooleanPreference("create_new_conversation_on_start", true)) {
                 Uuid.random().toString()
             } else {
                 readStringPreference(
@@ -322,7 +341,10 @@ class RouteActivity : ComponentActivity() {
                             rememberViewModelStoreNavEntryDecorator(),
                         ),
                         modifier = Modifier.fillMaxSize(),
-                        onBack = { backStack.removeLastOrNull() },
+                        onBack = {
+                            if (fromP14Entry && backStack.size <= 1) finish()
+                            else backStack.removeLastOrNull()
+                        },
                         transitionSpec = {
                             if (backStack.size == 1) fadeIn() togetherWith fadeOut()
                             else {

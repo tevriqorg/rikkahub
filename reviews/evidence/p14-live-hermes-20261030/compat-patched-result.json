@@ -1,0 +1,15 @@
+{
+  "mode": "patched",
+  "current_revision_context_received": true,
+  "expected": "PLUM-a6b7db3c",
+  "calls": [
+    {
+      "conversation_id": "cd82bd42-9bc1-4aeb-a918-97a7b8f8f40d",
+      "message_id": "17dc877e-ff8f-4dc5-b1ae-c727aff11b5f",
+      "session_id": "20261030_190702_466fa4",
+      "text": "PLUM-a6b7db3c",
+      "reply_to_text": "独立平台验收：当前暗号 PLUM-a6b7db3c。",
+      "reply_to_message_id": "2eeaa347-20e6-487a-8f33-f3d49a59097e"
+    }
+  ]
+}
