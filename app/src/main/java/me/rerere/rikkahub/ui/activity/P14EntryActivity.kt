@@ -5,6 +5,7 @@ import android.content.Intent
 import android.net.Uri
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import android.Manifest
 import android.os.Build
 import android.os.SystemClock
@@ -130,6 +131,9 @@ private fun P14EntryScreen(
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
     var conversationId by rememberSaveable { mutableStateOf(initialConversationId) }
+    // Keep Inbox's saveable search/filter/tab and LazyListState alive while a detail is shown.
+    // Without a retained holder, returning from an Entry re-creates the list at its top.
+    val inboxStateHolder = rememberSaveableStateHolder()
     var manifest by remember { mutableStateOf(fallbackP14Manifest()) }
     var notification by remember { mutableStateOf<P14NotificationEntity?>(null) }
     var interaction by remember { mutableStateOf<P14InteractionEntity?>(null) }
@@ -430,7 +434,8 @@ private fun P14EntryScreen(
             return
         }
         if (conversationId == null) {
-            P14TickTickInboxScreen(
+            inboxStateHolder.SaveableStateProvider("p14-inbox") {
+                P14TickTickInboxScreen(
                 rows = inboxRows,
                 archived = inboxArchived,
                 onShowArchived = { inboxArchived = it; inboxLimit = 60 },
@@ -488,7 +493,8 @@ private fun P14EntryScreen(
                         .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP))
                 },
                 resumeQuickDraft = savedDraft.text.isNotBlank()||savedDraft.materials.isNotEmpty(),
-            )
+                )
+            }
         } else {
             P14TickTickEntryDetailScreen(
                 entryBody = entry?.bodyText,

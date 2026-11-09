@@ -248,6 +248,9 @@ class P14HighFidelityVisualInstrumentedTest {
             };val payload=Json.parseToJsonElement(turn.payloadJson).jsonObject
             assertEquals(entries[11].messageId,payload["reply_to_message_id"]!!.jsonPrimitive.content);assertEquals(revised.bodyText,payload["quote"]!!.jsonObject["text"]!!.jsonPrimitive.content)
             shell("input keyevent KEYCODE_BACK");awaitIme(false);SystemClock.sleep(500);shell("input keyevent KEYCODE_BACK");awaitTag("p14-entry-body");compose.onNodeWithTag("p14-entry-back").performClick();awaitTag("p14-inbox-list")
+            // UX-07: return from the same Entry AI discussion without jumping to the Inbox top.
+            // "摩托" is beyond the original viewport and was just scrolled into view.
+            compose.onNodeWithText("摩托").assertIsDisplayed();capture("03c-inbox-scroll-restored")
             compose.onNodeWithTag("p14-inbox-list").performScrollToIndex(0);compose.onNodeWithText("关于日本地方小店的经营模式").performClick();awaitTag("p14-entry-body");capture("04-detail-light")
             compose.onNodeWithTag("p14-inbox-open-ai").performClick();awaitTag("p14-entry-message-input");capture("05-ai-light")
             compose.onNodeWithTag("p14-entry-back").performClick();awaitTag("p14-entry-body");compose.onNodeWithTag("p14-entry-back").performClick();awaitTag("p14-inbox-list")
