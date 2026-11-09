@@ -232,14 +232,30 @@ internal fun p14ViewTitle(view:String)=when(view){"todo"->"待办";"idea"->"想�
     val c=p14Palette();val focus=remember {FocusRequester()};val keyboard=LocalSoftwareKeyboardController.current
     var value by rememberSaveable(stateSaver=TextFieldValue.Saver){mutableStateOf(TextFieldValue(text,TextRange(text.length)))}
     var more by remember {mutableStateOf(false)};var viewMenu by remember {mutableStateOf(false)};var requested by remember {mutableStateOf(false)}
-    LaunchedEffect(text){if(value.text!=text)value=TextFieldValue(text,TextRange(text.length))}
+    // External draft restoration must not force the cursor to the end while the user is editing.
+    LaunchedEffect(text) {
+        if (value.text != text) {
+            val selection = TextRange(value.selection.start.coerceIn(0, text.length), value.selection.end.coerceIn(0, text.length))
+            value = TextFieldValue(text, selection)
+        }
+    }
     LaunchedEffect(saving,text,materials.size){if(requested&&!saving&&text.isBlank()&&materials.isEmpty())onDismiss()}
     ModalBottomSheet(onDismissRequest=onDismiss,sheetState=rememberModalBottomSheetState(skipPartiallyExpanded=true),shape=RoundedCornerShape(topStart=20.dp,topEnd=20.dp),containerColor=c.surface,scrimColor=Color.Black.copy(alpha=.32f),dragHandle=null,contentWindowInsets={WindowInsets(0,0,0,0)}) {
         Column(Modifier.fillMaxWidth().imePadding().navigationBarsPadding()) {
             val orientation=LocalConfiguration.current.orientation
             val windowFocused=LocalWindowInfo.current.isWindowFocused
-            LaunchedEffect(orientation,windowFocused){if(windowFocused){withFrameNanos {};delay(350);focus.requestFocus();delay(150);keyboard?.show()}}
-            BasicTextField(value=value,onValueChange={value=it;onText(it.text)},textStyle=TextStyle(color=c.ink,fontSize=17.sp,lineHeight=24.sp),cursorBrush=SolidColor(c.blue),modifier=Modifier.fillMaxWidth().padding(start=18.dp,end=18.dp,top=17.dp,bottom=3.dp).heightIn(min=76.dp,max=200.dp).focusRequester(focus).testTag("p14-inbox-quick-input"),keyboardOptions=KeyboardOptions(imeAction=ImeAction.Default),decorationBox={inner->Box {if(value.text.isBlank())Text("例如：下午 3 点组织大家开会",color=c.muted.copy(alpha=.55f),fontSize=16.sp);inner()}})
+            // Let Compose attach the sheet and input first; avoid a fixed half-second keyboard delay.
+            LaunchedEffect(orientation,windowFocused) {
+                if (windowFocused) {
+                    withFrameNanos {}
+                    focus.requestFocus()
+                    withFrameNanos {}
+                    keyboard?.show()
+                }
+            }
+            // Selection and IME composing-range updates are UI-only. Do not re-commit the
+            // durable Capture draft unless the actual text changes.
+            BasicTextField(value=value,onValueChange={next->val changed=next.text!=value.text;value=next;if(changed)onText(next.text)},textStyle=TextStyle(color=c.ink,fontSize=17.sp,lineHeight=24.sp),cursorBrush=SolidColor(c.blue),modifier=Modifier.fillMaxWidth().padding(start=18.dp,end=18.dp,top=17.dp,bottom=3.dp).heightIn(min=76.dp,max=200.dp).focusRequester(focus).testTag("p14-inbox-quick-input"),keyboardOptions=KeyboardOptions(imeAction=ImeAction.Default),decorationBox={inner->Box {if(value.text.isBlank())Text("例如：下午 3 点组织大家开会",color=c.muted.copy(alpha=.55f),fontSize=16.sp);inner()}})
             if(materials.isNotEmpty())Row(Modifier.fillMaxWidth().padding(horizontal=18.dp),horizontalArrangement=Arrangement.spacedBy(8.dp)){materials.take(3).forEach {m->Text(m.originalName.take(18)+" ×",fontSize=11.sp,color=c.blue,modifier=Modifier.clip(RoundedCornerShape(6.dp)).background(c.chip).clickable {onRemove(m)}.padding(6.dp))}}
             if(selectedViews.isNotEmpty())Row(Modifier.padding(horizontal=18.dp,vertical=3.dp),horizontalArrangement=Arrangement.spacedBy(6.dp)){selectedViews.forEach {ClassificationPill(p14ViewTitle(it))}}
             if(recording)Text("正在录音 · 点麦克风停止",color=Color(0xFFD34A50),fontSize=12.sp,modifier=Modifier.padding(horizontal=18.dp,vertical=5.dp))

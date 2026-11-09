@@ -3,6 +3,9 @@ package me.rerere.rikkahub.ui.activity
 import android.graphics.Bitmap
 import android.content.res.Configuration
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.test.captureToImage
@@ -17,6 +20,10 @@ import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTextInput
+import androidx.compose.ui.test.performTextReplacement
+import androidx.compose.ui.test.performSemanticsAction
+import androidx.compose.ui.test.assertTextEquals
+import androidx.compose.ui.semantics.SemanticsActions
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import me.rerere.rikkahub.data.remote.p14.P14InboxRow
 import me.rerere.rikkahub.ui.theme.RikkahubTheme
@@ -123,6 +130,38 @@ class P14InboxReplicaUiInstrumentedTest {
         compose.onNodeWithTag("p14-inbox-add").performClick()
         compose.onNodeWithTag("p14-inbox-quick-input").performTextInput("记录一个新想法")
         compose.runOnIdle { assertTrue(draft.contains("记录")) }
+    }
+
+    @Test fun quickCaptureSelectionDoesNotRewriteDraftOrLoseCursor() {
+        // UX-02: moving the caret / changing the IME composing range is not a text edit.
+        // Keep the real TextFieldValue selection, and only persist actual content changes.
+        var draft by mutableStateOf("")
+        var writes = 0
+        compose.setContent {
+            RikkahubTheme {
+                P14TickTickInboxScreen(
+                    rows=emptyList(),archived=false,onShowArchived={},
+                    draftText=draft,onDraftChange={draft=it;writes++},saving=false,status=null,
+                    onQuickSave={},onRichCapture={},onOpen={},onToggleArchive={},
+                    onMore={},onLoadMore={},hasMore=false,onBack={},
+                )
+            }
+        }
+        compose.onNodeWithTag("p14-inbox-add").performClick()
+        compose.onNodeWithTag("p14-inbox-quick-input").performTextReplacement("今天买米")
+        compose.runOnIdle { assertEquals("今天买米",draft) }
+        var beforeSelection = 0
+        compose.runOnIdle { beforeSelection = writes }
+        compose.onNodeWithTag("p14-inbox-quick-input")
+            .performSemanticsAction(SemanticsActions.SetSelection) { it(2,2,false) }
+        compose.runOnIdle { assertEquals("Moving caret must not re-persist draft",beforeSelection,writes) }
+        compose.onNodeWithTag("p14-inbox-quick-input").performTextInput("新")
+        compose.onNodeWithTag("p14-inbox-quick-input").assertTextEquals("今天新买米")
+        compose.runOnIdle { assertEquals("今天新买米",draft) }
+        compose.runOnIdle { beforeSelection = writes }
+        compose.onNodeWithTag("p14-inbox-quick-input")
+            .performSemanticsAction(SemanticsActions.SetSelection) { it(1,3,false) }
+        compose.runOnIdle { assertEquals("Selection without content change must not re-persist",beforeSelection,writes) }
     }
 
     @Test fun entryIsUsefulWithoutAiAndConversationRequiresExplicitTap() {
