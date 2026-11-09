@@ -194,6 +194,26 @@ class P14InboxReplicaUiInstrumentedTest {
         compose.runOnIdle { assertTrue(backedOut) }
     }
 
+    @Test fun aiDiscussionKeepsP14ConversationWithOptionalNativeBridge() {
+        var nativeStarts=0
+        compose.setContent {
+            RikkahubTheme {
+                P14TickTickEntryDetailScreen(
+                    entryBody="还没讨论过的本地记录",createdAt=1_790_000_000_000L,
+                    conversationId="conversation-ai-synthetic-1",messages=emptyList(),
+                    input="",onInputChange={},onSend={},sending=false,canChat=true,status=null,
+                    onBack={},onAdvanced={},onOpenNativeChat={nativeStarts++},
+                )
+            }
+        }
+        compose.onNodeWithTag("p14-inbox-open-ai").performClick()
+        compose.onNodeWithTag("p14-entry-message-input").assertIsDisplayed()
+        compose.runOnIdle { assertEquals("P14 AI discussion must not launch an unrelated native chat",0,nativeStarts) }
+        compose.onNodeWithContentDescription("记录更多操作").performClick()
+        compose.onNodeWithText("在 RikkaHub 原生聊天中讨论").performClick()
+        compose.runOnIdle { assertEquals("Native chat remains an explicit secondary action",1,nativeStarts) }
+    }
+
     @Test fun archivedChipUsesRealArchiveStateNotFakeTaskCompletion() {
         var archivedChosen=false
         compose.setContent {

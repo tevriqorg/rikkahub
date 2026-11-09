@@ -116,7 +116,29 @@ class P14HighFidelityVisualInstrumentedTest {
         conversationId?.let {intent.putExtra(P14EntryActivity.EXTRA_CONVERSATION_ID,it)}
         return ActivityScenario.launch(intent)
     }
-    private fun awaitTag(tag:String) {compose.waitUntil(20_000) {compose.onAllNodesWithTag(tag).fetchSemanticsNodes(atLeastOneRootRequired=false).isNotEmpty()&&runCatching {compose.onNodeWithTag(tag).assertIsDisplayed()}.isSuccess};compose.onNodeWithTag(tag).assertIsDisplayed()}
+    private fun awaitTag(tag:String) {
+        try {
+            compose.waitUntil(20_000) {
+                compose.onAllNodesWithTag(tag).fetchSemanticsNodes(atLeastOneRootRequired=false).isNotEmpty() &&
+                    runCatching { compose.onNodeWithTag(tag).assertIsDisplayed() }.isSuccess
+            }
+            compose.onNodeWithTag(tag).assertIsDisplayed()
+        } catch (e: androidx.compose.ui.test.ComposeTimeoutException) {
+            // Synthetic-only diagnostics: preserve real Activity/UI state instead of a bare timeout.
+            val semantics=runCatching { compose.onRoot(useUnmergedTree=true).printToString(maxDepth=7) }
+                .getOrElse { "Compose semantics unavailable: ${it::class.java.simpleName}" }
+            runCatching { File(output,"timeout-$tag-semantics.txt").writeText(semantics.take(20000)) }
+            runCatching {
+                instrumentation.uiAutomation.takeScreenshot()?.let { image ->
+                    File(output,"timeout-$tag.png").outputStream().use {
+                        image.compress(Bitmap.CompressFormat.PNG,100,it)
+                    }
+                    image.recycle()
+                }
+            }
+            throw AssertionError("P14 awaited visible tag '$tag' but it was missing. UI tree: ${semantics.take(5000)}",e)
+        }
+    }
     private fun enterEditor() {
         awaitTag("p14-entry-body")
         compose.waitUntil(15_000){compose.onAllNodes(hasTestTag("p14-entry-body").and(hasClickAction())).fetchSemanticsNodes(atLeastOneRootRequired=false).isNotEmpty()}

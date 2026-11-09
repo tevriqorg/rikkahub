@@ -329,11 +329,13 @@ internal fun p14ViewTitle(view:String)=when(view){"todo"->"待办";"idea"->"想�
                 DropdownMenuItem(text={Text("编辑记录")},enabled=onCommitEdit!=null&&sourceMessageId!=null,onClick={more=false;edit=true})
                 DropdownMenuItem(text={Text(if(pinned)"取消置顶" else "置顶")},onClick={more=false;onTogglePin()})
                 DropdownMenuItem(text={Text("查看原始 Capture")},onClick={more=false;original=true})
+                if (onOpenNativeChat != null) DropdownMenuItem(text={Text("在 RikkaHub 原生聊天中讨论")},onClick={more=false;onOpenNativeChat()})
                 DropdownMenuItem(text={Text("高级管理")},onClick={more=false;onAdvanced()})
             }}
         }
     },bottomBar={if(!ai)Surface(color=c.background,shadowElevation=1.dp) {Row(Modifier.fillMaxWidth().navigationBarsPadding().height(62.dp),horizontalArrangement=Arrangement.SpaceAround) {
-        DetailAction(P14Symbol.USER,"与 AI 讨论",{if (onOpenNativeChat != null) onOpenNativeChat() else ai=true},Modifier.weight(1f).testTag("p14-inbox-open-ai"),true)
+        // P14 Entry discussion is the primary action. Native RikkaHub chat is optional in More.
+        DetailAction(P14Symbol.USER,"与 AI 讨论",{ai=true},Modifier.weight(1f).testTag("p14-inbox-open-ai"),true)
         DetailAction(P14Symbol.SHARE,"分享",{context.startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT,body),"分享记录"))},Modifier.weight(1f))
         DetailAction(P14Symbol.MOVE,"移动",{categories=true},Modifier.weight(1f).testTag("p14-entry-categories"))
         DetailAction(P14Symbol.ARCHIVE,if(archived)"移回" else "归档",onToggleArchive,Modifier.weight(1f))
