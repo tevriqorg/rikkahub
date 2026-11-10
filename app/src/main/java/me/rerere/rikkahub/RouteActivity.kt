@@ -29,6 +29,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
@@ -59,6 +60,7 @@ import me.rerere.rikkahub.data.event.AppEventBus
 import me.rerere.rikkahub.data.repository.MediaCreationRepository
 import me.rerere.rikkahub.service.MediaCreationForegroundService
 import me.rerere.rikkahub.ui.activity.SafeModeActivity
+import me.rerere.rikkahub.ui.activity.P14WorkspaceNavigation
 import me.rerere.rikkahub.ui.components.ui.TTSController
 import me.rerere.rikkahub.ui.context.LocalASRState
 import me.rerere.rikkahub.ui.context.LocalNavController
@@ -179,8 +181,7 @@ class RouteActivity : ComponentActivity() {
         // Keep the shell underneath for the existing provider/settings flow.
         if (savedInstanceState == null && intent.action == Intent.ACTION_MAIN &&
             intent.hasCategory(Intent.CATEGORY_LAUNCHER)) {
-            startActivity(Intent(this, me.rerere.rikkahub.ui.activity.P14EntryActivity::class.java)
-                .putExtra(me.rerere.rikkahub.ui.activity.P14EntryActivity.EXTRA_FROM_LAUNCHER, true))
+            P14WorkspaceNavigation.openInbox(this)
         }
 
         setContent {
@@ -202,8 +203,7 @@ class RouteActivity : ComponentActivity() {
         setIntent(intent)
         handleIntent(intent)
         if (intent.action == Intent.ACTION_MAIN && intent.hasCategory(Intent.CATEGORY_LAUNCHER)) {
-            startActivity(Intent(this, me.rerere.rikkahub.ui.activity.P14EntryActivity::class.java)
-                .putExtra(me.rerere.rikkahub.ui.activity.P14EntryActivity.EXTRA_FROM_LAUNCHER, true))
+            P14WorkspaceNavigation.openInbox(this)
         }
     }
 
@@ -269,7 +269,7 @@ class RouteActivity : ComponentActivity() {
         }
         val migrationState by DatabaseMigrationTracker.state.collectAsStateWithLifecycle()
 
-        val fromP14Entry = intent.getBooleanExtra(P14_EXTRA_NATIVE_ENTRY_CHAT, false)
+        val fromP14Entry = remember { intent.getBooleanExtra(P14_EXTRA_NATIVE_ENTRY_CHAT, false) }
         val startScreen = Screen.Chat(
             id = if (fromP14Entry) {
                 requireNotNull(intent.getStringExtra("conversationId"))
@@ -315,8 +315,11 @@ class RouteActivity : ComponentActivity() {
                         ),
                         modifier = Modifier.fillMaxSize(),
                         onBack = {
-                            if (fromP14Entry && backStack.size <= 1) finish()
-                            else backStack.removeLastOrNull()
+                            when {
+                                backStack.size > 1 -> backStack.removeLastOrNull()
+                                fromP14Entry -> finish()
+                                else -> moveTaskToBack(true)
+                            }
                         },
                         transitionSpec = {
                             if (backStack.size == 1) fadeIn() togetherWith fadeOut()
