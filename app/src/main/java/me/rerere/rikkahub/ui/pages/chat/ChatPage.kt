@@ -682,7 +682,7 @@ private fun TopBar(
                                     putExtra(P14EntryActivity.EXTRA_EXTERNAL_SESSION_ID, conversation.id.toString())
                                 }
                             })
-                    }) { Text("收件箱") }
+                    }) { Text("关联记录") }
                 }
                 if (remoteManifest?.enabledViews?.contains("inbox") == true) {
                     TextButton(onClick = {
