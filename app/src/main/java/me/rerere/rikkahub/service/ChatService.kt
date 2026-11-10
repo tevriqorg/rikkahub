@@ -112,6 +112,14 @@ import java.util.Locale
 import kotlin.uuid.Uuid
 
 private const val TAG = "ChatService"
+
+/** Only the P14 remote compatibility timeout means Hermes may still finish later. */
+internal fun isP14DeferredTimeout(error: Throwable): Boolean =
+    generateSequence(error) { it.cause }.take(8).any { cause ->
+        val text = cause.message.orEmpty()
+        text.contains("Hermes remote loop did not return", ignoreCase = true) ||
+            text.contains("timeout_error", ignoreCase = true)
+    }
 private const val P14_REPLY_METADATA_KEY = "p14_reply"
 private const val P14_REPLY_QUOTE_LIMIT = 20_000
 
@@ -227,6 +235,9 @@ class ChatService(
     private val p14RemoteControlClient = P14RemoteControlClient(okHttpClient)
     private val p14RuntimeAccess = P14RuntimeAccess(context, settingsStore, okHttpClient)
     private val p14ProductRepository = P14ProductRepository(context, okHttpClient)
+    // Only requests paused by the known P14 asynchronous timeout may be
+    // unpaused automatically when the matching durable final is recovered.
+    private val p14DeferredTimeouts = java.util.Collections.synchronizedSet(mutableSetOf<Uuid>())
     private val p14RemoteRepository = P14RemoteRepository(context, settingsStore, okHttpClient)
 
     private val sessionManager = ConversationSessionManager(
@@ -840,6 +851,9 @@ class ChatService(
             appEventBus.tryEmit(AppEvent.ChatGenerationEnded(conversationId, senderName, null))
             if (it is CancellationException) throw it
             sessionManager.get(conversationId)?.messageQueue?.pause()
+            if (remoteRuntime && model.modelId == "p14-hermes" && isP14DeferredTimeout(it)) {
+                p14DeferredTimeouts.add(conversationId)
+            }
 
             it.printStackTrace()
             addError(it, conversationId, title = context.getString(R.string.error_title_generation))
@@ -1744,6 +1758,12 @@ class ChatService(
         val merged = mergeP14DurableFinals(current, rows)
         if (merged !== current && sessionManager.get(conversationId)?.getJob()?.isActive != true) {
             saveConversation(conversationId, merged)
+            // A timeout is deferred completion, not an instruction to
+            // permanently disable future turns. Other pause causes are untouched.
+            if (p14DeferredTimeouts.remove(conversationId)) {
+                sessionManager.get(conversationId)?.messageQueue?.resume()
+                dispatchNextQueuedMessage(conversationId)
+            }
             // Only the exact stale remote-timeout error is superseded by a
             // later durable answer; unrelated provider errors remain visible.
             _errors.update { errors -> errors.filterNot { err ->
