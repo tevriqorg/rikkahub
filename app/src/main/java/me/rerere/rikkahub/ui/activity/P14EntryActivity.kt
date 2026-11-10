@@ -64,7 +64,7 @@ class P14EntryActivity : ComponentActivity() {
             // Back at the record root exits the app. The explicit settings action
             // still finishes only this surface and reveals the existing shell.
             onBackPressedDispatcher.addCallback(this, object : androidx.activity.OnBackPressedCallback(true) {
-                override fun handleOnBackPressed() { finishAffinity() }
+                override fun handleOnBackPressed() { moveTaskToBack(true) }
             })
         }
         val http = get<OkHttpClient>()
@@ -464,6 +464,7 @@ private fun P14EntryScreen(
                 onOpen = { conversationId = it; input = ""; status = null },
                 onToggleArchive = {row -> organize(row.conversationId,archive=!row.archived)},
                 onMore = { legacyWorkbench = true; status = null },
+                onOpenAiWorkbench = { P14WorkspaceNavigation.openAi(context) },
                 onLoadMore = {
                     if (!inboxLoadingMore) {
                         inboxLoadingMore = true
