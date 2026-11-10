@@ -73,6 +73,7 @@ import me.rerere.hugeicons.stroke.Tick01
 import me.rerere.hugeicons.stroke.TransactionHistory
 import me.rerere.rikkahub.R
 import me.rerere.rikkahub.Screen
+import me.rerere.rikkahub.ui.activity.P14WorkspaceNavigation
 import me.rerere.rikkahub.data.datastore.ConversationSortOrder
 import me.rerere.rikkahub.data.datastore.Settings
 import me.rerere.rikkahub.data.model.Assistant
@@ -178,6 +179,27 @@ fun ChatDrawerContent(
             modifier = Modifier.padding(8.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
+            // The two workspaces share this top-level drawer, but retain their own
+            // native page navigation and model / Conversation authorities.
+            Text(
+                "工作空间",
+                style=MaterialTheme.typography.labelMedium,
+                modifier=Modifier.padding(start=16.dp,top=8.dp,bottom=4.dp),
+            )
+            DrawerEntry(
+                icon=HugeIcons.Folder01,
+                text="收集箱",
+                onClick={P14WorkspaceNavigation.openInbox(context)},
+            )
+            Row(
+                modifier=Modifier.fillMaxWidth().padding(horizontal=16.dp,vertical=10.dp),
+                verticalAlignment=Alignment.CenterVertically,
+                horizontalArrangement=Arrangement.spacedBy(12.dp),
+            ) {
+                Icon(HugeIcons.Sparkles,contentDescription=null,tint=MaterialTheme.colorScheme.primary)
+                Text("AI 对话 · 当前工作区",style=MaterialTheme.typography.bodyMedium)
+            }
+
             BackupReminderCard(
                 settings = settings,
                 onClick = { navController.navigate(Screen.Backup) },
