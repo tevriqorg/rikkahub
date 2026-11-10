@@ -84,7 +84,7 @@ internal fun mergeP14DurableFinals(
                 }
             }
         if (alreadyRenderedBySse) continue
-        nodes.add(MessageNode.of(UIMessage(
+        nodes.add(nextUserIndex, MessageNode.of(UIMessage(
             id = stableId,
             role = MessageRole.ASSISTANT,
             parts = listOf(UIMessagePart.Text(final.bodyText)),

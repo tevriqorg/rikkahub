@@ -112,12 +112,18 @@ class ChatVM(
                         chatService.getP14RemoteManifest(_conversationId)
                     }.getOrNull()
                 }
-                _remoteActivityStatusLines.value = if (_remoteManifest.value?.enabledViews?.contains("activity") == true) {
+                // The native OpenAI SSE may terminate before a long Hermes
+                // task completes. Cursor replay + canonical final projection
+                // keeps the original RikkaHub chat repairable after timeout.
+                val lateProgress = if (tick % 3 == 0) {
+                    runCatching { chatService.reconcileP14RemoteFinals(_conversationId) }.getOrNull()
+                } else null
+                val activities = if (_remoteManifest.value?.enabledViews?.contains("activity") == true) {
                     runCatching { chatService.getP14RemoteActivityStatusLines(_conversationId) }
                         .getOrDefault(emptyList())
-                } else {
-                    emptyList()
-                }
+                } else emptyList()
+                _remoteActivityStatusLines.value = activities +
+                    listOfNotNull(lateProgress?.let { "Hermes 后台处理中 · $it" })
                 tick++
                 delay(5_000)
             }

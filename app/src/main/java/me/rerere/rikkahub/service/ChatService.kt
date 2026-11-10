@@ -69,6 +69,8 @@ import me.rerere.rikkahub.data.remote.p14.P14RuntimeAccess
 import me.rerere.rikkahub.data.remote.p14.P14ProductRepository
 import me.rerere.rikkahub.data.remote.p14.P14ChatRecovery
 import me.rerere.rikkahub.data.remote.p14.P14ProductDatabase
+import me.rerere.rikkahub.data.remote.p14.mergeP14DurableFinals
+import me.rerere.rikkahub.data.remote.p14.recentP14Progress
 import me.rerere.rikkahub.data.remote.p14.P14RemoteWork
 import me.rerere.rikkahub.data.remote.p14.P14EffectiveManifest
 import me.rerere.rikkahub.data.remote.p14.P14RemoteRepository
@@ -1716,6 +1718,41 @@ class ChatService(
             ?: return null
         val provider = p14RuntimeAccess.prepare(configured)
         return p14RemoteRepository.manifest(provider)
+    }
+
+    /**
+     * Foreground P14 Remote chats must converge with the durable Server even
+     * after OpenAI SSE times out or Android loses the connection. Do not start a
+     * second generation or insert mutable Hermes drafts as assistant answers.
+     */
+    internal suspend fun reconcileP14RemoteFinals(conversationId: Uuid): String? = withContext(Dispatchers.IO) {
+        val initial = getConversationFlow(conversationId).value
+        val settings = settingsStore.awaitLoaded()
+        if (settings.getChatModelOf(initial)?.modelId != "p14-hermes") return@withContext null
+        val dao = P14ProductDatabase.get(context).dao()
+        val binding = dao.conversationByLocalId(conversationId.toString()) ?: return@withContext null
+
+        // Replay is cursor-based, idempotent and local-first. If offline, still
+        // reconcile any already persisted final before returning.
+        runCatching { p14ProductRepository.replayActive() }
+        val rows = dao.listMessages(binding.conversationId)
+        val progress = recentP14Progress(rows, System.currentTimeMillis())
+        val session = sessionManager.get(conversationId)
+        if (session?.getJob()?.isActive == true) return@withContext progress
+
+        val current = getConversationFlow(conversationId).value
+        val merged = mergeP14DurableFinals(current, rows)
+        if (merged !== current && sessionManager.get(conversationId)?.getJob()?.isActive != true) {
+            saveConversation(conversationId, merged)
+            // Only the exact stale remote-timeout error is superseded by a
+            // later durable answer; unrelated provider errors remain visible.
+            _errors.update { errors -> errors.filterNot { err ->
+                err.conversationId == conversationId &&
+                    (err.error.message.orEmpty().contains("timeout_error",ignoreCase=true) ||
+                     err.error.message.orEmpty().contains("Hermes remote loop did not return",ignoreCase=true))
+            } }
+        }
+        progress
     }
 
     internal suspend fun getP14RemoteActivityStatusLines(conversationId: Uuid): List<String> {
