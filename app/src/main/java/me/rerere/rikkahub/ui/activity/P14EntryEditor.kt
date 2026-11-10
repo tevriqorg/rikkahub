@@ -93,12 +93,11 @@ import me.rerere.rikkahub.data.remote.p14.*
             Box {P14IconButton(P14Symbol.MORE_HORIZONTAL,"编辑更多操作",{menu=true},Modifier.border(.7.dp,c.line,CircleShape));DropdownMenu(menu,{menu=false},containerColor=c.surface) {
                 DropdownMenuItem(text={Text("完成并保存")},onClick={menu=false;finish()},enabled=!submitting)
                 DropdownMenuItem(text={Text("保留草稿并返回")},onClick={menu=false;store.save(draft);keyboard?.hide();onDiscard()})
-                DropdownMenuItem(text={Text("原始 Capture 始终保留")},enabled=false,onClick={})
             }}
         }
         Column(Modifier.weight(1f).fillMaxWidth().verticalScroll(scroll).padding(horizontal=20.dp,vertical=15.dp)) {
             Row(Modifier.fillMaxWidth().padding(bottom=22.dp),verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(8.dp)) {
-                P14Glyph(P14Symbol.CALENDAR,tint=c.muted.copy(alpha=.5f),modifier=Modifier.size(17.dp));Text("日期&提醒 · 待实现",fontSize=12.sp,color=c.muted.copy(alpha=.7f));Spacer(Modifier.weight(1f));Text("修订 v${draft.baseRevision}",fontSize=10.sp,color=c.muted)
+                Spacer(Modifier.weight(1f));Text("修订 v${draft.baseRevision}",fontSize=10.sp,color=c.muted)
             }
             BasicTextField(value=title,onValueChange={changed(nextTitle=it,focus="title")},textStyle=TextStyle(fontSize=23.sp,lineHeight=30.sp,fontWeight=FontWeight.SemiBold,color=c.ink),cursorBrush=SolidColor(c.blue),modifier=Modifier.fillMaxWidth().heightIn(min=38.dp).focusRequester(titleFocus).onFocusChanged {if(it.isFocused&&draft.snapshot.focused!="title")persist(draft.copy(snapshot=snapshot("title")))}.testTag("p14-editor-title"),decorationBox={inner->Box {if(title.text.isBlank())Text("标题",fontSize=23.sp,color=c.muted);inner()}})
             Spacer(Modifier.height(15.dp))
@@ -110,13 +109,11 @@ import me.rerere.rikkahub.data.remote.p14.*
             Row(Modifier.weight(1f).height(43.dp).border(.7.dp,c.line,CircleShape).padding(horizontal=4.dp).testTag("p14-editor-toolbar"),horizontalArrangement=Arrangement.SpaceEvenly,verticalAlignment=Alignment.CenterVertically) {
                 Box {P14IconButton(P14Symbol.TAG,"整理分类",{viewMenu=true});DropdownMenu(viewMenu,{viewMenu=false},containerColor=c.surface,properties=PopupProperties(focusable=false)) {
                     availableViews.forEach {view->DropdownMenuItem(text={Text((if(view in selectedViews)"✓ " else "")+p14ViewTitle(view))},onClick={onToggleView(view)})}
-                    DropdownMenuItem(text={Text("自定义标签：待实现")},enabled=false,onClick={})
                 }}
                 P14IconButton(P14Symbol.LIST,"插入项目列表",{insert("\n- ")})
                 Box {P14IconButton(P14Symbol.ATTACH,"查看已有附件",{attachmentMenu=true});DropdownMenu(attachmentMenu,{attachmentMenu=false},containerColor=c.surface,properties=PopupProperties(focusable=false)) {
                     attachments.forEach {a->DropdownMenuItem(text={Text(a.fileName)},onClick={attachmentMenu=false;onAttachment(a)})}
                     if(attachments.isEmpty())DropdownMenuItem(text={Text("这条记录暂无附件")},enabled=false,onClick={})
-                    DropdownMenuItem(text={Text("新增附件请使用快速添加；现有记录追加待实现")},enabled=false,onClick={})
                 }}
                 Box {P14IconButton(P14Symbol.FORMAT,"文字格式",{formatMenu=true});DropdownMenu(formatMenu,{formatMenu=false},containerColor=c.surface,properties=PopupProperties(focusable=false)) {
                     DropdownMenuItem(text={Text("加粗（Markdown）")},onClick={formatMenu=false;insert("**","**")})

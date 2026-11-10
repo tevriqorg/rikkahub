@@ -261,21 +261,24 @@ class P14HighFidelityVisualInstrumentedTest {
             assertEquals(draftBefore.snapshot.bodyStart,P14EntryEditDraftStore(context).read(entryId)!!.snapshot.bodyStart)
             compose.onNodeWithTag("p14-editor-back").performClick();awaitTag("p14-entry-body")
             assertEquals("摩托\n具体",repo.entry(entryId)!!.bodyText);val revised=repo.message(entries[11].messageId)!!;assertEquals(2,revised.revision)
-            compose.onNodeWithTag("p14-inbox-open-ai").performClick();awaitTag("p14-entry-message-input");compose.onNodeWithTag("p14-entry-message-input").performTextInput("请基于最新修订讨论")
-            compose.onNodeWithTag("p14-inbox-ai-send").performClick();compose.waitForIdle()
-            val turn=kotlinx.coroutines.withTimeout(15_000) {
-                var found=db.dao().pendingOutbox().lastOrNull {it.conversationId==entries[11].conversationId&&it.operationType=="SEND_MESSAGE"}
-                while(found==null){kotlinx.coroutines.delay(50);found=db.dao().pendingOutbox().lastOrNull {it.conversationId==entries[11].conversationId&&it.operationType=="SEND_MESSAGE"}}
-                requireNotNull(found)
-            };val payload=Json.parseToJsonElement(turn.payloadJson).jsonObject
-            assertEquals(entries[11].messageId,payload["reply_to_message_id"]!!.jsonPrimitive.content);assertEquals(revised.bodyText,payload["quote"]!!.jsonObject["text"]!!.jsonPrimitive.content)
-            shell("input keyevent KEYCODE_BACK");awaitIme(false);SystemClock.sleep(500);shell("input keyevent KEYCODE_BACK");awaitTag("p14-entry-body");compose.onNodeWithTag("p14-entry-back").performClick();awaitTag("p14-inbox-list")
-            // UX-07: return from the same Entry AI discussion without jumping to the Inbox top.
-            // "摩托" is beyond the original viewport and was just scrolled into view.
-            compose.onNodeWithText("摩托").assertIsDisplayed();capture("03c-inbox-scroll-restored")
+            // Native RikkaHub is the only AI discussion surface. Entry remains
+            // independent and the revised source is still a durable user record.
+            compose.onNodeWithTag("p14-entry-message-input").assertDoesNotExist()
+            compose.onNodeWithTag("p14-inbox-open-ai").assertIsDisplayed()
+            compose.onNodeWithTag("p14-entry-back").performClick();awaitTag("p14-inbox-list")
+            // The original list position should be retained after detail editing.
+            compose.onNodeWithText("摩托").assertIsDisplayed()
+            capture("03c-inbox-scroll-restored")
             compose.onNodeWithTag("p14-inbox-list").performScrollToIndex(0);compose.onNodeWithText("关于日本地方小店的经营模式").performClick();awaitTag("p14-entry-body");capture("04-detail-light")
-            compose.onNodeWithTag("p14-inbox-open-ai").performClick();awaitTag("p14-entry-message-input");capture("05-ai-light")
-            compose.onNodeWithTag("p14-entry-back").performClick();awaitTag("p14-entry-body");compose.onNodeWithTag("p14-entry-back").performClick();awaitTag("p14-inbox-list")
+            compose.onNodeWithTag("p14-inbox-open-ai").performClick()
+            compose.waitUntil(30_000) {
+                compose.onAllNodesWithText("关联记录", substring=true)
+                    .fetchSemanticsNodes(atLeastOneRootRequired=false).isNotEmpty()
+            }
+            capture("05-native-ai-light")
+            shell("input keyevent KEYCODE_BACK")
+            awaitTag("p14-entry-body")
+            compose.onNodeWithTag("p14-entry-back").performClick();awaitTag("p14-inbox-list")
             shell("cmd uimode night yes");compose.waitUntil(20_000){context.resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK==Configuration.UI_MODE_NIGHT_YES};awaitTag("p14-inbox-list");capture("06-inbox-dark")
             compose.onNodeWithTag("p14-inbox-add").performClick();awaitTag("p14-inbox-quick-input");awaitIme(true);capture("06b-quick-add-dark-ime",true,"p14-quick-sheet")
             keyboard(false)
@@ -285,52 +288,44 @@ class P14HighFidelityVisualInstrumentedTest {
         File(output,"journey-result.json").writeText("""{"visual_screens":6,"real_ime_verified":true,"rotation_verified":true,"source_preserved":true,"same_conversation":true,"hermes_invoked":false,"entry_count":14}""")
     }
     @Test fun nativeChatExchange():Unit=runBlocking {
-        // A fresh instrumentation process owns this Activity. Do not reuse owners
-        // that were rotated and re-themed during the six-screen visual journey.
         guard()
-        // Fixtures represent existing uploaded files; preserve local bytes for handoff tests.
-        db.dao().directoryPage(100,0).forEach { conversation ->
-            repo.ensureEntrySource(conversation.conversationId)?.let { source ->
-                db.dao().attachmentsForMessage(source.messageId).forEach { attachment ->
-                    db.dao().setAttachmentState(attachment.localAttachmentId,"SYNCED","synthetic-"+attachment.localAttachmentId)
-                }
-            }
-        }
         val target=requireNotNull(prefs.getString("primary",null))
-        repo.acceptEntryRevision(target,"地方小店讨论记录\n编辑后的上下文内容",1)
-        val credential=P14RuntimeCredentialStore(context)
-        P14SyntheticChatServer(target).use { server ->
-            credential.save("synthetic-native-chat",server.baseUrl,"synthetic-loopback-only")
-            credential.markActive("synthetic-native-chat",server.baseUrl)
-            try {launch(target).use {
-                awaitTag("p14-entry-body");compose.onNodeWithTag("p14-inbox-open-ai").performClick();awaitTag("p14-entry-message-input")
-                for(question in listOf("今天下午怎么去东京站？","然后怎么回来？")) {
-                    compose.onNodeWithTag("p14-entry-message-input").performTextInput(question)
-                    compose.onNodeWithTag("p14-inbox-ai-send").performClick()
-                    compose.waitUntil(30_000){compose.onAllNodesWithText("正在组织合成回复…",substring=true).fetchSemanticsNodes(atLeastOneRootRequired=false).isNotEmpty()}
-                    compose.waitUntil(45_000){compose.onAllNodesWithText("合成回复：$question",substring=true).fetchSemanticsNodes(atLeastOneRootRequired=false).isNotEmpty()}
+        val entry=requireNotNull(db.dao().conversation(target))
+        val nativeId=nativeChatIdForEntry(entry.entryId)
+        val repo=org.koin.core.context.GlobalContext.get().get<me.rerere.rikkahub.data.repository.ConversationRepository>()
+        var firstNodeId: kotlin.uuid.Uuid?=null
+        repeat(2) {
+            launch(target).use {
+                awaitTag("p14-entry-body")
+                compose.onNodeWithTag("p14-entry-message-input").assertDoesNotExist()
+                compose.onNodeWithTag("p14-inbox-open-ai").performClick()
+                compose.waitUntil(30_000) {
+                    compose.onAllNodesWithText("关联记录",substring=true)
+                        .fetchSemanticsNodes(atLeastOneRootRequired=false).isNotEmpty()
                 }
-                keyboard(false);capture("09-native-chat-exchange")
-                assertEquals(2,server.targetTurns);assertEquals(2,server.targetMessageIds.size);assertTrue(server.retries>=3)
-                val history=repo.messages(target,100).first()
-                assertFalse(history.any {it.deliveryState=="STREAMING"})
-                for(question in listOf("今天下午怎么去东京站？","然后怎么回来？")) {
-                    val userAt=history.indexOfFirst {it.role=="user"&&it.bodyText==question}
-                    val replyAt=history.indexOfFirst {it.role=="assistant"&&it.bodyText=="合成回复：$question"}
-                    assertTrue("Question must precede its reply even when timestamps tie",userAt>=0&&replyAt>userAt)
-                }
-                File(output,"native-chat-exchange.json").writeText(buildJsonObject {
-                    put("real_activity",true);put("loopback_http",true);put("first_send_503",true);put("same_message_retry",true);put("two_turns",true);put("delayed_draft_and_final",true);put("same_conversation",true);put("hermes_invoked",false)
-                }.toString())
-            }} finally {
-                credential.clear("synthetic-native-chat")
-                // The next method is a separate instrumentation process. Flush the
-                // preceding asynchronous removal before this runner can terminate.
-                check(context.getSharedPreferences("p14-rikkahub-runtime",Context.MODE_PRIVATE).edit().commit())
+                val conversation=requireNotNull(repo.getConversationById(nativeId))
+                assertTrue(conversation.messageNodes.isNotEmpty())
+                assertTrue(conversation.messageNodes.first().currentMessage.toText()
+                    .startsWith("[P14_ENTRY_CONTEXT:"+entry.entryId+"]"))
+                val sourceNodeId=conversation.messageNodes.first().currentMessage.id
+                if(firstNodeId==null)firstNodeId=sourceNodeId
+                else assertEquals("Native Entry source must not duplicate",firstNodeId,sourceNodeId)
+                shell("input keyevent KEYCODE_BACK")
+                awaitTag("p14-entry-body")
             }
         }
-        assertNull(P14RuntimeCredentialStore(context).activeConnection())
-        assertEquals(14,db.dao().directoryPage(100,0).size)
+        val native=requireNotNull(repo.getConversationById(nativeId))
+        assertEquals(1,native.messageNodes.count {
+            it.currentMessage.toText().startsWith("[P14_ENTRY_CONTEXT:"+entry.entryId+"]")
+        })
+        File(output,"native-chat-exchange.json").writeText(buildJsonObject {
+            put("real_native_rikkahub_chat",true)
+            put("stable_entry_conversation_binding",true)
+            put("native_context_source_unique",true)
+            put("synthetic_only",true)
+            put("live_hermes_invoked",false)
+            put("live_text_stream_verified",false)
+        }.toString())
     }
     @Test fun seedEditRecovery():Unit=runBlocking {
         guard();val conversation=requireNotNull(prefs.getString("editor",null));val entryId=requireNotNull(prefs.getString("editor-entry",null));val source=requireNotNull(prefs.getString("editor-source",null))

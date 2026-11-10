@@ -228,6 +228,7 @@ class RouteActivity : ComponentActivity() {
         }
         val destination = when (intent.action) {
             P14_ACTION_CONNECTION_SETTINGS -> Screen.SettingProvider
+            P14WorkspaceNavigation.ACTION_OPEN_HISTORY -> Screen.History
             ACTION_TRANSLATE -> Screen.Translator
             ACTION_MEDIA_CREATION -> {
                 openNewMediaCreation(backStack)

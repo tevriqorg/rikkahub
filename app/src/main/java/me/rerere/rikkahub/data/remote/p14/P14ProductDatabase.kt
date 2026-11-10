@@ -224,6 +224,7 @@ interface P14ProductDao {
     @Query("SELECT * FROM p14_conversations WHERE conversation_id=:conversationId LIMIT 1") fun observeConversation(conversationId: String): Flow<P14ProductConversationEntity?>
     @Query("SELECT * FROM p14_conversations WHERE external_session_id=:externalSessionId LIMIT 1") suspend fun conversationByExternalSession(externalSessionId: String): P14ProductConversationEntity?
     @Query("SELECT * FROM p14_conversations WHERE local_conversation_id=:localId LIMIT 1") suspend fun conversationByLocalId(localId: String): P14ProductConversationEntity?
+    @Query("SELECT * FROM p14_conversations WHERE entry_id=:entryId LIMIT 1") suspend fun conversationByEntryId(entryId: String): P14ProductConversationEntity?
     @Query("SELECT * FROM p14_conversations WHERE local_conversation_id IS NOT NULL ORDER BY created_at_epoch_ms DESC") suspend fun localConversations(): List<P14ProductConversationEntity>
     @Query("SELECT * FROM p14_messages WHERE message_id=:messageId LIMIT 1") suspend fun message(messageId: String): P14ProductMessageEntity?
     @Query("SELECT * FROM p14_messages WHERE conversation_id=:conversationId AND role='user' ORDER BY created_at_epoch_ms ASC,message_id ASC LIMIT 1") fun observeFirstUser(conversationId:String):Flow<P14ProductMessageEntity?>

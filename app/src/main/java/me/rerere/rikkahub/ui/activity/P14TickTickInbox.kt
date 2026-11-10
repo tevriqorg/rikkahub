@@ -59,6 +59,10 @@ import coil3.compose.AsyncImage
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import me.rerere.rikkahub.data.remote.p14.*
+import me.rerere.rikkahub.data.datastore.Settings
+import me.rerere.rikkahub.ui.pages.chat.RikkaHubDrawerIdentity
+import me.rerere.rikkahub.ui.pages.chat.RikkaHubPrimaryDrawerActions
+import me.rerere.rikkahub.ui.activity.P14InboxActivity
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -162,26 +166,30 @@ internal fun p14ViewTitle(view:String)=when(view){"todo"->"待办";"idea"->"想�
 @Composable internal fun P14TickTickInboxScreen(
     rows:List<P14InboxRow>,archived:Boolean,onShowArchived:(Boolean)->Unit,draftText:String,onDraftChange:(String)->Unit,saving:Boolean,status:String?,onQuickSave:()->Unit,onRichCapture:()->Unit,onOpen:(String)->Unit,onToggleArchive:(P14InboxRow)->Unit,onMore:()->Unit,onLoadMore:()->Unit,hasMore:Boolean,onBack:()->Unit,onOpenAiWorkbench:()->Unit={},
     resumeQuickDraft:Boolean=false,onSettings:()->Unit=onBack,onTogglePin:(P14InboxRow)->Unit={},onLoadThumbnail:(String)->Unit={},onSearchChange:(String)->Unit={},managedSearch:Boolean=false,onViewFilter:(String)->Unit={},availableViews:List<String> = listOf("todo","idea","research","execute"),activeView:String="",draftMaterials:List<P14DraftMaterial> = emptyList(),onRemoveDraftMaterial:(P14DraftMaterial)->Unit={},onRecordVoice:()->Unit={},recording:Boolean=false,draftViews:Set<String> = emptySet(),onDraftView:(String)->Unit={},
+    settings: Settings = Settings(), onUpdateSettings: ((Settings) -> Settings) -> Unit = {},
 ) {
-    val c=p14Palette();val scope=rememberCoroutineScope();val drawer=rememberDrawerState(DrawerValue.Closed)
+    val c=p14Palette();val context=LocalContext.current;val scope=rememberCoroutineScope();val drawer=rememberDrawerState(DrawerValue.Closed)
     var searchOpen by rememberSaveable {mutableStateOf(false)};var query by rememberSaveable {mutableStateOf("")};var addOpen by rememberSaveable {mutableStateOf(resumeQuickDraft)};var nav by rememberSaveable {mutableStateOf("收件箱")}
     val display=if(managedSearch)rows else p14InboxFiltered(rows,query);val pinned=display.filter {it.pinned};val normal=display.filterNot {it.pinned}
     BackHandler(enabled=nav!="收件箱"||searchOpen) {if(searchOpen){searchOpen=false;query="";onSearchChange("")} else nav="收件箱"}
-    ModalNavigationDrawer(drawerState=drawer,drawerContent={ModalDrawerSheet(drawerContainerColor=c.surface) {
-        Text("工作空间",fontSize=21.sp,fontWeight=FontWeight.SemiBold,color=c.ink,modifier=Modifier.padding(22.dp))
-        NavigationDrawerItem(label={Text("收集箱 · 当前")},selected=true,onClick={onShowArchived(false);onViewFilter("");nav="收件箱";scope.launch {drawer.close()}})
-        NavigationDrawerItem(label={Text("AI 对话")},selected=false,onClick={scope.launch {drawer.close();onOpenAiWorkbench()}},modifier=Modifier.testTag("p14-drawer-open-workbench"))
-        HorizontalDivider(Modifier.padding(vertical=12.dp),color=c.line)
-        NavigationDrawerItem(label={Text("已归档")},selected=archived,onClick={onShowArchived(true);nav="收件箱";scope.launch {drawer.close()}})
-        NavigationDrawerItem(label={Text("分类视图")},selected=nav=="标签",onClick={nav="标签";scope.launch {drawer.close()}})
-        NavigationDrawerItem(label={Text("连接与设置")},selected=false,onClick=onSettings)
-        NavigationDrawerItem(label={Text("高级管理")},selected=false,onClick=onMore)
-    }}) {
+    // Use the same RikkaHub avatar and primary drawer components as native Chat.
+    ModalNavigationDrawer(drawerState=drawer,drawerContent={
+        ModalDrawerSheet(modifier=Modifier.width(300.dp)) {
+            Column(Modifier.padding(8.dp),verticalArrangement=Arrangement.spacedBy(8.dp)) {
+                RikkaHubDrawerIdentity(settings,onUpdateSettings)
+                RikkaHubPrimaryDrawerActions(
+                    onHistory={scope.launch{drawer.close();P14WorkspaceNavigation.openHistory(context)}},
+                    onSearch={scope.launch{drawer.close();searchOpen=true;nav="收件箱"}},
+                    onInbox={scope.launch{drawer.close();onShowArchived(false);onViewFilter("");nav="收件箱"}},
+                    onNotifications={scope.launch{drawer.close();context.startActivity(Intent(context,P14InboxActivity::class.java))}},
+                )
+            }
+        }
+    }) {
         Scaffold(containerColor=c.background,contentWindowInsets=WindowInsets(0,0,0,0),topBar={
             Row(Modifier.fillMaxWidth().statusBarsPadding().height(56.dp).padding(horizontal=7.dp),verticalAlignment=Alignment.CenterVertically) {
                 P14IconButton(P14Symbol.MENU,"打开侧边栏",{scope.launch {drawer.open()}})
                 Text(if(nav!="收件箱")nav else if(archived)"已归档" else if(activeView.isNotBlank())p14ViewTitle(activeView) else "收件箱",fontSize=21.sp,fontWeight=FontWeight.Bold,color=c.ink,modifier=Modifier.weight(1f).padding(start=5.dp))
-                P14IconButton(P14Symbol.AI,"打开 AI 工作台",onOpenAiWorkbench,Modifier.testTag("p14-inbox-open-workbench"),tint=c.blue)
                 P14IconButton(P14Symbol.SEARCH,"搜索记录",{nav="收件箱";searchOpen=!searchOpen;if(!searchOpen){query="";onSearchChange("")}})
             }
         },floatingActionButton={if(nav=="收件箱"&&!archived)FloatingActionButton(onClick={addOpen=true},containerColor=c.blue,contentColor=Color.White,shape=CircleShape,modifier=Modifier.navigationBarsPadding().size(54.dp).testTag("p14-inbox-add")){Text("+",fontSize=31.sp,fontWeight=FontWeight.Light)}}) { pad ->
@@ -253,24 +261,30 @@ internal fun p14ViewTitle(view:String)=when(view){"todo"->"待办";"idea"->"想�
             if(selectedViews.isNotEmpty())Row(Modifier.padding(horizontal=18.dp,vertical=3.dp),horizontalArrangement=Arrangement.spacedBy(6.dp)){selectedViews.forEach {ClassificationPill(p14ViewTitle(it))}}
             if(recording)Text("正在录音 · 点麦克风停止",color=Color(0xFFD34A50),fontSize=12.sp,modifier=Modifier.padding(horizontal=18.dp,vertical=5.dp))
             if(status!=null&&requested&&!saving)Text(status,color=c.blue,fontSize=11.sp,modifier=Modifier.padding(horizontal=18.dp))
-            Row(Modifier.fillMaxWidth().height(50.dp).padding(horizontal=8.dp).testTag("p14-quick-sheet"),verticalAlignment=Alignment.CenterVertically) {
-                P14IconButton(P14Symbol.CALENDAR,"日期与提醒，待实现",{},enabled=false,pending=true,tint=c.muted)
-                P14IconButton(P14Symbol.FLAG,"优先级，待实现",{},enabled=false,pending=true,tint=c.muted)
-                Box {P14IconButton(P14Symbol.TAG,"选择分类视图",{viewMenu=true},enabled=availableViews.isNotEmpty(),tint=c.muted)
+            Row(Modifier.fillMaxWidth().height(52.dp).padding(horizontal=8.dp).testTag("p14-quick-sheet"),verticalAlignment=Alignment.CenterVertically) {
+                Box {
+                    P14IconButton(P14Symbol.TAG,"分类", {viewMenu=true},enabled=availableViews.isNotEmpty(),tint=c.muted)
                     DropdownMenu(viewMenu,{viewMenu=false},containerColor=c.surface,properties=PopupProperties(focusable=false)) {
-                        DropdownMenuItem(text={Text("分类视图 · 不改变记录身份")},onClick={},enabled=false)
-                        availableViews.forEach {view -> DropdownMenuItem(text={Text((if(view in selectedViews)"✓ " else "")+p14ViewTitle(view))},onClick={onView(view)})}
+                        availableViews.forEach { view ->
+                            DropdownMenuItem(text={Text((if(view in selectedViews)"✓ " else "")+p14ViewTitle(view))},onClick={onView(view)})
+                        }
                     }
                 }
-                P14IconButton(P14Symbol.MOVE,"加入分类视图",{viewMenu=true},enabled=availableViews.isNotEmpty(),tint=c.muted)
-                Box {P14IconButton(P14Symbol.MORE_HORIZONTAL,"快速添加更多",{more=true},tint=c.muted);DropdownMenu(more,{more=false},containerColor=c.surface) {
-                    DropdownMenuItem(text={Text("添加图片、语音或文件")},onClick={more=false;onAttach()})
-                    DropdownMenuItem(text={Text(if(recording)"停止录音" else "录制语音")},onClick={more=false;onVoice()})
-                    DropdownMenuItem(text={Text("保留草稿并关闭")},onClick={more=false;onDismiss()})
-                }}
+                P14IconButton(P14Symbol.ATTACH,"添加图片或文件",onAttach,modifier=Modifier.testTag("p14-quick-attach"),tint=c.muted)
+                P14IconButton(P14Symbol.MIC,if(recording)"停止录音" else "录制语音",onVoice,modifier=Modifier.testTag("p14-quick-voice"),tint=if(recording)Color(0xFFD34A50) else c.muted)
+                Box {
+                    P14IconButton(P14Symbol.MORE_HORIZONTAL,"更多", {more=true},tint=c.muted)
+                    DropdownMenu(more,{more=false},containerColor=c.surface) {
+                        DropdownMenuItem(text={Text("保留草稿并关闭")},onClick={more=false;onDismiss()})
+                    }
+                }
                 Spacer(Modifier.weight(1f))
-                if(text.isNotBlank()||materials.isNotEmpty())IconButton(onClick={requested=true;onSave()},enabled=!saving&&!recording,modifier=Modifier.size(36.dp).clip(CircleShape).background(c.blue).testTag("p14-inbox-quick-save").semantics {contentDescription="保存记录"}) {P14Glyph(P14Symbol.SEND,tint=Color.White,modifier=Modifier.size(19.dp))}
-                else P14IconButton(P14Symbol.MIC,if(recording)"停止录音" else "录制语音",onVoice,tint=if(recording)Color(0xFFD34A50) else c.muted)
+                if(text.isNotBlank()||materials.isNotEmpty()) IconButton(
+                    onClick={requested=true;onSave()},
+                    enabled=!saving&&!recording,
+                    modifier=Modifier.size(36.dp).clip(CircleShape).background(c.blue).testTag("p14-inbox-quick-save")
+                        .semantics {contentDescription="保存记录"}
+                ) {P14Glyph(P14Symbol.SEND,tint=Color.White,modifier=Modifier.size(19.dp))}
             }
         }
     }
@@ -291,56 +305,43 @@ internal fun p14ViewTitle(view:String)=when(view){"todo"->"待办";"idea"->"想�
     entryId:String=conversationId,displayBody:String?=null,sourceMessageId:String?=null,sourceRevision:Int=1,onCommitEdit:((P14EntryEditDraft,(Boolean)->Unit)->Unit)?=null,onToggleArchive:()->Unit={},onTogglePin:()->Unit={},pinned:Boolean=false,archived:Boolean=false,onLoadThumbnail:(String)->Unit={},editConflict:Boolean=false,onResolveConflict:(Boolean)->Unit={},onChatActive:(Boolean)->Unit={},onRetryChat:()->Unit={},onOpenNativeChat:(()->Unit)?=null,
 ) {
     val c=p14Palette();val context=LocalContext.current;val raw=entryBody.orEmpty();val body=displayBody ?: raw
-    var ai by rememberSaveable(entryId){mutableStateOf(false)};var edit by rememberSaveable(entryId){mutableStateOf(false)};var categories by rememberSaveable(entryId){mutableStateOf(false)};var more by remember {mutableStateOf(false)};var original by remember {mutableStateOf(false)};var attachmentMenu by remember {mutableStateOf(false)};var conflictDialog by remember {mutableStateOf(false)}
-    DisposableEffect(ai) {onChatActive(ai);onDispose {onChatActive(false)}}
+    var edit by rememberSaveable(entryId){mutableStateOf(false)};var categories by rememberSaveable(entryId){mutableStateOf(false)};var more by remember {mutableStateOf(false)};var conflictDialog by remember {mutableStateOf(false)}
     val store=remember(context){P14EntryEditDraftStore(context)}
     if(edit) {
         val initial=store.read(entryId) ?: P14EntryEditDraft(entryId,sourceMessageId.orEmpty(),sourceRevision,P14EditorSnapshot(body.substringBefore('\n'),body.substringAfter('\n',"")))
         P14EntryEditor(initial,store,status,attachments,onOpenAttachment,availableViews,selectedViews,onToggleView,onSave={draft,done->onCommitEdit?.invoke(draft){accepted->if(accepted){store.clear(entryId);edit=false};done(accepted)}},onDiscard={edit=false},currentRevision=sourceRevision,currentBody=body)
         return
     }
-    BackHandler {when {categories->categories=false;ai->ai=false;else->onBack()}}
+    BackHandler {if(categories)categories=false else onBack()}
     if(categories) {
         Scaffold(containerColor=c.background,contentWindowInsets=WindowInsets(0,0,0,0),topBar={Row(Modifier.statusBarsPadding().height(56.dp),verticalAlignment=Alignment.CenterVertically){P14IconButton(P14Symbol.BACK,"返回详情",{categories=false});Text("标签与分类",fontSize=20.sp,color=c.ink)}}) {pad->Column(Modifier.padding(pad).padding(20.dp),verticalArrangement=Arrangement.spacedBy(14.dp)) {
             Text("分类视图",fontSize=19.sp,fontWeight=FontWeight.SemiBold,color=c.ink)
             Text("整理同一条记录，不会创建新的 Entry。",color=c.muted,fontSize=13.sp)
             availableViews.forEach {view->FilterChip(selected=view in selectedViews,onClick={onToggleView(view)},label={Text(p14ViewTitle(view))},modifier=Modifier.fillMaxWidth().testTag("p14-entry-view-$view"))}
             if(availableViews.isEmpty())Text("当前配置没有可用分类视图",color=c.muted)
-            Text("自定义标签、日历和提醒：待实现",color=c.muted,fontSize=12.sp)
         }};return
     }
-    val visible=p14InboxConversationMessages(messages,raw,createdAt ?: 0L,sourceMessageId)
     val images=attachments.filter {it.mimeType.startsWith("image/")}
     LaunchedEffect(attachments.map {it.localAttachmentId}) {images.filter {it.localLocator.isBlank()}.forEach {onLoadThumbnail(it.localAttachmentId)}}
     Scaffold(modifier=Modifier.imePadding(),containerColor=c.background,contentWindowInsets=WindowInsets(0,0,0,0),topBar={
         Row(Modifier.fillMaxWidth().statusBarsPadding().height(56.dp).padding(horizontal=6.dp),verticalAlignment=Alignment.CenterVertically) {
-            P14IconButton(P14Symbol.BACK,if(ai)"返回条目详情" else "返回收件箱",{if(ai)ai=false else onBack()},Modifier.testTag("p14-entry-back"))
-            if(ai)Text("与 AI 讨论",color=c.ink,fontSize=19.sp,fontWeight=FontWeight.SemiBold,modifier=Modifier.weight(1f))
-            else Row(Modifier.weight(1f).clickable {categories=true},verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(5.dp)){Text("收件箱",fontSize=15.sp,color=c.ink);P14Glyph(P14Symbol.DOWN,tint=c.muted,modifier=Modifier.size(12.dp))}
-            if(!ai)P14IconButton(P14Symbol.FLAG,"优先级，待实现",{},enabled=false,pending=true)
+            P14IconButton(P14Symbol.BACK,"返回收集箱",onBack,Modifier.testTag("p14-entry-back"))
+            Row(Modifier.weight(1f).clickable {categories=true},verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(5.dp)){Text("收件箱",fontSize=15.sp,color=c.ink);P14Glyph(P14Symbol.DOWN,tint=c.muted,modifier=Modifier.size(12.dp))}
             Box {P14IconButton(P14Symbol.MORE,"记录更多操作",{more=true});DropdownMenu(more,{more=false},containerColor=c.surface) {
                 DropdownMenuItem(text={Text("编辑记录")},enabled=onCommitEdit!=null&&sourceMessageId!=null,onClick={more=false;edit=true})
                 DropdownMenuItem(text={Text(if(pinned)"取消置顶" else "置顶")},onClick={more=false;onTogglePin()})
-                DropdownMenuItem(text={Text("查看原始 Capture")},onClick={more=false;original=true})
-                if (onOpenNativeChat != null) DropdownMenuItem(text={Text("在 RikkaHub 原生聊天中讨论")},onClick={more=false;onOpenNativeChat()})
-                DropdownMenuItem(text={Text("高级管理")},onClick={more=false;onAdvanced()})
             }}
         }
-    },bottomBar={if(!ai)Surface(color=c.background,shadowElevation=1.dp) {Row(Modifier.fillMaxWidth().navigationBarsPadding().height(62.dp),horizontalArrangement=Arrangement.SpaceAround) {
+    },bottomBar={Surface(color=c.background,shadowElevation=1.dp) {Row(Modifier.fillMaxWidth().navigationBarsPadding().height(62.dp),horizontalArrangement=Arrangement.SpaceAround) {
         // P14 Entry discussion is the primary action. Native RikkaHub chat is optional in More.
-        DetailAction(P14Symbol.USER,"与 AI 讨论",{ai=true},Modifier.weight(1f).testTag("p14-inbox-open-ai"),true)
+        if(onOpenNativeChat!=null)DetailAction(P14Symbol.USER,"与 AI 讨论",onOpenNativeChat,Modifier.weight(1f).testTag("p14-inbox-open-ai"),true)
         DetailAction(P14Symbol.SHARE,"分享",{context.startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT,body),"分享记录"))},Modifier.weight(1f))
         DetailAction(P14Symbol.MOVE,"移动",{categories=true},Modifier.weight(1f).testTag("p14-entry-categories"))
         DetailAction(P14Symbol.ARCHIVE,if(archived)"移回" else "归档",onToggleArchive,Modifier.weight(1f))
         DetailAction(P14Symbol.MORE,"更多",{more=true},Modifier.weight(1f))
-    }} else Surface(color=c.background) {Row(Modifier.fillMaxWidth().navigationBarsPadding().padding(horizontal=12.dp,vertical=8.dp),verticalAlignment=Alignment.Bottom,horizontalArrangement=Arrangement.spacedBy(8.dp)) {
-        P14IconButton(P14Symbol.PLUS,"查看上下文附件",{attachmentMenu=true})
-        BasicTextField(value=input,onValueChange=onInputChange,enabled=canChat,textStyle=TextStyle(color=c.ink,fontSize=15.sp,lineHeight=21.sp),cursorBrush=SolidColor(c.blue),modifier=Modifier.weight(1f).clip(RoundedCornerShape(19.dp)).background(c.surface).padding(horizontal=13.dp,vertical=11.dp).heightIn(min=22.dp,max=110.dp).testTag("p14-entry-message-input"),decorationBox={inner->Box {if(input.isBlank())Text("输入消息…",fontSize=14.sp,color=c.muted);inner()}})
-        IconButton(onClick=onSend,enabled=input.isNotBlank()&&!sending&&canChat,modifier=Modifier.size(39.dp).clip(CircleShape).background(if(input.isNotBlank()&&canChat)c.blue else c.line).testTag("p14-inbox-ai-send")){P14Glyph(P14Symbol.SEND,tint=if(input.isNotBlank()&&canChat)Color.White else c.muted,modifier=Modifier.size(21.dp))}
     }}}) {pad->
-        if(!ai)LazyColumn(Modifier.padding(pad).consumeWindowInsets(pad).fillMaxSize().testTag("p14-inbox-detail"),contentPadding=PaddingValues(horizontal=19.dp,vertical=12.dp),verticalArrangement=Arrangement.spacedBy(15.dp)) {
+        LazyColumn(Modifier.padding(pad).consumeWindowInsets(pad).fillMaxSize().testTag("p14-inbox-detail"),contentPadding=PaddingValues(horizontal=19.dp,vertical=12.dp),verticalArrangement=Arrangement.spacedBy(15.dp)) {
             item("content") {Column(Modifier.fillMaxWidth().testTag("p14-entry-body").then(if(onCommitEdit!=null&&sourceMessageId!=null)Modifier.clickable {edit=true} else Modifier),verticalArrangement=Arrangement.spacedBy(14.dp)) {
-                Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(7.dp)){P14Glyph(P14Symbol.CALENDAR,tint=c.muted.copy(alpha=.6f),modifier=Modifier.size(15.dp));Text("日期&提醒 · 待实现",color=c.muted.copy(alpha=.7f),fontSize=12.sp)}
                 Spacer(Modifier.height(1.dp));Text(p14InboxTitle(body,entryId),fontSize=23.sp,lineHeight=30.sp,fontWeight=FontWeight.SemiBold,color=c.ink)
                 Row(verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(7.dp)){selectedViews.forEach {ClassificationPill(p14ViewTitle(it))};createdAt?.let {Text(recordDate(it),color=c.muted,fontSize=11.sp)};if(sourceRevision>1)Text("修订 v$sourceRevision",fontSize=10.sp,color=c.blue)}
                 val remaining=body.substringAfter('\n',"");if(remaining.isNotBlank())me.rerere.ui.markdown.Markdown(remaining,style=TextStyle(color=c.ink,fontSize=15.sp,lineHeight=25.sp))
@@ -350,28 +351,7 @@ internal fun p14ViewTitle(view:String)=when(view){"todo"->"待办";"idea"->"想�
             if(sourceMessageId==null&&onCommitEdit!=null)item("loading-source"){Text("正在恢复可编辑原始记录…",fontSize=12.sp,color=c.muted)}
             if(editConflict)item("conflict"){Text("检测到其他设备的修订。本机修改已保留 · 点此处理",color=Color(0xFFB45B3A),fontSize=12.sp,lineHeight=20.sp,modifier=Modifier.clickable {conflictDialog=true}.padding(vertical=8.dp))}
             if(status!=null)item("status"){Text(status,color=c.blue,fontSize=11.sp,lineHeight=18.sp)}
-        } else Column(Modifier.padding(pad).consumeWindowInsets(pad).fillMaxSize().testTag("p14-inbox-detail")) {
-            Row(Modifier.padding(horizontal=15.dp,vertical=9.dp).fillMaxWidth().clip(RoundedCornerShape(10.dp)).background(c.surface).padding(10.dp).testTag("p14-ai-source"),horizontalArrangement=Arrangement.spacedBy(9.dp),verticalAlignment=Alignment.CenterVertically) {
-                images.firstOrNull()?.let {AttachmentThumbnail(it.localLocator,39)}
-                Column(Modifier.weight(1f),verticalArrangement=Arrangement.spacedBy(4.dp)){Text(p14InboxTitle(body,entryId),color=c.ink,fontSize=12.sp,maxLines=2,overflow=TextOverflow.Ellipsis);Text("正在讨论这条记录",fontSize=10.sp,color=c.muted)}
-            }
-            val list=rememberLazyListState();var initialScroll by remember(entryId){mutableStateOf(true)}
-            LaunchedEffect(visible.lastOrNull()?.messageId,visible.lastOrNull()?.bodyText?.length) {if(visible.isNotEmpty()&&(initialScroll||(list.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0) >= visible.size-3)){list.animateScrollToItem(visible.lastIndex);initialScroll=false}}
-            LazyColumn(Modifier.weight(1f).fillMaxWidth(),state=list,contentPadding=PaddingValues(horizontal=15.dp,vertical=9.dp),verticalArrangement=Arrangement.spacedBy(15.dp)) {
-                if(visible.isEmpty())item {Text("围绕这条记录继续讨论。保存记录不会自动调用 AI。",fontSize=13.sp,color=c.muted,lineHeight=22.sp,modifier=Modifier.padding(vertical=25.dp))}
-                items(visible,key={it.messageId}) {message->val user=message.role.equals("user",true);Row(Modifier.fillMaxWidth(),horizontalArrangement=if(user)Arrangement.End else Arrangement.Start,verticalAlignment=Alignment.Top) {
-                    if(!user){Box(Modifier.size(25.dp).clip(CircleShape).background(c.blue),contentAlignment=Alignment.Center){Text("AI",color=Color.White,fontSize=10.sp,fontWeight=FontWeight.SemiBold)};Spacer(Modifier.width(8.dp))}
-                    Column(Modifier.fillMaxWidth(if(user).84f else .91f),verticalArrangement=Arrangement.spacedBy(4.dp),horizontalAlignment=if(user)Alignment.End else Alignment.Start) {
-                        me.rerere.ui.markdown.Markdown(if(message.tombstone)"消息已删除" else message.bodyText,style=TextStyle(color=c.ink,fontSize=14.sp,lineHeight=23.sp),modifier=Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(if(user)c.user else c.surface.copy(alpha=.55f)).padding(12.dp))
-                        Text(when(message.deliveryState){"STREAMING"->"正在回复…";"LOCAL_PENDING","EDIT_PENDING"->"正在发送…";else->SimpleDateFormat("HH:mm",Locale.CHINA).format(Date(message.createdAtEpochMs))},color=c.muted,fontSize=9.sp)
-                    }
-                }}
-                if(status==null&&visible.lastOrNull()?.let {it.role.equals("user",true)&&it.deliveryState=="SYNCED"}==true)item("awaiting-reply"){Text("已发送，等待 AI 回复…",color=c.muted,fontSize=12.sp)}
-                if(status!=null)item("chat-status"){Row(verticalAlignment=Alignment.CenterVertically){Text(status,color=c.muted,fontSize=12.sp,modifier=Modifier.weight(1f));TextButton(onClick=onRetryChat){Text("重试")}}}
-            }
         }
     }
     if(conflictDialog)AlertDialog(onDismissRequest={conflictDialog=false},title={Text("处理同步冲突")},text={Text("选择本机内容会基于云端版本产生新修订；采用云端会替换当前显示内容。原始 Capture 始终保留。")},confirmButton={TextButton(onClick={conflictDialog=false;onResolveConflict(true)}){Text("保留本机并重试")}},dismissButton={TextButton(onClick={conflictDialog=false;onResolveConflict(false)}){Text("采用云端")}})
-    if(original)AlertDialog(onDismissRequest={original=false},title={Text("原始 Capture")},text={Column(Modifier.heightIn(max=400.dp).verticalScroll(rememberScrollState())){Text(raw,fontSize=14.sp,lineHeight=22.sp)}},confirmButton={TextButton(onClick={original=false}){Text("关闭")}})
-    if(attachmentMenu)ModalBottomSheet(onDismissRequest={attachmentMenu=false},containerColor=c.surface){Column(Modifier.padding(20.dp).navigationBarsPadding()){Text("当前记录附件",fontSize=19.sp,color=c.ink);if(attachments.isEmpty())Text("这条记录没有附件",color=c.muted,modifier=Modifier.padding(vertical=20.dp));attachments.forEach {a->DetailAttachment(a){onOpenAttachment(a)}}}}
 }

@@ -11,6 +11,8 @@ import android.os.Build
 import android.os.SystemClock
 import android.media.MediaRecorder
 import androidx.core.content.FileProvider
+import coil3.compose.AsyncImage
+import androidx.compose.ui.window.Dialog
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import android.content.Context
@@ -418,6 +420,20 @@ private fun P14EntryScreen(
             else file?.delete()
         }
     }
+    var previewImageUri by remember { mutableStateOf<Uri?>(null) }
+    if(previewImageUri!=null)Dialog(onDismissRequest={previewImageUri=null}) {
+        Surface(shape=MaterialTheme.shapes.large,color=MaterialTheme.colorScheme.surface) {
+            Column(Modifier.fillMaxWidth().padding(10.dp)) {
+                AsyncImage(
+                    model=previewImageUri,
+                    contentDescription="记录图片预览",
+                    contentScale=androidx.compose.ui.layout.ContentScale.Fit,
+                    modifier=Modifier.fillMaxWidth().height(360.dp),
+                )
+                TextButton(onClick={previewImageUri=null}) {Text("关闭图片")}
+            }
+        }
+    }
     fun loadThumbnail(id:String) {scope.launch {runCatching {product.materializeAttachment(id)}}}
     fun organize(id:String,pin:Boolean?=null,archive:Boolean?=null) {scope.launch {
         status=runCatching {product.acceptOrganization(id,pin,archive);P14RemoteWork.enqueue(context);"整理已保存"}.getOrElse {it.message ?: "整理失败"}
@@ -493,6 +509,8 @@ private fun P14EntryScreen(
                     P14WorkspaceNavigation.openConnectionSettings(context)
                 },
                 resumeQuickDraft = savedDraft.text.isNotBlank()||savedDraft.materials.isNotEmpty(),
+                settings = settingsStore.settingsFlow.collectAsState().value,
+                onUpdateSettings = { update -> scope.launch { settingsStore.update(update) } },
                 )
             }
         } else {
@@ -534,10 +552,15 @@ private fun P14EntryScreen(
                 onOpenAttachment = { attachment -> scope.launch {
                     status = runCatching {
                         val file = withContext(Dispatchers.IO) { product.materializeAttachment(attachment.localAttachmentId) }
-                        val content = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", File(requireNotNull(file.path)))
-                        context.startActivity(Intent(Intent.ACTION_VIEW).setDataAndType(content, attachment.mimeType)
-                            .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION))
-                        "已打开 ${attachment.fileName}"
+                        if(attachment.mimeType.startsWith("image/")) {
+                            previewImageUri=file
+                            "正在预览图片"
+                        } else {
+                            val content=FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", File(requireNotNull(file.path)))
+                            context.startActivity(Intent(Intent.ACTION_VIEW).setDataAndType(content,attachment.mimeType)
+                                .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION))
+                            "已打开 ${attachment.fileName}"
+                        }
                     }.getOrElse { it.message ?: "附件暂不可用，请联网后重试" }
                 } },
                 input = input,

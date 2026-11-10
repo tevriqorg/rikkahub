@@ -7,6 +7,7 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.AlertDialog
@@ -32,6 +33,7 @@ import androidx.compose.material3.rememberBottomSheetState
 import androidx.compose.material3.rememberDrawerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -52,6 +54,8 @@ import me.rerere.ui.toast.ToastType
 import dev.chrisbanes.haze.hazeSource
 import dev.chrisbanes.haze.rememberHazeState
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import me.rerere.ai.provider.Model
@@ -63,6 +67,10 @@ import me.rerere.hugeicons.stroke.LeftToRightListBullet
 import me.rerere.hugeicons.stroke.Menu03
 import me.rerere.hugeicons.stroke.MessageAdd01
 import me.rerere.rikkahub.R
+import me.rerere.rikkahub.ui.activity.P14EntryActivity
+import me.rerere.rikkahub.ui.activity.P14WorkspaceNavigation
+import me.rerere.rikkahub.data.remote.p14.P14ProductDatabase
+import me.rerere.rikkahub.data.remote.p14.nativeEntrySourceOrNull
 import me.rerere.rikkahub.data.datastore.Settings
 import me.rerere.rikkahub.data.datastore.findProvider
 import me.rerere.rikkahub.data.datastore.getSelectedASRProvider
@@ -294,7 +302,26 @@ private fun ChatPageContent(
 ) {
     val scope = rememberCoroutineScope()
     val toaster = LocalToaster.current
+    val context = LocalContext.current
     val workspaceRepository: WorkspaceRepository = koinInject()
+
+    // The first native message is the durable Entry context, not a user question.
+    // Keep it anchored below the chat title rather than expecting the user to
+    // scroll back through hundreds of real AI turns.
+    val sourceMessage = conversation.currentMessages.firstOrNull()
+    val linkedSource = sourceMessage?.let(::nativeEntrySourceOrNull)
+    val linkedEntryId = sourceMessage?.toText()
+        ?.takeIf { it.startsWith("[P14_ENTRY_CONTEXT:") }
+        ?.substringAfter("[P14_ENTRY_CONTEXT:")
+        ?.substringBefore(']')
+        ?.takeIf { it.isNotBlank() }
+    val linkedProductConversationId by produceState<String?>(null, linkedEntryId) {
+        value = linkedEntryId?.let { entryId ->
+            withContext(Dispatchers.IO) {
+                P14ProductDatabase.get(context).dao().conversationByEntryId(entryId)?.conversationId
+            }
+        }
+    }
 
     var previewMode by rememberSaveable { mutableStateOf(false) }
     val hazeState = rememberHazeState()
@@ -328,25 +355,51 @@ private fun ChatPageContent(
         AssistantBackground(setting = setting, modifier = Modifier.hazeSource(hazeState))
         Scaffold(
             topBar = {
-                TopBar(
-                    settings = setting,
-                    assistant = assistant,
-                    chatModel = currentChatModel,
-                    conversation = conversation,
-                    remoteManifest = remoteManifest,
-                    bigScreen = bigScreen,
-                    drawerState = drawerState,
-                    previewMode = previewMode,
-                    onNewChat = {
-                        navigateToChatPage(navController)
-                    },
-                    onClickMenu = {
-                        previewMode = !previewMode
-                    },
-                    onUpdateTitle = {
-                        vm.updateTitle(it)
+                Column {
+                    TopBar(
+                        settings = setting,
+                        assistant = assistant,
+                        chatModel = currentChatModel,
+                        conversation = conversation,
+                        remoteManifest = remoteManifest,
+                        bigScreen = bigScreen,
+                        drawerState = drawerState,
+                        previewMode = previewMode,
+                        onNewChat = {
+                            navigateToChatPage(navController)
+                        },
+                        onClickMenu = {
+                            previewMode = !previewMode
+                        },
+                        onUpdateTitle = {
+                            vm.updateTitle(it)
+                        }
+                    )
+                    if (linkedSource != null && linkedEntryId != null) {
+                        Surface(
+                            onClick = {
+                                linkedProductConversationId?.let { p14Id ->
+                                    context.startActivity(
+                                        Intent(context, P14EntryActivity::class.java)
+                                            .putExtra(P14EntryActivity.EXTRA_CONVERSATION_ID, p14Id)
+                                    )
+                                } ?: P14WorkspaceNavigation.openInbox(context)
+                            },
+                            color = MaterialTheme.colorScheme.surfaceContainerLow,
+                            shape = MaterialTheme.shapes.medium,
+                            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 2.dp),
+                        ) {
+                            Text(
+                                text = "关联记录 · " + linkedSource.lineSequence()
+                                    .firstOrNull { it.isNotBlank() }.orEmpty().take(70),
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                style = MaterialTheme.typography.labelMedium,
+                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+                            )
+                        }
                     }
-                )
+                }
             },
             bottomBar = {
                 val messageQueue by vm.messageQueue.collectAsStateWithLifecycle()
@@ -675,23 +728,6 @@ private fun TopBar(
             }
         },
         actions = {
-            if (chatModel?.modelId == "p14-hermes") {
-                if (remoteManifest?.enabledViews?.contains("chat") == true) {
-                    TextButton(onClick = {
-                        context.startActivity(Intent(context, P14EntryActivity::class.java)
-                            .apply {
-                                if (conversation.messageNodes.isNotEmpty()) {
-                                    putExtra(P14EntryActivity.EXTRA_EXTERNAL_SESSION_ID, conversation.id.toString())
-                                }
-                            })
-                    }) { Text("关联记录") }
-                }
-                if (remoteManifest?.enabledViews?.contains("inbox") == true) {
-                    TextButton(onClick = {
-                        context.startActivity(Intent(context, P14InboxActivity::class.java))
-                    }) { Text("通知") }
-                }
-            }
             IconButton(
                 onClick = {
                     onClickMenu()

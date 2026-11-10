@@ -119,8 +119,7 @@ class P14InboxReplicaUiInstrumentedTest {
         compose.runOnIdle { assertEquals("conversation-synthetic-1",chosen) }
     }
 
-    @Test fun inboxWorkspaceIsVisibleInToolbarAndDrawer() {
-        var opens=0
+    @Test fun inboxUsesNativeRikkaHubDrawerInsteadOfCustomWorkspaceLinks() {
         compose.setContent {
             RikkahubTheme {
                 P14TickTickInboxScreen(
@@ -128,16 +127,16 @@ class P14InboxReplicaUiInstrumentedTest {
                     draftText="",onDraftChange={},saving=false,status=null,onQuickSave={},
                     onRichCapture={},onOpen={},onToggleArchive={},
                     onMore={},onLoadMore={},hasMore=false,onBack={},
-                    onOpenAiWorkbench={opens++},
                 )
             }
         }
-        compose.onNodeWithTag("p14-nav-日历").assertDoesNotExist()
-        compose.onNodeWithTag("p14-inbox-open-workbench").performClick()
-        compose.runOnIdle { assertEquals(1,opens) }
+        compose.onNodeWithTag("p14-inbox-list").assertIsDisplayed()
+        compose.onNodeWithTag("p14-inbox-open-workbench").assertDoesNotExist()
         compose.onNodeWithContentDescription("打开侧边栏").performClick()
-        compose.onNodeWithTag("p14-drawer-open-workbench").performClick()
-        compose.runOnIdle { assertEquals(2,opens) }
+        compose.onNodeWithText("收集箱").assertIsDisplayed()
+        compose.onNodeWithText("通知").assertIsDisplayed()
+        compose.onNodeWithText("工作空间").assertDoesNotExist()
+        compose.onNodeWithText("AI 对话 · 当前工作区").assertDoesNotExist()
     }
 
     @Test fun aiWorkspaceShortcutRecoversLastNativeChatFromSettings() {
@@ -216,18 +215,17 @@ class P14InboxReplicaUiInstrumentedTest {
         compose.runOnIdle { assertEquals("Selection without content change must not re-persist",beforeSelection,writes) }
     }
 
-    @Test fun entryIsUsefulWithoutAiAndConversationRequiresExplicitTap() {
+    @Test fun entryIsReadableWithoutAiAndNativeChatIsExplicitAction() {
         var backedOut=false
+        var openedNativeChat=0
         compose.setContent {
             RikkahubTheme {
                 P14TickTickEntryDetailScreen(
                     entryBody="一条独立保存的旅行观察",createdAt=1_790_000_000_000L,
-                    conversationId="conversation-synthetic-1",messages=listOf(
-                        P14ProductMessageEntity("synthetic-reply", "conversation-synthetic-1", "assistant",
-                            "可以把这条观察留作旅行素材，随时继续补充。", deliveryState="SYNCED", createdAtEpochMs=1_790_000_010_000L),
-                    ),
+                    conversationId="conversation-synthetic-1",messages=emptyList(),
                     input="",onInputChange={},onSend={},sending=false,canChat=true,
                     status=null,onBack={backedOut=true},onAdvanced={},
+                    onOpenNativeChat={openedNativeChat++},
                 )
             }
         }
@@ -235,18 +233,14 @@ class P14InboxReplicaUiInstrumentedTest {
         compose.onNodeWithTag("p14-entry-message-input").assertDoesNotExist()
         screenshot("02-entry-detail-light")
         compose.onNodeWithTag("p14-inbox-open-ai").performClick()
-        compose.onNodeWithTag("p14-entry-message-input").assertIsDisplayed()
-        compose.onNodeWithText("与 AI 讨论").assertIsDisplayed()
-        screenshot("03-ai-conversation-light")
-        compose.runOnIdle { assertTrue(!backedOut) }
-        compose.runOnUiThread { compose.activity.onBackPressedDispatcher.onBackPressed() }
+        compose.runOnIdle { assertEquals(1,openedNativeChat) }
         compose.onNodeWithTag("p14-entry-message-input").assertDoesNotExist()
         compose.onNodeWithTag("p14-entry-body").assertIsDisplayed()
         compose.onNodeWithTag("p14-entry-back").performClick()
         compose.runOnIdle { assertTrue(backedOut) }
     }
 
-    @Test fun aiDiscussionKeepsP14ConversationWithOptionalNativeBridge() {
+    @Test fun onlyOneAiActionOpensNativeRikkaHubWithoutDuplicatedMenuItem() {
         var nativeStarts=0
         compose.setContent {
             RikkahubTheme {
@@ -259,11 +253,12 @@ class P14InboxReplicaUiInstrumentedTest {
             }
         }
         compose.onNodeWithTag("p14-inbox-open-ai").performClick()
-        compose.onNodeWithTag("p14-entry-message-input").assertIsDisplayed()
-        compose.runOnIdle { assertEquals("P14 AI discussion must not launch an unrelated native chat",0,nativeStarts) }
+        compose.runOnIdle { assertEquals(1,nativeStarts) }
+        compose.onNodeWithTag("p14-entry-message-input").assertDoesNotExist()
         compose.onNodeWithContentDescription("记录更多操作").performClick()
-        compose.onNodeWithText("在 RikkaHub 原生聊天中讨论").performClick()
-        compose.runOnIdle { assertEquals("Native chat remains an explicit secondary action",1,nativeStarts) }
+        compose.onNodeWithText("在 RikkaHub 原生聊天中讨论").assertDoesNotExist()
+        compose.onNodeWithText("查看原始 Capture").assertDoesNotExist()
+        compose.onNodeWithText("高级管理").assertDoesNotExist()
     }
 
     @Test fun archivedChipUsesRealArchiveStateNotFakeTaskCompletion() {
@@ -317,7 +312,7 @@ class P14InboxReplicaUiInstrumentedTest {
             }
         }
         compose.onNodeWithTag("p14-entry-categories").performClick()
-        compose.onNodeWithText("自定义标签、日历和提醒：待实现").assertIsDisplayed()
+        compose.onNodeWithText("自定义标签、日历和提醒：待实现").assertDoesNotExist()
         screenshot("05-classification-existing-views")
         compose.onNodeWithTag("p14-entry-view-todo").performClick()
         compose.runOnIdle { assertEquals("todo", chosen) }
