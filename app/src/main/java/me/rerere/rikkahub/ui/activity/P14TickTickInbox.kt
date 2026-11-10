@@ -70,7 +70,7 @@ private val light=P14Palette(Color(0xFF2868F6),Color(0xFFFCFDFE),Color.White,Col
 private val dark=P14Palette(Color(0xFF719FFF),Color(0xFF0F151F),Color(0xFF151E2B),Color(0xFFEDF1F8),Color(0xFF9BA8B9),Color(0xFF27313E),Color(0xFF203351),Color(0xFF243E66))
 @Composable internal fun p14Palette()=if(isSystemInDarkTheme()) dark else light
 
-internal enum class P14Symbol { MENU,SEARCH,MORE,MORE_HORIZONTAL,INBOX,CALENDAR,TAG,USER,PLUS,BACK,FLAG,ATTACH,LIST,FORMAT,UNDO,REDO,MIC,SEND,ARCHIVE,PIN,SHARE,FOLDER,CLOSE,CHECK,FILE,MOVE,IMAGE,AUDIO,DOWN,EDIT,KEYBOARD }
+internal enum class P14Symbol { MENU,SEARCH,AI,MORE,MORE_HORIZONTAL,INBOX,CALENDAR,TAG,USER,PLUS,BACK,FLAG,ATTACH,LIST,FORMAT,UNDO,REDO,MIC,SEND,ARCHIVE,PIN,SHARE,FOLDER,CLOSE,CHECK,FILE,MOVE,IMAGE,AUDIO,DOWN,EDIT,KEYBOARD }
 @Composable internal fun P14Glyph(symbol:P14Symbol,description:String?=null,tint:Color=p14Palette().ink,modifier:Modifier=Modifier.size(22.dp)) {
     Canvas(modifier.then(if(description!=null) Modifier.semantics { contentDescription=description } else Modifier)) {
         scale(size.width/24f,size.height/24f,pivot=Offset.Zero) {
@@ -80,6 +80,7 @@ internal enum class P14Symbol { MENU,SEARCH,MORE,MORE_HORIZONTAL,INBOX,CALENDAR,
             when(symbol) {
                 P14Symbol.MENU -> {line(4f,6f,20f,6f);line(4f,12f,20f,12f);line(4f,18f,20f,18f)}
                 P14Symbol.SEARCH -> {drawCircle(tint,7f,Offset(10f,10f),style=stroke);line(15f,15f,21f,21f)}
+                P14Symbol.AI -> path(12f,2f,14.8f,9.2f,22f,12f,14.8f,14.8f,12f,22f,9.2f,14.8f,2f,12f,9.2f,9.2f,12f,2f)
                 P14Symbol.MORE -> for(y in listOf(5f,12f,19f))drawCircle(tint,1.5f,Offset(12f,y))
                 P14Symbol.MORE_HORIZONTAL -> for(x in listOf(5f,12f,19f))drawCircle(tint,1.5f,Offset(x,12f))
                 P14Symbol.PLUS -> {line(5f,12f,19f,12f);line(12f,5f,12f,19f)}
@@ -159,39 +160,31 @@ internal fun p14ViewTitle(view:String)=when(view){"todo"->"待办";"idea"->"想�
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable internal fun P14TickTickInboxScreen(
-    rows:List<P14InboxRow>,archived:Boolean,onShowArchived:(Boolean)->Unit,draftText:String,onDraftChange:(String)->Unit,saving:Boolean,status:String?,onQuickSave:()->Unit,onRichCapture:()->Unit,onOpen:(String)->Unit,onToggleArchive:(P14InboxRow)->Unit,onMore:()->Unit,onLoadMore:()->Unit,hasMore:Boolean,onBack:()->Unit,
+    rows:List<P14InboxRow>,archived:Boolean,onShowArchived:(Boolean)->Unit,draftText:String,onDraftChange:(String)->Unit,saving:Boolean,status:String?,onQuickSave:()->Unit,onRichCapture:()->Unit,onOpen:(String)->Unit,onToggleArchive:(P14InboxRow)->Unit,onMore:()->Unit,onLoadMore:()->Unit,hasMore:Boolean,onBack:()->Unit,onOpenAiWorkbench:()->Unit={},
     resumeQuickDraft:Boolean=false,onSettings:()->Unit=onBack,onTogglePin:(P14InboxRow)->Unit={},onLoadThumbnail:(String)->Unit={},onSearchChange:(String)->Unit={},managedSearch:Boolean=false,onViewFilter:(String)->Unit={},availableViews:List<String> = listOf("todo","idea","research","execute"),activeView:String="",draftMaterials:List<P14DraftMaterial> = emptyList(),onRemoveDraftMaterial:(P14DraftMaterial)->Unit={},onRecordVoice:()->Unit={},recording:Boolean=false,draftViews:Set<String> = emptySet(),onDraftView:(String)->Unit={},
 ) {
     val c=p14Palette();val scope=rememberCoroutineScope();val drawer=rememberDrawerState(DrawerValue.Closed)
-    var searchOpen by rememberSaveable {mutableStateOf(false)};var query by rememberSaveable {mutableStateOf("")};var addOpen by rememberSaveable {mutableStateOf(resumeQuickDraft)};var nav by rememberSaveable {mutableStateOf("收件箱")};var more by remember {mutableStateOf(false)}
+    var searchOpen by rememberSaveable {mutableStateOf(false)};var query by rememberSaveable {mutableStateOf("")};var addOpen by rememberSaveable {mutableStateOf(resumeQuickDraft)};var nav by rememberSaveable {mutableStateOf("收件箱")}
     val display=if(managedSearch)rows else p14InboxFiltered(rows,query);val pinned=display.filter {it.pinned};val normal=display.filterNot {it.pinned}
     BackHandler(enabled=nav!="收件箱"||searchOpen) {if(searchOpen){searchOpen=false;query="";onSearchChange("")} else nav="收件箱"}
     ModalNavigationDrawer(drawerState=drawer,drawerContent={ModalDrawerSheet(drawerContainerColor=c.surface) {
-        Text("P14 Entry",fontSize=24.sp,fontWeight=FontWeight.SemiBold,color=c.ink,modifier=Modifier.padding(22.dp))
-        NavigationDrawerItem(label={Text("收件箱")},selected=!archived,onClick={onShowArchived(false);onViewFilter("");nav="收件箱";scope.launch {drawer.close()}})
-        NavigationDrawerItem(label={Text("已归档")},selected=archived,onClick={onShowArchived(true);nav="收件箱";scope.launch {drawer.close()}})
+        Text("工作空间",fontSize=21.sp,fontWeight=FontWeight.SemiBold,color=c.ink,modifier=Modifier.padding(22.dp))
+        NavigationDrawerItem(label={Text("收集箱 · 当前")},selected=true,onClick={onShowArchived(false);onViewFilter("");nav="收件箱";scope.launch {drawer.close()}})
+        NavigationDrawerItem(label={Text("AI 对话")},selected=false,onClick={scope.launch {drawer.close()};onOpenAiWorkbench()},modifier=Modifier.testTag("p14-drawer-open-workbench"))
         HorizontalDivider(Modifier.padding(vertical=12.dp),color=c.line)
+        NavigationDrawerItem(label={Text("已归档")},selected=archived,onClick={onShowArchived(true);nav="收件箱";scope.launch {drawer.close()}})
+        NavigationDrawerItem(label={Text("分类视图")},selected=nav=="标签",onClick={nav="标签";scope.launch {drawer.close()}})
         NavigationDrawerItem(label={Text("连接与设置")},selected=false,onClick=onSettings)
-        NavigationDrawerItem(label={Text("更多管理功能")},selected=false,onClick=onMore)
+        NavigationDrawerItem(label={Text("高级管理")},selected=false,onClick=onMore)
     }}) {
         Scaffold(containerColor=c.background,contentWindowInsets=WindowInsets(0,0,0,0),topBar={
             Row(Modifier.fillMaxWidth().statusBarsPadding().height(56.dp).padding(horizontal=7.dp),verticalAlignment=Alignment.CenterVertically) {
                 P14IconButton(P14Symbol.MENU,"打开侧边栏",{scope.launch {drawer.open()}})
                 Text(if(nav!="收件箱")nav else if(archived)"已归档" else if(activeView.isNotBlank())p14ViewTitle(activeView) else "收件箱",fontSize=21.sp,fontWeight=FontWeight.Bold,color=c.ink,modifier=Modifier.weight(1f).padding(start=5.dp))
+                P14IconButton(P14Symbol.AI,"打开 AI 工作台",onOpenAiWorkbench,Modifier.testTag("p14-inbox-open-workbench"),tint=c.blue)
                 P14IconButton(P14Symbol.SEARCH,"搜索记录",{nav="收件箱";searchOpen=!searchOpen;if(!searchOpen){query="";onSearchChange("")}})
-                Box {P14IconButton(P14Symbol.MORE,"收件箱更多操作",{more=true});DropdownMenu(more,{more=false},containerColor=c.surface) {
-                    DropdownMenuItem(text={Text(if(archived)"查看收件箱" else "查看已归档")},onClick={more=false;onShowArchived(!archived)})
-                    DropdownMenuItem(text={Text("更多管理功能")},onClick={more=false;onMore()})
-                }}
             }
-        },bottomBar={Surface(color=c.background) {Row(Modifier.fillMaxWidth().navigationBarsPadding().height(62.dp),horizontalArrangement=Arrangement.SpaceAround,verticalAlignment=Alignment.CenterVertically) {
-            listOf("收件箱" to P14Symbol.INBOX,"日历" to P14Symbol.CALENDAR,"标签" to P14Symbol.TAG,"我的" to P14Symbol.USER).forEach { (label,icon) ->
-                Column(Modifier.weight(1f).fillMaxHeight().clickable {nav=label}.padding(top=8.dp).testTag("p14-nav-$label"),horizontalAlignment=Alignment.CenterHorizontally,verticalArrangement=Arrangement.spacedBy(4.dp)) {
-                    Box(Modifier.size(38.dp,25.dp).clip(CircleShape).background(if(nav==label)c.chip else Color.Transparent),contentAlignment=Alignment.Center){P14Glyph(icon,tint=if(nav==label)c.blue else c.muted,modifier=Modifier.size(21.dp))}
-                    Text(label,fontSize=10.sp,color=if(nav==label)c.blue else c.muted)
-                }
-            }
-        }}},floatingActionButton={if(nav=="收件箱"&&!archived)FloatingActionButton(onClick={addOpen=true},containerColor=c.blue,contentColor=Color.White,shape=CircleShape,modifier=Modifier.size(54.dp).testTag("p14-inbox-add")){Text("+",fontSize=31.sp,fontWeight=FontWeight.Light)}}) { pad ->
+        },floatingActionButton={if(nav=="收件箱"&&!archived)FloatingActionButton(onClick={addOpen=true},containerColor=c.blue,contentColor=Color.White,shape=CircleShape,modifier=Modifier.navigationBarsPadding().size(54.dp).testTag("p14-inbox-add")){Text("+",fontSize=31.sp,fontWeight=FontWeight.Light)}}) { pad ->
             Column(Modifier.padding(pad).consumeWindowInsets(pad).fillMaxSize()) {
                 if(nav=="收件箱") {
                     if(searchOpen)BasicTextField(value=query,onValueChange={query=it;onSearchChange(it)},singleLine=true,textStyle=TextStyle(color=c.ink,fontSize=15.sp),cursorBrush=SolidColor(c.blue),modifier=Modifier.fillMaxWidth().padding(horizontal=18.dp,vertical=8.dp).clip(RoundedCornerShape(9.dp)).background(c.line).padding(12.dp).testTag("p14-inbox-search"),decorationBox={inner->Box {if(query.isBlank())Text("搜索记录与对话",color=c.muted,fontSize=14.sp);inner()}})
