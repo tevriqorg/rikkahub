@@ -141,12 +141,16 @@ class P14InboxReplicaUiInstrumentedTest {
         val context=InstrumentationRegistry.getInstrumentation().targetContext
         val ai=P14WorkspaceNavigation.aiIntent(context)
         val inbox=P14WorkspaceNavigation.inboxIntent(context)
+        val settings=P14WorkspaceNavigation.settingsIntent(context)
         val flags=android.content.Intent.FLAG_ACTIVITY_REORDER_TO_FRONT or
             android.content.Intent.FLAG_ACTIVITY_SINGLE_TOP
         assertEquals(flags,ai.flags and flags)
         assertEquals(flags,inbox.flags and flags)
+        assertEquals(flags,settings.flags and flags)
+        assertEquals(0,settings.flags and android.content.Intent.FLAG_ACTIVITY_CLEAR_TOP)
         assertEquals(P14WorkspaceNavigation.ACTION_OPEN_AI,ai.action)
         assertEquals(P14WorkspaceNavigation.ACTION_OPEN_INBOX,inbox.action)
+        assertEquals(me.rerere.rikkahub.P14_ACTION_CONNECTION_SETTINGS,settings.action)
         assertEquals("me.rerere.rikkahub.RouteActivity",ai.component?.className)
         assertEquals("me.rerere.rikkahub.ui.activity.P14EntryActivity",inbox.component?.className)
         assertTrue(inbox.getBooleanExtra(P14EntryActivity.EXTRA_FROM_LAUNCHER,false))
