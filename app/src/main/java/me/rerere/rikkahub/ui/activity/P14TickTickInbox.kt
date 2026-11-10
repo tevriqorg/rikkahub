@@ -170,7 +170,7 @@ internal fun p14ViewTitle(view:String)=when(view){"todo"->"待办";"idea"->"想�
     ModalNavigationDrawer(drawerState=drawer,drawerContent={ModalDrawerSheet(drawerContainerColor=c.surface) {
         Text("工作空间",fontSize=21.sp,fontWeight=FontWeight.SemiBold,color=c.ink,modifier=Modifier.padding(22.dp))
         NavigationDrawerItem(label={Text("收集箱 · 当前")},selected=true,onClick={onShowArchived(false);onViewFilter("");nav="收件箱";scope.launch {drawer.close()}})
-        NavigationDrawerItem(label={Text("AI 对话")},selected=false,onClick={scope.launch {drawer.close()};onOpenAiWorkbench()},modifier=Modifier.testTag("p14-drawer-open-workbench"))
+        NavigationDrawerItem(label={Text("AI 对话")},selected=false,onClick={scope.launch {drawer.close();onOpenAiWorkbench()}},modifier=Modifier.testTag("p14-drawer-open-workbench"))
         HorizontalDivider(Modifier.padding(vertical=12.dp),color=c.line)
         NavigationDrawerItem(label={Text("已归档")},selected=archived,onClick={onShowArchived(true);nav="收件箱";scope.launch {drawer.close()}})
         NavigationDrawerItem(label={Text("分类视图")},selected=nav=="标签",onClick={nav="标签";scope.launch {drawer.close()}})

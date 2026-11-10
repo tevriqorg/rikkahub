@@ -21,6 +21,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.DrawerState
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LocalTextStyle
 import androidx.compose.material3.MaterialTheme
@@ -107,6 +108,7 @@ fun ChatDrawerContent(
     vm: ChatVM,
     settings: Settings,
     current: Conversation,
+    workspaceDrawer: DrawerState? = null,
 ) {
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
@@ -189,7 +191,10 @@ fun ChatDrawerContent(
             DrawerEntry(
                 icon=HugeIcons.Folder01,
                 text="收集箱",
-                onClick={P14WorkspaceNavigation.openInbox(context)},
+                onClick={scope.launch {
+                    workspaceDrawer?.close()
+                    P14WorkspaceNavigation.openInbox(context)
+                }},
             )
             Row(
                 modifier=Modifier.fillMaxWidth().padding(horizontal=16.dp,vertical=10.dp),
