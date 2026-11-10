@@ -14,6 +14,9 @@ import androidx.test.platform.app.InstrumentationRegistry
 import androidx.activity.ComponentActivity
 import java.io.File
 import me.rerere.rikkahub.data.remote.p14.P14ProductMessageEntity
+import me.rerere.rikkahub.Screen
+import me.rerere.rikkahub.p14ReturnToNativeChat
+import androidx.navigation3.runtime.NavKey
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithTag
@@ -135,6 +138,13 @@ class P14InboxReplicaUiInstrumentedTest {
         compose.onNodeWithContentDescription("打开侧边栏").performClick()
         compose.onNodeWithTag("p14-drawer-open-workbench").performClick()
         compose.runOnIdle { assertEquals(2,opens) }
+    }
+
+    @Test fun aiWorkspaceShortcutRecoversLastNativeChatFromSettings() {
+        val chat=Screen.Chat("00000000-0000-4000-8000-000000000001")
+        val stack=mutableListOf<NavKey>(chat,Screen.Setting,Screen.SettingProvider)
+        p14ReturnToNativeChat(stack)
+        assertEquals(listOf<NavKey>(chat),stack)
     }
 
     @Test fun workspaceIntentsBringExistingActivitiesToFrontWithoutNewChat() {

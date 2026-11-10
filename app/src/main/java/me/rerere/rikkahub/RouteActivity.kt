@@ -143,6 +143,14 @@ internal const val P14_ACTION_CONNECTION_SETTINGS = "me.rerere.rikkahub.action.P
 private const val ACTION_TRANSLATE = "me.rerere.rikkahub.action.TRANSLATE"
 private const val ACTION_MEDIA_CREATION = "me.rerere.rikkahub.action.MEDIA_CREATION"
 
+/** Resume the latest native chat without creating a new Conversation. */
+internal fun p14ReturnToNativeChat(backStack: MutableList<NavKey>) {
+    val chatIndex = backStack.indexOfLast { it is Screen.Chat }
+    if (chatIndex >= 0) {
+        while (backStack.size > chatIndex + 1) backStack.removeAt(backStack.lastIndex)
+    }
+}
+
 class RouteActivity : ComponentActivity() {
     private val settingsStore by inject<SettingsStore>()
     private val mediaCreationRepository by inject<MediaCreationRepository>()
@@ -211,6 +219,11 @@ class RouteActivity : ComponentActivity() {
         val backStack = navStack ?: run {
             // Compose 尚未创建导航栈，待就绪后处理。
             pendingIntents.addLast(intent)
+            return
+        }
+        if (intent.action == P14WorkspaceNavigation.ACTION_OPEN_AI) {
+            // The global AI shortcut restores a native chat, not a settings page.
+            p14ReturnToNativeChat(backStack)
             return
         }
         val destination = when (intent.action) {
