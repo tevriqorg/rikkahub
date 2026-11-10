@@ -116,6 +116,43 @@ class P14InboxReplicaUiInstrumentedTest {
         compose.runOnIdle { assertEquals("conversation-synthetic-1",chosen) }
     }
 
+    @Test fun inboxWorkspaceIsVisibleInToolbarAndDrawer() {
+        var opens=0
+        compose.setContent {
+            RikkahubTheme {
+                P14TickTickInboxScreen(
+                    rows=listOf(entry),archived=false,onShowArchived={},
+                    draftText="",onDraftChange={},saving=false,status=null,onQuickSave={},
+                    onRichCapture={},onOpen={},onToggleArchive={},
+                    onMore={},onLoadMore={},hasMore=false,onBack={},
+                    onOpenAiWorkbench={opens++},
+                )
+            }
+        }
+        compose.onNodeWithTag("p14-nav-日历").assertDoesNotExist()
+        compose.onNodeWithTag("p14-inbox-open-workbench").performClick()
+        compose.runOnIdle { assertEquals(1,opens) }
+        compose.onNodeWithContentDescription("打开侧边栏").performClick()
+        compose.onNodeWithTag("p14-drawer-open-workbench").performClick()
+        compose.runOnIdle { assertEquals(2,opens) }
+    }
+
+    @Test fun workspaceIntentsBringExistingActivitiesToFrontWithoutNewChat() {
+        val context=InstrumentationRegistry.getInstrumentation().targetContext
+        val ai=P14WorkspaceNavigation.aiIntent(context)
+        val inbox=P14WorkspaceNavigation.inboxIntent(context)
+        val flags=android.content.Intent.FLAG_ACTIVITY_REORDER_TO_FRONT or
+            android.content.Intent.FLAG_ACTIVITY_SINGLE_TOP
+        assertEquals(flags,ai.flags and flags)
+        assertEquals(flags,inbox.flags and flags)
+        assertEquals(P14WorkspaceNavigation.ACTION_OPEN_AI,ai.action)
+        assertEquals(P14WorkspaceNavigation.ACTION_OPEN_INBOX,inbox.action)
+        assertEquals("me.rerere.rikkahub.RouteActivity",ai.component?.className)
+        assertEquals("me.rerere.rikkahub.ui.activity.P14EntryActivity",inbox.component?.className)
+        assertTrue(inbox.getBooleanExtra(P14EntryActivity.EXTRA_FROM_LAUNCHER,false))
+        assertTrue(ai.getStringExtra("conversationId")==null)
+    }
+
     @Test fun plusOpensTickTickStyleQuickCapture() {
         var draft=""
         compose.setContent {
