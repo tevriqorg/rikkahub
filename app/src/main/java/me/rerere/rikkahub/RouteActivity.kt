@@ -282,10 +282,13 @@ class RouteActivity : ComponentActivity() {
         }
         val migrationState by DatabaseMigrationTracker.state.collectAsStateWithLifecycle()
 
-        val fromP14Entry = remember { intent.getBooleanExtra(P14_EXTRA_NATIVE_ENTRY_CHAT, false) }
+        // Capture the launch intent once: ACTION_OPEN_AI is delivered by
+        // onNewIntent and must not overwrite an existing native chat identity.
+        val launchIntent = remember { intent }
+        val fromP14Entry = launchIntent.getBooleanExtra(P14_EXTRA_NATIVE_ENTRY_CHAT, false)
         val startScreen = Screen.Chat(
             id = if (fromP14Entry) {
-                requireNotNull(intent.getStringExtra("conversationId"))
+                requireNotNull(launchIntent.getStringExtra("conversationId"))
             } else if (readBooleanPreference("create_new_conversation_on_start", true)) {
                 Uuid.random().toString()
             } else {
