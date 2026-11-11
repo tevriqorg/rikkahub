@@ -3,6 +3,9 @@ package me.rerere.rikkahub.ui.activity
 import android.graphics.Bitmap
 import android.content.res.Configuration
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.Composable
+import me.rerere.rikkahub.ui.context.LocalToaster
+import me.rerere.ui.toast.rememberToasterState
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
@@ -36,6 +39,17 @@ import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
+
+/** Match the real Activity's native UIAvatar composition requirements in tests. */
+@Composable
+private fun P14TestTheme(content: @Composable () -> Unit) {
+    val toasterState = rememberToasterState()
+    RikkahubTheme {
+        CompositionLocalProvider(LocalToaster provides toasterState) {
+            content()
+        }
+    }
+}
 
 /** Synthetic, offline Inbox reproduction. Does not access user data, P14 Server or Hermes. */
 @RunWith(AndroidJUnit4::class)
@@ -102,7 +116,7 @@ class P14InboxReplicaUiInstrumentedTest {
     @Test fun inboxShowsRealEntryAndOpensExistingConversation() {
         var chosen:String?=null
         compose.setContent {
-            RikkahubTheme {
+            P14TestTheme {
                 P14TickTickInboxScreen(
                     rows=listOf(entry),archived=false,onShowArchived={},
                     draftText="",onDraftChange={},saving=false,status=null,onQuickSave={},
@@ -121,7 +135,7 @@ class P14InboxReplicaUiInstrumentedTest {
 
     @Test fun inboxUsesNativeRikkaHubDrawerInsteadOfCustomWorkspaceLinks() {
         compose.setContent {
-            RikkahubTheme {
+            P14TestTheme {
                 P14TickTickInboxScreen(
                     rows=listOf(entry),archived=false,onShowArchived={},
                     draftText="",onDraftChange={},saving=false,status=null,onQuickSave={},
@@ -169,7 +183,7 @@ class P14InboxReplicaUiInstrumentedTest {
     @Test fun plusOpensTickTickStyleQuickCapture() {
         var draft=""
         compose.setContent {
-            RikkahubTheme {
+            P14TestTheme {
                 P14TickTickInboxScreen(
                     rows=emptyList(),archived=false,onShowArchived={},
                     draftText=draft,onDraftChange={draft=it},saving=false,status=null,onQuickSave={},
@@ -189,7 +203,7 @@ class P14InboxReplicaUiInstrumentedTest {
         var draft by mutableStateOf("")
         var writes = 0
         compose.setContent {
-            RikkahubTheme {
+            P14TestTheme {
                 P14TickTickInboxScreen(
                     rows=emptyList(),archived=false,onShowArchived={},
                     draftText=draft,onDraftChange={draft=it;writes++},saving=false,status=null,
@@ -219,7 +233,7 @@ class P14InboxReplicaUiInstrumentedTest {
         var backedOut=false
         var openedNativeChat=0
         compose.setContent {
-            RikkahubTheme {
+            P14TestTheme {
                 P14TickTickEntryDetailScreen(
                     entryBody="一条独立保存的旅行观察",createdAt=1_790_000_000_000L,
                     conversationId="conversation-synthetic-1",messages=emptyList(),
@@ -243,7 +257,7 @@ class P14InboxReplicaUiInstrumentedTest {
     @Test fun onlyOneAiActionOpensNativeRikkaHubWithoutDuplicatedMenuItem() {
         var nativeStarts=0
         compose.setContent {
-            RikkahubTheme {
+            P14TestTheme {
                 P14TickTickEntryDetailScreen(
                     entryBody="还没讨论过的本地记录",createdAt=1_790_000_000_000L,
                     conversationId="conversation-ai-synthetic-1",messages=emptyList(),
@@ -264,7 +278,7 @@ class P14InboxReplicaUiInstrumentedTest {
     @Test fun archivedChipUsesRealArchiveStateNotFakeTaskCompletion() {
         var archivedChosen=false
         compose.setContent {
-            RikkahubTheme {
+            P14TestTheme {
                 P14TickTickInboxScreen(
                     rows=listOf(entry),archived=false,
                     onShowArchived={archivedChosen=it},
@@ -283,7 +297,7 @@ class P14InboxReplicaUiInstrumentedTest {
                 uiMode = (uiMode and Configuration.UI_MODE_NIGHT_MASK.inv()) or Configuration.UI_MODE_NIGHT_YES
             }
             CompositionLocalProvider(LocalConfiguration provides configuration) {
-                RikkahubTheme {
+                P14TestTheme {
                     P14TickTickInboxScreen(
                         rows=listOf(entry), archived=false, onShowArchived={},
                         draftText="", onDraftChange={}, saving=false, status=null,
@@ -300,7 +314,7 @@ class P14InboxReplicaUiInstrumentedTest {
     @Test fun classificationReusesExistingViewIdentity() {
         var chosen: String? = null
         compose.setContent {
-            RikkahubTheme {
+            P14TestTheme {
                 P14TickTickEntryDetailScreen(
                     entryBody="分类测试记录", createdAt=1_790_000_000_000L,
                     conversationId="conversation-synthetic-1", messages=emptyList(),

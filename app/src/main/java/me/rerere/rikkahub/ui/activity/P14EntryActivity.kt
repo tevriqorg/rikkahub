@@ -54,6 +54,8 @@ import me.rerere.rikkahub.data.datastore.SettingsStore
 import me.rerere.rikkahub.data.repository.ConversationRepository
 import me.rerere.rikkahub.data.remote.p14.*
 import me.rerere.rikkahub.ui.theme.RikkahubTheme
+import me.rerere.rikkahub.ui.context.LocalToaster
+import me.rerere.ui.toast.rememberToasterState
 import okhttp3.OkHttpClient
 import org.koin.android.ext.android.get
 
@@ -87,7 +89,9 @@ class P14EntryActivity : ComponentActivity() {
         }
         setContent {
             RikkahubTheme {
-                P14EntryScreen(
+                val toasterState = rememberToasterState()
+                CompositionLocalProvider(LocalToaster provides toasterState) {
+                    P14EntryScreen(
                     product = product,
                     remote = remote,
                     settingsStore = settingsStore,
@@ -98,7 +102,8 @@ class P14EntryActivity : ComponentActivity() {
                     externalSessionId = intent.getStringExtra(EXTRA_EXTERNAL_SESSION_ID),
                     notificationId = notificationId,
                     onBack = { finish() },
-                )
+                    )
+                }
             }
         }
     }
