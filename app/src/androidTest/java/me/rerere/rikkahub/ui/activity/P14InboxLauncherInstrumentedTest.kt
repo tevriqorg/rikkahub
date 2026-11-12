@@ -51,6 +51,10 @@ class P14InboxLauncherInstrumentedTest {
             compose.onNodeWithContentDescription("打开侧边栏").performClick()
             compose.onNodeWithText("通知").assertIsDisplayed()
             compose.onNodeWithText("连接与设置").assertDoesNotExist()
+            // Opening native settings from outside the drawer must first
+            // dismiss the modal drawer, just as an actual drawer action does.
+            // Otherwise the later Back press would only close a stale drawer.
+            androidx.test.espresso.Espresso.pressBackUnconditionally()
             // Provider settings are reached through the existing native
             // RikkaHub settings route, not a second Inbox sidebar.
             context.startActivity(P14WorkspaceNavigation.settingsIntent(context)
