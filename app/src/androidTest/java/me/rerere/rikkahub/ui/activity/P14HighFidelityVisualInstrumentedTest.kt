@@ -291,7 +291,7 @@ class P14HighFidelityVisualInstrumentedTest {
         guard()
         val target=requireNotNull(prefs.getString("primary",null))
         val entry=requireNotNull(db.dao().conversation(target))
-        val nativeId=nativeChatIdForEntry(entry.entryId)
+        val nativeId=nativeChatIdForEntryOrExisting(entry.entryId,entry.localConversationId)
         val repo=org.koin.core.context.GlobalContext.get().get<me.rerere.rikkahub.data.repository.ConversationRepository>()
         var firstNodeId: kotlin.uuid.Uuid?=null
         repeat(2) {
@@ -375,16 +375,37 @@ class P14HighFidelityVisualInstrumentedTest {
                 launch(conversation).use {
                     awaitTag("p14-entry-body")
                     compose.onNodeWithTag("p14-entry-attachment-${attachment.localAttachmentId}").performScrollTo().performClick()
-                    compose.waitUntil(15_000){received!=null}
-                    assertEquals(mime,received!!["mime"]!!.jsonPrimitive.content)
-                    assertEquals("content",received!!["scheme"]!!.jsonPrimitive.content)
-                    assertEquals(expected,received!!["sha256"]!!.jsonPrimitive.content)
-                    assertTrue(received!!["read_grant"]!!.jsonPrimitive.boolean)
-                    tested+=received!!
+                    if (mime.startsWith("image/")) {
+                        // Image previews now stay inside the App, without an
+                        // external ACTION_VIEW or another installed viewer.
+                        compose.waitUntil(15_000) {
+                            compose.onAllNodesWithText("关闭图片")
+                                .fetchSemanticsNodes(atLeastOneRootRequired=false).isNotEmpty()
+                        }
+                        compose.onNodeWithContentDescription("记录图片预览").assertIsDisplayed()
+                        assertNull("In-app images must not launch an external viewer",received)
+                        capture("attachment-image-in-app")
+                        tested+=buildJsonObject {
+                            put("mime",mime)
+                            put("scheme","in_app")
+                            put("sha256",expected)
+                            put("read_grant",false)
+                        }
+                        compose.onNodeWithText("关闭图片").performClick()
+                    } else {
+                        // PDF/WAV continue through FileProvider with a readable
+                        // content URI and an explicit read-grant flag.
+                        compose.waitUntil(15_000){received!=null}
+                        assertEquals(mime,received!!["mime"]!!.jsonPrimitive.content)
+                        assertEquals("content",received!!["scheme"]!!.jsonPrimitive.content)
+                        assertEquals(expected,received!!["sha256"]!!.jsonPrimitive.content)
+                        assertTrue(received!!["read_grant"]!!.jsonPrimitive.boolean)
+                        tested+=received!!
+                    }
                 }
             } finally {instrumentation.removeMonitor(monitor)}
         }
-        File(output,"attachment-handoff.json").writeText(buildJsonObject {put("synthetic",true);put("external_viewer_boundary_intercepted",true);put("files",JsonArray(tested))}.toString())
+        File(output,"attachment-handoff.json").writeText(buildJsonObject {put("synthetic",true);put("external_viewer_boundary_intercepted",true);put("in_app_image_preview",true);put("files",JsonArray(tested))}.toString())
     }
 
 }
