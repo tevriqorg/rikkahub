@@ -12,6 +12,7 @@ import androidx.test.espresso.Espresso.pressBack
 import java.io.File
 import me.rerere.rikkahub.data.remote.p14.P14ProductMessageEntity
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertDoesNotExist
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithContentDescription
@@ -46,11 +47,23 @@ class P14InboxLauncherInstrumentedTest {
             }
             compose.onNodeWithTag("p14-inbox-list").assertIsDisplayed()
             compose.onNodeWithTag("p14-inbox-add").assertIsDisplayed()
+            // The original RikkaHub drawer now owns the Inbox and notifications.
+            // The legacy "连接与设置" row was intentionally removed.
             compose.onNodeWithContentDescription("打开侧边栏").performClick()
-            compose.onNodeWithText("连接与设置").performClick()
+            compose.onNodeWithText("通知").assertIsDisplayed()
+            compose.onNodeWithText("连接与设置").assertDoesNotExist()
+            // Provider settings are reached through the existing native
+            // RikkaHub settings route, not a second Inbox sidebar.
+            context.startActivity(P14WorkspaceNavigation.settingsIntent(context)
+                .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK))
+            compose.waitUntil(timeoutMillis = 20_000L) {
+                compose.onAllNodes(androidx.compose.ui.test.hasText(
+                    context.getString(me.rerere.rikkahub.R.string.setting_page_providers)
+                )).fetchSemanticsNodes(atLeastOneRootRequired=false).isNotEmpty()
+            }
             compose.onNodeWithText(context.getString(me.rerere.rikkahub.R.string.setting_page_providers))
                 .assertIsDisplayed()
-            // A warm launcher intent must return from settings to records as well.
+            // A warm launcher intent must return from native settings to records.
             context.startActivity(android.content.Intent(context, me.rerere.rikkahub.RouteActivity::class.java)
                 .setAction(android.content.Intent.ACTION_MAIN)
                 .addCategory(android.content.Intent.CATEGORY_LAUNCHER)
