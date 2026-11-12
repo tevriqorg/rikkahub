@@ -1,0 +1,19 @@
+{
+  "source_sha": "70cc7540fd7c3a56d13a97839c4a3c7ef3751bee",
+  "arm64_ci": "https://github.com/tevriqorg/public-ci/actions/runs/40882638663",
+  "ui_ci": "https://github.com/tevriqorg/public-ci/actions/runs/40884338875",
+  "signed_apk_sha256": "69e8dea215a26d249700ae9c5b47616733ab4cbb19a13b067089827299a9dd61",
+  "fixed_certificate_sha256": "dfa33df904e4eb3ca30fdc61a1817dbec36d131a94a594663f7d79522430cc94",
+  "physical_device_reacceptance": "pending",
+  "hermes_invoked": false,
+  "isolated_launcher_test_passed": true,
+  "ui_tests": {
+    "tests": "7",
+    "failures": "0",
+    "errors": "0",
+    "skipped": "0",
+    "time": "0.000",
+    "timestamp": "2026-10-29T13:50:55",
+    "hostname": "localhost"
+  }
+}

@@ -1,0 +1,123 @@
+package me.rerere.rikkahub.ui.activity
+
+import android.graphics.Bitmap
+import android.content.res.Configuration
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.graphics.asAndroidBitmap
+import androidx.compose.ui.test.captureToImage
+import androidx.compose.ui.test.onRoot
+import androidx.test.platform.app.InstrumentationRegistry
+import androidx.test.espresso.Espresso.pressBack
+import java.io.File
+import me.rerere.rikkahub.data.remote.p14.P14ProductMessageEntity
+import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.onNodeWithContentDescription
+import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performTextInput
+import androidx.test.ext.junit.runners.AndroidJUnit4
+import me.rerere.rikkahub.data.remote.p14.P14InboxRow
+import me.rerere.rikkahub.ui.theme.RikkahubTheme
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
+import org.junit.Assert.assertSame
+import org.junit.Assert.assertNotNull
+import org.junit.Rule
+import org.junit.Test
+import org.junit.runner.RunWith
+
+/** Real launcher/settings/task flow; no extra host Activity competing for window focus. */
+@RunWith(AndroidJUnit4::class)
+class P14InboxLauncherInstrumentedTest {
+    @get:Rule val compose = androidx.compose.ui.test.junit4.createEmptyComposeRule()
+    @Test fun launcherOpensInboxAndBackRestoresItsExistingActivity() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val intent = android.content.Intent(context, me.rerere.rikkahub.RouteActivity::class.java)
+            .setAction(android.content.Intent.ACTION_MAIN)
+            .addCategory(android.content.Intent.CATEGORY_LAUNCHER)
+        val scenario = androidx.test.core.app.ActivityScenario.launch<me.rerere.rikkahub.RouteActivity>(intent)
+        try {
+            compose.waitUntil(timeoutMillis = 20_000L) {
+                compose.onAllNodes(androidx.compose.ui.test.hasTestTag("p14-inbox-add"))
+                    .fetchSemanticsNodes(atLeastOneRootRequired=false).isNotEmpty()
+            }
+            compose.onNodeWithTag("p14-inbox-list").assertIsDisplayed()
+            compose.onNodeWithTag("p14-inbox-add").assertIsDisplayed()
+            // The original RikkaHub drawer now owns the Inbox and notifications.
+            // The legacy "连接与设置" row was intentionally removed.
+            compose.onNodeWithContentDescription("打开侧边栏").performClick()
+            compose.onNodeWithText("通知").assertIsDisplayed()
+            compose.onNodeWithText("连接与设置").assertDoesNotExist()
+            // Opening native settings from outside the drawer must first
+            // dismiss the modal drawer, just as an actual drawer action does.
+            // Otherwise the later Back press would only close a stale drawer.
+            androidx.test.espresso.Espresso.pressBackUnconditionally()
+            // Provider settings are reached through the existing native
+            // RikkaHub settings route, not a second Inbox sidebar.
+            context.startActivity(P14WorkspaceNavigation.settingsIntent(context)
+                .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK))
+            compose.waitUntil(timeoutMillis = 20_000L) {
+                compose.onAllNodes(androidx.compose.ui.test.hasText(
+                    context.getString(me.rerere.rikkahub.R.string.setting_page_providers)
+                )).fetchSemanticsNodes(atLeastOneRootRequired=false).isNotEmpty()
+            }
+            compose.onNodeWithText(context.getString(me.rerere.rikkahub.R.string.setting_page_providers))
+                .assertIsDisplayed()
+            // A warm launcher intent must return from native settings to records.
+            context.startActivity(android.content.Intent(context, me.rerere.rikkahub.RouteActivity::class.java)
+                .setAction(android.content.Intent.ACTION_MAIN)
+                .addCategory(android.content.Intent.CATEGORY_LAUNCHER)
+                .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK or
+                    android.content.Intent.FLAG_ACTIVITY_CLEAR_TOP or android.content.Intent.FLAG_ACTIVITY_SINGLE_TOP))
+            compose.waitUntil(timeoutMillis = 20_000L) {
+                compose.onAllNodes(androidx.compose.ui.test.hasTestTag("p14-inbox-add"))
+                    .fetchSemanticsNodes(atLeastOneRootRequired=false).isNotEmpty()
+            }
+            compose.onNodeWithTag("p14-inbox-add").assertIsDisplayed()
+            // Back from the Inbox root now backgrounds (rather than destroys)
+            // the task, so the active Inbox and its local draft survive.
+            val instrumentation=InstrumentationRegistry.getInstrumentation()
+            var oldInbox:P14EntryActivity?=null
+            instrumentation.runOnMainSync {
+                oldInbox=androidx.test.runner.lifecycle.ActivityLifecycleMonitorRegistry.getInstance()
+                    .getActivitiesInStage(androidx.test.runner.lifecycle.Stage.RESUMED)
+                    .filterIsInstance<P14EntryActivity>().singleOrNull()
+            }
+            assertNotNull("Expected active Inbox before pressing Back",oldInbox)
+            androidx.test.espresso.Espresso.pressBackUnconditionally()
+            compose.waitUntil(timeoutMillis=10_000L) {
+                var stopped=false
+                instrumentation.runOnMainSync {
+                    stopped=oldInbox?.lifecycle?.currentState==androidx.lifecycle.Lifecycle.State.CREATED
+                }
+                stopped
+            }
+            assertTrue("Back must preserve Inbox for a warm resume",oldInbox?.isFinishing==false)
+            context.startActivity(P14WorkspaceNavigation.inboxIntent(context)
+                .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK))
+            compose.waitUntil(timeoutMillis=20_000L) {
+                compose.onAllNodes(androidx.compose.ui.test.hasTestTag("p14-inbox-add"))
+                    .fetchSemanticsNodes(atLeastOneRootRequired=false).isNotEmpty()
+            }
+            var resumedInbox:P14EntryActivity?=null
+            instrumentation.runOnMainSync {
+                resumedInbox=androidx.test.runner.lifecycle.ActivityLifecycleMonitorRegistry.getInstance()
+                    .getActivitiesInStage(androidx.test.runner.lifecycle.Stage.RESUMED)
+                    .filterIsInstance<P14EntryActivity>().singleOrNull()
+            }
+            assertSame("Workspace return must reuse the same Activity and Entry state",oldInbox,resumedInbox)
+            compose.onNodeWithTag("p14-inbox-list").assertIsDisplayed()
+        } finally {
+            InstrumentationRegistry.getInstrumentation().runOnMainSync {
+                val monitor = androidx.test.runner.lifecycle.ActivityLifecycleMonitorRegistry.getInstance()
+                androidx.test.runner.lifecycle.Stage.values().flatMap { monitor.getActivitiesInStage(it) }
+                    .filterIsInstance<P14EntryActivity>().distinct().forEach { it.finish() }
+            }
+            scenario.close()
+        }
+    }
+
+}

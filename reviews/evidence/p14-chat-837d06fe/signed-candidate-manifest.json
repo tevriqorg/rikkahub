@@ -1,0 +1,10 @@
+{
+  "abi": "arm64-v8a",
+  "authority": "tevriqorg/P14-Entry#51",
+  "certificate_sha256": "dfa33df904e4eb3ca30fdc61a1817dbec36d131a94a594663f7d79522430cc94",
+  "package": "me.rerere.rikkahub.debug",
+  "release_status": "test-only-not-published",
+  "schema": "p14.fixed-signing-manifest/v1",
+  "signed_apk_sha256": "5f2d25cc032a34e2191caf0c49649aee5af918128bb34d329359a354845d544c",
+  "source_sha": "837d06fe59ea8e5bdde6b84b64a0d5742581c03e"
+}

@@ -1,6 +1,15 @@
 package me.rerere.rikkahub
 
 import android.app.Application
+import android.content.Context
+import coil3.ImageLoader
+import coil3.SingletonImageLoader
+import coil3.gif.AnimatedImageDecoder
+import coil3.gif.GifDecoder
+import coil3.network.cachecontrol.CacheControlCacheStrategy
+import coil3.network.okhttp.OkHttpNetworkFetcherFactory
+import coil3.request.crossfade
+import coil3.svg.SvgDecoder
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
@@ -66,7 +75,25 @@ const val WEB_SERVER_NOTIFICATION_CHANNEL_ID = "web_server"
 const val MEDIA_CREATION_NOTIFICATION_CHANNEL_ID = "media_creation"
 const val MEMORY_DREAM_NOTIFICATION_CHANNEL_ID = "memory_dream"
 
-class RikkaHubApp : Application() {
+// Coil's singleton factory is owned by Application, not a Compose Activity.
+// The P14 launcher may display attachment thumbnails before RouteActivity composes.
+class RikkaHubApp : Application(), SingletonImageLoader.Factory {
+    override fun newImageLoader(context: Context): ImageLoader = ImageLoader.Builder(context)
+        .crossfade(true)
+        .components {
+            add(OkHttpNetworkFetcherFactory(
+                callFactory = { GlobalContext.get().get<OkHttpClient>() },
+                cacheStrategy = { CacheControlCacheStrategy() },
+            ))
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                add(AnimatedImageDecoder.Factory())
+            } else {
+                add(GifDecoder.Factory())
+            }
+            add(SvgDecoder.Factory(scaleToDensity = true))
+        }
+        .build()
+
     override fun onCreate() {
         super.onCreate()
         // Restore files and settings before eager Koin singletons or workers can access them.

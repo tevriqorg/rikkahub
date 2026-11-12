@@ -1,6 +1,7 @@
 package me.rerere.rikkahub.ui.pages.chat
 
 import androidx.activity.ComponentActivity
+import android.content.Intent
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
@@ -21,6 +22,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.DrawerState
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LocalTextStyle
 import androidx.compose.material3.MaterialTheme
@@ -62,6 +64,7 @@ import me.rerere.hugeicons.stroke.FolderAdd
 import me.rerere.hugeicons.stroke.Image02
 import me.rerere.hugeicons.stroke.ImageToVideo
 import me.rerere.hugeicons.stroke.InLove
+import me.rerere.hugeicons.stroke.Notification01
 import me.rerere.hugeicons.stroke.LanguageCircle
 import me.rerere.hugeicons.stroke.LookTop
 import me.rerere.hugeicons.stroke.PencilEdit01
@@ -73,6 +76,8 @@ import me.rerere.hugeicons.stroke.Tick01
 import me.rerere.hugeicons.stroke.TransactionHistory
 import me.rerere.rikkahub.R
 import me.rerere.rikkahub.Screen
+import me.rerere.rikkahub.ui.activity.P14WorkspaceNavigation
+import me.rerere.rikkahub.ui.activity.P14InboxActivity
 import me.rerere.rikkahub.data.datastore.ConversationSortOrder
 import me.rerere.rikkahub.data.datastore.Settings
 import me.rerere.rikkahub.data.model.Assistant
@@ -84,7 +89,6 @@ import me.rerere.rikkahub.ui.components.ui.BackupReminderCard
 import me.rerere.rikkahub.ui.components.ui.Greeting
 import me.rerere.rikkahub.ui.components.ui.RabbitLoadingIndicator
 import me.rerere.rikkahub.ui.components.ui.UIAvatar
-import me.rerere.rikkahub.ui.components.ui.UpdateCard
 import androidx.compose.ui.draw.clip
 import me.rerere.rikkahub.ui.context.LocalToaster
 import me.rerere.rikkahub.ui.context.Navigator
@@ -107,6 +111,7 @@ fun ChatDrawerContent(
     vm: ChatVM,
     settings: Settings,
     current: Conversation,
+    workspaceDrawer: DrawerState? = null,
 ) {
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
@@ -141,17 +146,6 @@ fun ChatDrawerContent(
         initialValue = emptyMap(),
     )
 
-    // 昵称编辑状态
-    val nicknameEditState = useEditState<String> { newNickname ->
-        vm.updateSettings {
-            it.copy(
-                displaySetting = it.displaySetting.copy(
-                    userNickname = newNickname
-                )
-            )
-        }
-    }
-
     // 移动对话状态
     var showMoveToAssistantSheet by remember { mutableStateOf(false) }
     var conversationToMove by remember { mutableStateOf<Conversation?>(null) }
@@ -168,21 +162,9 @@ fun ChatDrawerContent(
     // Menu popup 状态
     var showMenuPopup by remember { mutableStateOf(false) }
 
-    val updateCheckDisabledUntil = settings.displaySetting.updateCheckDisabledUntilEpochMillis
-    var updateChecksEnabled by remember(updateCheckDisabledUntil) {
-        mutableStateOf(updateCheckDisabledUntil <= System.currentTimeMillis())
-    }
-    LaunchedEffect(updateCheckDisabledUntil) {
-        while (true) {
-            val remaining = updateCheckDisabledUntil - System.currentTimeMillis()
-            if (remaining <= 0) {
-                updateChecksEnabled = true
-                break
-            }
-            updateChecksEnabled = false
-            delay(minOf(remaining, 60 * 60 * 1_000L))
-        }
-    }
+    // P14 owns its APK signing and release track. Do not surface upstream
+    // RikkaHub update banners in the customized Android client: upstream
+    // packages do not preserve this fork's identity or product behavior.
 
     ModalDrawerSheet(
         modifier = Modifier.width(300.dp)
@@ -191,73 +173,27 @@ fun ChatDrawerContent(
             modifier = Modifier.padding(8.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            if (updateChecksEnabled && !isPlayStore) {
-                UpdateCard(vm)
-            }
+            RikkaHubDrawerIdentity(
+                settings = settings,
+                onUpdateSettings = { transform -> vm.updateSettings(transform) },
+            )
+
+            RikkaHubPrimaryDrawerActions(
+                onHistory = { navController.navigate(Screen.History) },
+                onSearch = { navController.navigate(Screen.MessageSearch) },
+                onInbox = {
+                    scope.launch {
+                        workspaceDrawer?.close()
+                        P14WorkspaceNavigation.openInbox(context)
+                    }
+                },
+                onNotifications = { context.startActivity(Intent(context, P14InboxActivity::class.java)) },
+            )
 
             BackupReminderCard(
                 settings = settings,
                 onClick = { navController.navigate(Screen.Backup) },
             )
-
-            // 用户头像和昵称自定义区域
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 8.dp, vertical = 8.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(16.dp),
-            ) {
-                UIAvatar(
-                    name = settings.displaySetting.userNickname.ifBlank { stringResource(R.string.user_default_name) },
-                    value = settings.displaySetting.userAvatar,
-                    onUpdate = { newAvatar ->
-                        vm.updateSettings {
-                            it.copy(
-                                displaySetting = it.displaySetting.copy(
-                                    userAvatar = newAvatar
-                                )
-                            )
-                        }
-                    },
-                    modifier = Modifier.size(50.dp),
-                )
-
-                Column(
-                    modifier = Modifier.weight(1f),
-                    verticalArrangement = Arrangement.spacedBy(2.dp),
-                ) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(4.dp),
-                    ) {
-                        Text(
-                            text = settings.displaySetting.userNickname.ifBlank { stringResource(R.string.user_default_name) },
-                            style = MaterialTheme.typography.titleMedium,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier.clickable {
-                                nicknameEditState.open(settings.displaySetting.userNickname)
-                            }
-                        )
-
-                        Icon(
-                            imageVector = HugeIcons.PencilEdit01,
-                            contentDescription = "Edit",
-                            modifier = Modifier
-                                .onClick {
-                                    nicknameEditState.open(settings.displaySetting.userNickname)
-                                }
-                                .size(LocalTextStyle.current.fontSize.toDp())
-                        )
-                    }
-                    Greeting(
-                        style = MaterialTheme.typography.labelMedium,
-                    )
-                }
-            }
-
-            DrawerActions(navController = navController)
 
             Row(
                 modifier = Modifier
@@ -445,45 +381,6 @@ fun ChatDrawerContent(
                 )
             }
         }
-    }
-
-    // 昵称编辑对话框
-    nicknameEditState.EditStateContent { nickname, onUpdate ->
-        AlertDialog(
-            onDismissRequest = {
-                nicknameEditState.dismiss()
-            },
-            title = {
-                Text(stringResource(R.string.chat_page_edit_nickname))
-            },
-            text = {
-                OutlinedTextField(
-                    value = nickname,
-                    onValueChange = onUpdate,
-                    modifier = Modifier.fillMaxWidth(),
-                    singleLine = true,
-                    placeholder = { Text(stringResource(R.string.chat_page_nickname_placeholder)) }
-                )
-            },
-            confirmButton = {
-                TextButton(
-                    onClick = {
-                        nicknameEditState.confirm()
-                    }
-                ) {
-                    Text(stringResource(R.string.chat_page_save))
-                }
-            },
-            dismissButton = {
-                TextButton(
-                    onClick = {
-                        nicknameEditState.dismiss()
-                    }
-                ) {
-                    Text(stringResource(R.string.chat_page_cancel))
-                }
-            }
-        )
     }
 
     // 移动到文件夹 Bottom Sheet
@@ -720,36 +617,36 @@ fun ChatDrawerContent(
 }
 
 @Composable
-private fun DrawerActions(navController: Navigator) {
+internal fun RikkaHubPrimaryDrawerActions(
+    onHistory: () -> Unit,
+    onSearch: () -> Unit,
+    onInbox: () -> Unit,
+    onNotifications: () -> Unit,
+) {
     Column {
-        // 历史记录入口，行尾是搜索入口
         DrawerEntry(
             icon = HugeIcons.TransactionHistory,
             text = stringResource(R.string.chat_page_history),
-            onClick = { navController.navigate(Screen.History) },
+            onClick = onHistory,
             trailingIcon = HugeIcons.Search01,
             trailingDescription = stringResource(R.string.chat_page_search_chats),
-            onTrailingClick = { navController.navigate(Screen.MessageSearch) },
+            onTrailingClick = onSearch,
         )
-
-        // 媒体创作入口
         DrawerEntry(
-            icon = HugeIcons.ImageToVideo,
-            text = stringResource(R.string.media_creation_title),
-            onClick = { navController.navigate(Screen.MediaCreationSessions) },
+            icon = HugeIcons.Folder01,
+            text = "收集箱",
+            onClick = onInbox,
         )
-
-        // 翻译入口
         DrawerEntry(
-            icon = HugeIcons.LanguageCircle,
-            text = stringResource(R.string.chat_page_menu_ai_translator),
-            onClick = { navController.navigate(Screen.Translator) },
+            icon = HugeIcons.Notification01,
+            text = "通知",
+            onClick = onNotifications,
         )
     }
 }
 
 @Composable
-private fun DrawerEntry(
+internal fun DrawerEntry(
     icon: ImageVector,
     text: String,
     onClick: () -> Unit,
@@ -1077,4 +974,112 @@ private fun AssistantItem(
             }
         }
     }
+}
+
+/** Shared native RikkaHub avatar/nickname block for Chat and Entry surfaces. */
+@Composable
+internal fun RikkaHubDrawerIdentity(
+    settings: Settings,
+    onUpdateSettings: ((Settings) -> Settings) -> Unit,
+) {
+    val nicknameEditState = useEditState<String> { newNickname ->
+        onUpdateSettings {
+            it.copy(displaySetting = it.displaySetting.copy(userNickname = newNickname))
+        }
+    }
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 8.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(16.dp),
+            ) {
+                UIAvatar(
+                    name = settings.displaySetting.userNickname.ifBlank { stringResource(R.string.user_default_name) },
+                    value = settings.displaySetting.userAvatar,
+                    onUpdate = { newAvatar ->
+                        onUpdateSettings {
+                            it.copy(
+                                displaySetting = it.displaySetting.copy(
+                                    userAvatar = newAvatar
+                                )
+                            )
+                        }
+                    },
+                    modifier = Modifier.size(50.dp),
+                )
+
+                Column(
+                    modifier = Modifier.weight(1f),
+                    verticalArrangement = Arrangement.spacedBy(2.dp),
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp),
+                    ) {
+                        Text(
+                            text = settings.displaySetting.userNickname.ifBlank { stringResource(R.string.user_default_name) },
+                            style = MaterialTheme.typography.titleMedium,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.clickable {
+                                nicknameEditState.open(settings.displaySetting.userNickname)
+                            }
+                        )
+
+                        Icon(
+                            imageVector = HugeIcons.PencilEdit01,
+                            contentDescription = "Edit",
+                            modifier = Modifier
+                                .onClick {
+                                    nicknameEditState.open(settings.displaySetting.userNickname)
+                                }
+                                .size(LocalTextStyle.current.fontSize.toDp())
+                        )
+                    }
+                    Greeting(
+                        style = MaterialTheme.typography.labelMedium,
+                    )
+                }
+            }
+
+    // 昵称编辑对话框
+    nicknameEditState.EditStateContent { nickname, onUpdate ->
+        AlertDialog(
+            onDismissRequest = {
+                nicknameEditState.dismiss()
+            },
+            title = {
+                Text(stringResource(R.string.chat_page_edit_nickname))
+            },
+            text = {
+                OutlinedTextField(
+                    value = nickname,
+                    onValueChange = onUpdate,
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                    placeholder = { Text(stringResource(R.string.chat_page_nickname_placeholder)) }
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        nicknameEditState.confirm()
+                    }
+                ) {
+                    Text(stringResource(R.string.chat_page_save))
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = {
+                        nicknameEditState.dismiss()
+                    }
+                ) {
+                    Text(stringResource(R.string.chat_page_cancel))
+                }
+            }
+        )
+    }
+
 }

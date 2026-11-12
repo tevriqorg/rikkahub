@@ -1,0 +1,15 @@
+{
+  "mode": "old",
+  "current_revision_context_received": false,
+  "expected": "PLUM-b1657045",
+  "calls": [
+    {
+      "conversation_id": "f57708e3-f593-430b-9462-c036f39b9c95",
+      "message_id": "e28b6862-ad48-48f8-bcc1-88a1e8ae9d1f",
+      "session_id": "20261030_190618_175886",
+      "text": "OLD-OBSOLETE",
+      "reply_to_text": null,
+      "reply_to_message_id": null
+    }
+  ]
+}

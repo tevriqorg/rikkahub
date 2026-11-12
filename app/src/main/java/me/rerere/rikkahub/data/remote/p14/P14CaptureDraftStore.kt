@@ -15,6 +15,7 @@ internal data class P14CaptureDraft(
     val messageId: String = UUID.randomUUID().toString(),
     val text: String = "",
     val materials: List<P14DraftMaterial> = emptyList(),
+    val views: List<String> = emptyList(),
 )
 
 @Serializable

@@ -1,0 +1,15 @@
+--- a/hermes-plugin/p14/adapter.py
++++ b/hermes-plugin/p14/adapter.py
+@@ -300,7 +300,11 @@
+         message_event = MessageEvent(
+             text=text, message_type=self._message_type(attachments), source=source, message_id=message_id,
+             raw_message={"p14_sync_seq": sync_seq, **event}, media_urls=media_urls, media_types=media_types,
+-            media_text_inlined=[False] * len(media_urls), timestamp=timestamp,
++            media_text_inlined=[False] * len(media_urls),
++            reply_to_message_id=event.get("reply_to_message_id"),
++            reply_to_text=event.get("reply_to_text"),
++            reply_to_is_own_message=bool(event.get("reply_to_is_own_message", False)),
++            timestamp=timestamp,
+         )
+         await self.handle_message(message_event)
+         if message_event._gateway_accepted:

@@ -29,6 +29,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
@@ -47,14 +48,6 @@ import androidx.navigation3.runtime.entryProvider
 import androidx.navigation3.runtime.rememberNavBackStack
 import androidx.navigation3.runtime.rememberSaveableStateHolderNavEntryDecorator
 import androidx.navigation3.ui.NavDisplay
-import coil3.ImageLoader
-import coil3.compose.setSingletonImageLoaderFactory
-import coil3.gif.AnimatedImageDecoder
-import coil3.gif.GifDecoder
-import coil3.network.cachecontrol.CacheControlCacheStrategy
-import coil3.network.okhttp.OkHttpNetworkFetcherFactory
-import coil3.request.crossfade
-import coil3.svg.SvgDecoder
 import me.rerere.ui.toast.Toaster
 import me.rerere.ui.toast.rememberToasterState
 import kotlinx.coroutines.launch
@@ -67,6 +60,7 @@ import me.rerere.rikkahub.data.event.AppEventBus
 import me.rerere.rikkahub.data.repository.MediaCreationRepository
 import me.rerere.rikkahub.service.MediaCreationForegroundService
 import me.rerere.rikkahub.ui.activity.SafeModeActivity
+import me.rerere.rikkahub.ui.activity.P14WorkspaceNavigation
 import me.rerere.rikkahub.ui.components.ui.TTSController
 import me.rerere.rikkahub.ui.context.LocalASRState
 import me.rerere.rikkahub.ui.context.LocalNavController
@@ -143,11 +137,21 @@ import org.koin.compose.koinInject
 import kotlin.uuid.Uuid
 
 private const val TAG = "RouteActivity"
+internal const val P14_EXTRA_NATIVE_ENTRY_CHAT = "p14_native_entry_chat"
+internal const val P14_ACTION_CONNECTION_SETTINGS = "me.rerere.rikkahub.action.P14_CONNECTION_SETTINGS"
+
 private const val ACTION_TRANSLATE = "me.rerere.rikkahub.action.TRANSLATE"
 private const val ACTION_MEDIA_CREATION = "me.rerere.rikkahub.action.MEDIA_CREATION"
 
+/** Resume the latest native chat without creating a new Conversation. */
+internal fun p14ReturnToNativeChat(backStack: MutableList<NavKey>) {
+    val chatIndex = backStack.indexOfLast { it is Screen.Chat }
+    if (chatIndex >= 0) {
+        while (backStack.size > chatIndex + 1) backStack.removeAt(backStack.lastIndex)
+    }
+}
+
 class RouteActivity : ComponentActivity() {
-    private val okHttpClient by inject<OkHttpClient>()
     private val settingsStore by inject<SettingsStore>()
     private val mediaCreationRepository by inject<MediaCreationRepository>()
     private var navStack: MutableList<NavKey>? = null
@@ -181,27 +185,16 @@ class RouteActivity : ComponentActivity() {
         if (savedInstanceState == null) {
             handleIntent(intent)
         }
+        // The P14 test track starts with records, including before provider setup.
+        // Keep the shell underneath for the existing provider/settings flow.
+        if (savedInstanceState == null && intent.action == Intent.ACTION_MAIN &&
+            intent.hasCategory(Intent.CATEGORY_LAUNCHER)) {
+            P14WorkspaceNavigation.openInbox(this)
+        }
+
         setContent {
             RikkahubTheme {
-                setSingletonImageLoaderFactory { context ->
-                    ImageLoader.Builder(context)
-                        .crossfade(true)
-                        .components {
-                            add(
-                                OkHttpNetworkFetcherFactory(
-                                    callFactory = { okHttpClient },
-                                    cacheStrategy = { CacheControlCacheStrategy() },
-                                )
-                            )
-                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-                                add(AnimatedImageDecoder.Factory())
-                            } else {
-                                add(GifDecoder.Factory())
-                            }
-                            add(SvgDecoder.Factory(scaleToDensity = true))
-                        }
-                        .build()
-                }
+                // Application owns the Coil singleton, including when Entry starts first.
                 AppRoutes()
             }
         }
@@ -217,6 +210,9 @@ class RouteActivity : ComponentActivity() {
         super.onNewIntent(intent)
         setIntent(intent)
         handleIntent(intent)
+        if (intent.action == Intent.ACTION_MAIN && intent.hasCategory(Intent.CATEGORY_LAUNCHER)) {
+            P14WorkspaceNavigation.openInbox(this)
+        }
     }
 
     private fun handleIntent(intent: Intent) {
@@ -225,7 +221,14 @@ class RouteActivity : ComponentActivity() {
             pendingIntents.addLast(intent)
             return
         }
+        if (intent.action == P14WorkspaceNavigation.ACTION_OPEN_AI) {
+            // The global AI shortcut restores a native chat, not a settings page.
+            p14ReturnToNativeChat(backStack)
+            return
+        }
         val destination = when (intent.action) {
+            P14_ACTION_CONNECTION_SETTINGS -> Screen.SettingProvider
+            P14WorkspaceNavigation.ACTION_OPEN_HISTORY -> Screen.History
             ACTION_TRANSLATE -> Screen.Translator
             ACTION_MEDIA_CREATION -> {
                 openNewMediaCreation(backStack)
@@ -280,8 +283,14 @@ class RouteActivity : ComponentActivity() {
         }
         val migrationState by DatabaseMigrationTracker.state.collectAsStateWithLifecycle()
 
+        // Capture the launch intent once: ACTION_OPEN_AI is delivered by
+        // onNewIntent and must not overwrite an existing native chat identity.
+        val launchIntent = remember { intent }
+        val fromP14Entry = launchIntent.getBooleanExtra(P14_EXTRA_NATIVE_ENTRY_CHAT, false)
         val startScreen = Screen.Chat(
-            id = if (readBooleanPreference("create_new_conversation_on_start", true)) {
+            id = if (fromP14Entry) {
+                requireNotNull(launchIntent.getStringExtra("conversationId"))
+            } else if (readBooleanPreference("create_new_conversation_on_start", true)) {
                 Uuid.random().toString()
             } else {
                 readStringPreference(
@@ -322,7 +331,13 @@ class RouteActivity : ComponentActivity() {
                             rememberViewModelStoreNavEntryDecorator(),
                         ),
                         modifier = Modifier.fillMaxSize(),
-                        onBack = { backStack.removeLastOrNull() },
+                        onBack = {
+                            when {
+                                backStack.size > 1 -> backStack.removeLastOrNull()
+                                fromP14Entry -> finish()
+                                else -> moveTaskToBack(true)
+                            }
+                        },
                         transitionSpec = {
                             if (backStack.size == 1) fadeIn() togetherWith fadeOut()
                             else {

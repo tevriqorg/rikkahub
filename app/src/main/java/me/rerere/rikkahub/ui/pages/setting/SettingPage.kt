@@ -55,6 +55,8 @@ import me.rerere.hugeicons.stroke.Brain02
 import me.rerere.hugeicons.stroke.Clapping01
 import me.rerere.hugeicons.stroke.Database02
 import me.rerere.hugeicons.stroke.GlobalSearch
+import me.rerere.hugeicons.stroke.Folder01
+import me.rerere.hugeicons.stroke.Notification01
 import me.rerere.hugeicons.stroke.Image02
 import me.rerere.hugeicons.stroke.ImageUpload
 import me.rerere.hugeicons.stroke.InLove
@@ -71,6 +73,8 @@ import me.rerere.hugeicons.stroke.Sun01
 import me.rerere.hugeicons.stroke.Tiktok
 import me.rerere.hugeicons.stroke.WavingHand01
 import me.rerere.rikkahub.R
+import me.rerere.rikkahub.ui.activity.P14WorkspaceNavigation
+import me.rerere.rikkahub.ui.activity.P14InboxActivity
 import me.rerere.rikkahub.Screen
 import me.rerere.rikkahub.data.datastore.isNotConfigured
 import me.rerere.rikkahub.data.files.FilesManager
@@ -96,6 +100,7 @@ import org.koin.compose.koinInject
 fun SettingPage(vm: SettingVM = koinViewModel()) {
     val scrollBehavior = TopAppBarDefaults.exitUntilCollapsedScrollBehavior()
     val navController = LocalNavController.current
+    val context = LocalContext.current
     val settings by vm.settings.collectAsStateWithLifecycle()
     val launchCount by vm.launchCount.collectAsStateWithLifecycle()
     val filesManager: FilesManager = koinInject()
@@ -210,6 +215,33 @@ fun SettingPage(vm: SettingVM = koinViewModel()) {
                         leadingContent = { CardGroupIcon(HugeIcons.Package, containerColor = containerColor, contentColor = contentColor) },
                         supportingContent = { Text(stringResource(R.string.setting_page_extensions_desc)) },
                         headlineContent = { Text(stringResource(R.string.setting_page_extensions)) },
+                    )
+                }
+            }
+
+            item("p14InboxSettings") {
+                val containerColor = MaterialTheme.colorScheme.secondaryContainer
+                val contentColor = MaterialTheme.colorScheme.onSecondaryContainer
+                CardGroup(
+                    title = { Text("收集箱") },
+                ) {
+                    item(
+                        onClick = { P14WorkspaceNavigation.openInbox(context) },
+                        leadingContent = { CardGroupIcon(HugeIcons.Folder01,containerColor=containerColor,contentColor=contentColor) },
+                        supportingContent = { Text("记录、归档和分类视图") },
+                        headlineContent = { Text("管理收集箱") },
+                    )
+                    item(
+                        onClick = { navController.navigate(Screen.SettingProvider) },
+                        leadingContent = { CardGroupIcon(HugeIcons.Settings03,containerColor=containerColor,contentColor=contentColor) },
+                        supportingContent = { Text("沿用 RikkaHub 原生服务商与模型配置") },
+                        headlineContent = { Text("连接与 AI 配置") },
+                    )
+                    item(
+                        onClick = { context.startActivity(Intent(context,P14InboxActivity::class.java)) },
+                        leadingContent = { CardGroupIcon(HugeIcons.Notification01,containerColor=containerColor,contentColor=contentColor) },
+                        supportingContent = { Text("通知收件箱与推送权限") },
+                        headlineContent = { Text("通知") },
                     )
                 }
             }
